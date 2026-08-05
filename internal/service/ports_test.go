@@ -49,3 +49,54 @@ func TestParseListeningPortsCatchesSSH(t *testing.T) {
 		t.Error("sshd port 22 not detected; a full-range pool would allocate it")
 	}
 }
+
+// A DNAT rule diverts traffic before it reaches any socket, so a relay bound
+// to that port would start cleanly and receive nothing. ss cannot see these,
+// which is the whole reason the nat table is read.
+func TestParseNATPorts(t *testing.T) {
+	// Shapes taken from real hosts: docker publishing ports, a sing-box
+	// manager forwarding rule, a redirect, a multiport rule and a range.
+	const out = `
+-A DOCKER ! -i br-a685dbf5803f -p tcp -m tcp --dport 80 -j DNAT --to-destination 172.18.0.4:80
+-A DOCKER ! -i br-a685dbf5803f -p tcp -m tcp --dport 443 -j DNAT --to-destination 172.18.0.4:443
+-A SB-FORWARD-DNAT -p tcp -m tcp --dport 31001 -j DNAT --to-destination 203.0.113.9:31001
+-A SB-FORWARD-DNAT -p udp -m udp --dport 31001 -j DNAT --to-destination 203.0.113.9:31001
+-A PREROUTING -p tcp -m tcp --dport 8080 -j REDIRECT --to-ports 3128
+-A PREROUTING -p tcp -m multiport --dports 20000,20001,20005 -j DNAT --to-destination 10.0.0.2
+-A PREROUTING -p tcp -m tcp --dport 30000:30004 -j DNAT --to-destination 10.0.0.3
+-A POSTROUTING -s 172.18.0.0/16 -j MASQUERADE
+`
+	got := parseNATPorts(out)
+
+	for _, want := range []int{80, 443, 31001, 8080, 20000, 20001, 20005, 30000, 30002, 30004} {
+		if !got[want] {
+			t.Errorf("port %d is diverted by a nat rule but was not claimed", want)
+		}
+	}
+	// MASQUERADE redirects nothing, and the rewritten destination port is a
+	// claim on the far side, not on this machine.
+	for _, unwanted := range []int{3128, 30005, 20002} {
+		if got[unwanted] {
+			t.Errorf("port %d was claimed but no rule diverts it here", unwanted)
+		}
+	}
+}
+
+// A rule spanning most of the port space is a policy, not a claim on specific
+// ports; expanding it would blank the pool and say nothing useful.
+func TestParseNATPortsIgnoresHugeRanges(t *testing.T) {
+	got := parseNATPorts(`-A PREROUTING -p tcp --dport 1:65535 -j DNAT --to-destination 10.0.0.9`)
+	if len(got) != 0 {
+		t.Errorf("a 65535-wide range produced %d claimed ports", len(got))
+	}
+}
+
+func TestParseNATPortsIgnoresNonDivertingRules(t *testing.T) {
+	const out = `
+-A POSTROUTING -p tcp -m tcp --dport 31001 -j MASQUERADE
+-A PREROUTING -p tcp -m tcp --dport 31002 -j ACCEPT
+`
+	if got := parseNATPorts(out); len(got) != 0 {
+		t.Errorf("non-diverting rules claimed %v", got)
+	}
+}

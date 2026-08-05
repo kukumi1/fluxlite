@@ -56,8 +56,8 @@ func TestOwnPortsExcludeTheRouteBeingEdited(t *testing.T) {
 
 	lookup := svc.newLiveLookup(&route.ID)
 	// Stand in for the live scan: both relays are running, plus sshd.
-	lookup.cache[entry.ID] = map[int]bool{22: true, 31101: true}
-	lookup.cache[exit.ID] = map[int]bool{22: true, 10001: true}
+	lookup.cache[entry.ID] = portClaims{sockets: map[int]bool{22: true, 31101: true}}
+	lookup.cache[exit.ID] = portClaims{sockets: map[int]bool{22: true, 10001: true}}
 
 	used, err := lookup.UsedPortsOnNode(ctx, entry.ID, &route.ID)
 	if err != nil {
@@ -102,7 +102,7 @@ func TestOwnPortsDoNotLeakAcrossRoutes(t *testing.T) {
 	}
 
 	lookup := svc.newLiveLookup(&mine.ID)
-	lookup.cache[node.ID] = map[int]bool{10001: true, 10002: true}
+	lookup.cache[node.ID] = portClaims{sockets: map[int]bool{10001: true, 10002: true}}
 
 	used, err := lookup.UsedPortsOnNode(ctx, node.ID, &mine.ID)
 	if err != nil {
@@ -123,7 +123,7 @@ func TestLiveListenersCountWhenNothingIsExcluded(t *testing.T) {
 	node := seedNode(t, st, "fresh")
 
 	lookup := svc.newLiveLookup(nil)
-	lookup.cache[node.ID] = map[int]bool{22: true, 10001: true}
+	lookup.cache[node.ID] = portClaims{sockets: map[int]bool{22: true, 10001: true}}
 
 	used, err := lookup.UsedPortsOnNode(ctx, node.ID, nil)
 	if err != nil {
@@ -133,5 +133,38 @@ func TestLiveListenersCountWhenNothingIsExcluded(t *testing.T) {
 		if !used[p] {
 			t.Errorf("port %d should count as occupied", p)
 		}
+	}
+}
+
+// A NAT claim never belongs to fluxlite — it deploys relays, not rules — so
+// the exemption that lets a route keep its own listeners must not extend to
+// it. Handing back a diverted port would produce a relay that binds, looks
+// healthy, and never sees the traffic aimed at it.
+func TestNATClaimsAreNeverExempted(t *testing.T) {
+	ctx := context.Background()
+	st, svc := newTestLookup(t)
+	node := seedNode(t, st, "shared")
+
+	route := &model.Route{
+		Name: "mine", Slug: "mine", Target: "example.com:443",
+		Protocol: model.ProtocolTCP, Enabled: true, EntryPort: 31001,
+		Hops: []model.RouteHop{{HopOrder: 0, NodeID: node.ID, RelayPort: 31001}},
+	}
+	if err := st.CreateRoute(ctx, route); err != nil {
+		t.Fatalf("create route: %v", err)
+	}
+
+	lookup := svc.newLiveLookup(&route.ID)
+	lookup.cache[node.ID] = portClaims{
+		sockets: map[int]bool{31001: true},
+		nat:     map[int]bool{31001: true},
+	}
+
+	used, err := lookup.UsedPortsOnNode(ctx, node.ID, &route.ID)
+	if err != nil {
+		t.Fatalf("used ports: %v", err)
+	}
+	if !used[31001] {
+		t.Error("a port diverted by NAT was offered for allocation")
 	}
 }

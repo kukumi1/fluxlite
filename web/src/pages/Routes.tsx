@@ -396,8 +396,20 @@ function RouteForm({ nodes, route, onClose, onSaved, onError }: RouteFormProps) 
     };
     try {
       if (route) {
+        // Only forwarding behaviour reaches the nodes. Telling the operator to
+        // redeploy after a rename would send them to restart relays, dropping
+        // live connections, for a change the nodes never see.
+        const deployable =
+          target !== route.target ||
+          protocol !== route.protocol ||
+          hops.join() !== route.hops.map((h) => h.node_id).join() ||
+          (entryPort !== "" && Number(entryPort) !== route.entry_port);
         await api.updateRoute(route.id, input);
-        await onSaved(`链路 ${name} 已更新，记得重新下发`);
+        await onSaved(
+          deployable
+            ? `链路 ${name} 已更新，记得重新下发`
+            : `链路 ${name} 已更新（仅名称变更，节点上无需改动）`,
+        );
       } else {
         await api.createRoute(input);
         await onSaved(`链路 ${name} 已创建，请执行下发`);

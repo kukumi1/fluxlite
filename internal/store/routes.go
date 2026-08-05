@@ -185,6 +185,16 @@ func (s *Store) UpdateRoute(ctx context.Context, r *model.Route) error {
 	r.UpdatedAt = time.Now().UTC()
 
 	return s.inTx(ctx, func(tx *sql.Tx) error {
+		// Latency describes a physical leg: this node dialling that address.
+		// It survives an edit that leaves every leg intact — renaming a route
+		// does not make its measurements wrong — and is dropped the moment the
+		// path or the landing address changes, because it then describes a
+		// route that no longer exists.
+		keepLatency, err := pathUnchanged(ctx, tx, r)
+		if err != nil {
+			return err
+		}
+
 		res, err := tx.ExecContext(ctx, `
 			UPDATE routes SET name=?, target=?, protocol=?, enabled=?, updated_at=?
 			WHERE id=?`,
@@ -198,6 +208,15 @@ func (s *Store) UpdateRoute(ctx context.Context, r *model.Route) error {
 		if err := checkAffected(res, "route", r.ID); err != nil {
 			return err
 		}
+		if keepLatency {
+			// Nothing about the hops changed, so rewriting them would only
+			// discard their timings.
+			for i := range r.Hops {
+				r.Hops[i].RouteID = r.ID
+			}
+			return nil
+		}
+
 		// Hops are replaced wholesale: computing a minimal diff would buy
 		// nothing since the applier reconciles the node state anyway.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM route_hops WHERE route_id = ?`, r.ID); err != nil {
@@ -205,9 +224,58 @@ func (s *Store) UpdateRoute(ctx context.Context, r *model.Route) error {
 		}
 		for i := range r.Hops {
 			r.Hops[i].RouteID = r.ID
+			r.Hops[i].LatencyMS = nil
+			r.Hops[i].LatencyAt = nil
 		}
 		return insertHops(ctx, tx, r.Hops)
 	})
+}
+
+// pathUnchanged reports whether an update leaves every leg of the route
+// exactly as it was: same nodes, same ports, same order, same landing address.
+func pathUnchanged(ctx context.Context, tx *sql.Tx, r *model.Route) (bool, error) {
+	var target string
+	err := tx.QueryRowContext(ctx, `SELECT target FROM routes WHERE id = ?`, r.ID).Scan(&target)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read current target: %w", err)
+	}
+	if target != r.Target {
+		return false, nil
+	}
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT hop_order, node_id, relay_port
+		FROM route_hops WHERE route_id = ? ORDER BY hop_order`, r.ID)
+	if err != nil {
+		return false, fmt.Errorf("read current hops: %w", err)
+	}
+	defer rows.Close()
+
+	var current []model.RouteHop
+	for rows.Next() {
+		var h model.RouteHop
+		if err := rows.Scan(&h.HopOrder, &h.NodeID, &h.RelayPort); err != nil {
+			return false, fmt.Errorf("scan current hop: %w", err)
+		}
+		current = append(current, h)
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	if len(current) != len(r.Hops) {
+		return false, nil
+	}
+	for i, h := range current {
+		if h.HopOrder != r.Hops[i].HopOrder ||
+			h.NodeID != r.Hops[i].NodeID ||
+			h.RelayPort != r.Hops[i].RelayPort {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // SetRouteEnabled flips a route's enabled flag.

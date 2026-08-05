@@ -112,9 +112,9 @@ func TestSetHopLatenciesLeavesUnreportedHopsAlone(t *testing.T) {
 	}
 }
 
-// Editing a route rebuilds its hops, so stale timings for a path that no
-// longer exists must not survive.
-func TestEditingARouteClearsStaleLatencies(t *testing.T) {
+// A changed path invalidates its timings: they describe legs that no longer
+// exist.
+func TestChangingThePathClearsLatencies(t *testing.T) {
 	ctx := context.Background()
 	st := openTemp(t)
 	route := seedRoute(t, st)
@@ -135,6 +135,66 @@ func TestEditingARouteClearsStaleLatencies(t *testing.T) {
 	for _, h := range loaded.Hops {
 		if h.LatencyMS != nil {
 			t.Errorf("hop %d kept latency %d across a path change", h.HopOrder, *h.LatencyMS)
+		}
+	}
+}
+
+// A changed landing address invalidates the final leg, and with it the total.
+func TestChangingTheTargetClearsLatencies(t *testing.T) {
+	ctx := context.Background()
+	st := openTemp(t)
+	route := seedRoute(t, st)
+
+	if err := st.SetHopLatencies(ctx, route.ID, map[int]int{0: 25, 1: 15}); err != nil {
+		t.Fatalf("measure: %v", err)
+	}
+
+	route.Target = "elsewhere.example.com:443"
+	if err := st.UpdateRoute(ctx, route); err != nil {
+		t.Fatalf("update route: %v", err)
+	}
+
+	loaded, err := st.RouteByID(ctx, route.ID)
+	if err != nil {
+		t.Fatalf("reload route: %v", err)
+	}
+	for _, h := range loaded.Hops {
+		if h.LatencyMS != nil {
+			t.Errorf("hop %d kept latency %d across a target change", h.HopOrder, *h.LatencyMS)
+		}
+	}
+}
+
+// Renaming a route does not make its measurements wrong. Discarding them
+// would blank the card and force a re-measure for a purely cosmetic edit.
+func TestRenamingARouteKeepsLatencies(t *testing.T) {
+	ctx := context.Background()
+	st := openTemp(t)
+	route := seedRoute(t, st)
+
+	if err := st.SetHopLatencies(ctx, route.ID, map[int]int{0: 25, 1: 15}); err != nil {
+		t.Fatalf("measure: %v", err)
+	}
+
+	route.Name = "腾讯-IX-TW-SC"
+	if err := st.UpdateRoute(ctx, route); err != nil {
+		t.Fatalf("rename route: %v", err)
+	}
+
+	loaded, err := st.RouteByID(ctx, route.ID)
+	if err != nil {
+		t.Fatalf("reload route: %v", err)
+	}
+	if loaded.Name != "腾讯-IX-TW-SC" {
+		t.Errorf("name = %q, want the new one", loaded.Name)
+	}
+	want := map[int]int{0: 25, 1: 15}
+	for _, h := range loaded.Hops {
+		if h.LatencyMS == nil {
+			t.Fatalf("hop %d lost its latency to a rename", h.HopOrder)
+		}
+		if *h.LatencyMS != want[h.HopOrder] {
+			t.Errorf("hop %d latency = %d, want %d", h.HopOrder, *h.LatencyMS, want[h.HopOrder])
 		}
 	}
 }

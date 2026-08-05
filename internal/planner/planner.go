@@ -198,7 +198,11 @@ func Build(ctx context.Context, lookup NodeLookup, route *model.Route) (*Plan, e
 func renderConfig(route *model.Route, listen int, remote string) string {
 	var b strings.Builder
 	b.WriteString("# Managed by fluxlite. Manual edits are overwritten on apply.\n")
-	fmt.Fprintf(&b, "# route: %s\n\n", route.Name)
+	// The slug, never the display name. A display name is free to change at
+	// any time, and anything that reaches this file changes its hash, which
+	// makes the applier rewrite the config and restart the relay — dropping
+	// every live connection to re-word a comment.
+	fmt.Fprintf(&b, "# route: %s\n\n", route.Slug)
 
 	b.WriteString("[log]\n")
 	b.WriteString("level = \"warn\"\n")

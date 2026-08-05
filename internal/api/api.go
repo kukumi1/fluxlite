@@ -83,12 +83,20 @@ func (s *Server) Handler() http.Handler {
 		r.With(s.rateLimit).Post("/setup/confirm", s.handleSetupConfirm)
 		r.With(s.rateLimit).Post("/login", s.handleLogin)
 
+		// The installer authenticates with its one-shot enrollment token
+		// rather than a session, since it runs on a bare machine.
+		r.With(s.rateLimit).Get("/enroll/key", s.handleEnrollKey)
+		r.With(s.rateLimit).Get("/enroll/realm", s.handleEnrollRealm)
+		r.With(s.rateLimit).Post("/enroll/report", s.handleEnrollReport)
+
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
 
 			r.Post("/logout", s.handleLogout)
 			r.Get("/me", s.handleMe)
 			r.Post("/password", s.handleChangePassword)
+
+			r.Post("/enroll/ticket", s.handleEnrollTicket)
 
 			r.Get("/nodes", s.handleListNodes)
 			r.Post("/nodes", s.handleCreateNode)
@@ -110,6 +118,8 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/audit", s.handleAudit)
 		})
 	})
+
+	r.Get("/enroll.sh", s.handleEnrollScript)
 
 	if s.static != nil {
 		r.NotFound(s.static.ServeHTTP)

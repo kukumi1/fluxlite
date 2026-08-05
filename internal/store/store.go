@@ -146,6 +146,29 @@ var migrations = []string{
 	)`,
 
 	`CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_logs(ts DESC)`,
+
+	// Enrollment tokens let an operator paste one command onto a new machine
+	// instead of typing its address and credentials into the panel. The node's
+	// private key is generated here and never leaves the panel; the script
+	// only ever receives the public half.
+	`CREATE TABLE IF NOT EXISTS enroll_tokens (
+		token          TEXT PRIMARY KEY,
+		name           TEXT    NOT NULL,
+		host           TEXT    NOT NULL,
+		ssh_port       INTEGER NOT NULL,
+		ssh_user       TEXT    NOT NULL,
+		port_start     INTEGER NOT NULL,
+		port_end       INTEGER NOT NULL,
+		via_node_id    INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
+		private_key    BLOB    NOT NULL,
+		authorized_key TEXT    NOT NULL,
+		expires_at     DATETIME NOT NULL,
+		used_at        DATETIME,
+		node_id        INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
+		created_at     DATETIME NOT NULL
+	)`,
+
+	`CREATE INDEX IF NOT EXISTS idx_enroll_expiry ON enroll_tokens(expires_at)`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

@@ -59,6 +59,9 @@ func (w *Watcher) reconcile(ctx context.Context) {
 	if err := w.store.PurgeExpiredSessions(ctx); err != nil {
 		w.log.Error("purge expired sessions", "error", err)
 	}
+	if err := w.store.PurgeExpiredEnrollTokens(ctx); err != nil {
+		w.log.Error("purge expired enroll tokens", "error", err)
+	}
 	w.refreshNodeStatus(ctx)
 	w.reconcileRoutes(ctx)
 }

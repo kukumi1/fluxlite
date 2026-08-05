@@ -38,10 +38,11 @@ type Service struct {
 	pool     *sshx.Pool
 	applier  *applier.Applier
 	verifier *verifier.Verifier
+	realm    applier.RealmSource
 }
 
-func New(st *store.Store, sealer *cryptox.Sealer, pool *sshx.Pool, ap *applier.Applier, vf *verifier.Verifier) *Service {
-	return &Service{store: st, sealer: sealer, pool: pool, applier: ap, verifier: vf}
+func New(st *store.Store, sealer *cryptox.Sealer, pool *sshx.Pool, ap *applier.Applier, vf *verifier.Verifier, realm applier.RealmSource) *Service {
+	return &Service{store: st, sealer: sealer, pool: pool, applier: ap, verifier: vf, realm: realm}
 }
 
 // NodeInput is the client-supplied description of a node.

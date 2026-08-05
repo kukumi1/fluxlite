@@ -113,6 +113,22 @@ export interface Enrollment {
   url: string;
 }
 
+export interface EnrollRequest {
+  name: string;
+  host: string;
+  ssh_port: number;
+  ssh_user: string;
+  port_start: number;
+  port_end: number;
+  via_node_id: number | null;
+}
+
+export interface EnrollTicket {
+  token: string;
+  command: string;
+  expires_at: string;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   constructor(status: number, message: string) {
@@ -157,6 +173,8 @@ export const api = {
     post<{ username: string }>("/login", { username, password, code }),
   logout: () => post<{ ok: boolean }>("/logout"),
   me: () => request<{ username: string; totp_enrolled: boolean }>("/me"),
+
+  enrollTicket: (input: EnrollRequest) => post<EnrollTicket>("/enroll/ticket", input),
 
   listNodes: () => request<Node[] | null>("/nodes"),
   createNode: (input: NodeInput) => post<Node>("/nodes", input),

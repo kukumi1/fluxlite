@@ -1,0 +1,210 @@
+import { useState } from "react";
+import { api, ApiError, type EnrollRequest, type EnrollTicket, type Node } from "../api";
+import { Banner, Modal } from "../components/Modal";
+
+interface Props {
+  nodes: Node[];
+  onClose: () => void;
+  onEnrolled: () => void;
+}
+
+export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
+  const [form, setForm] = useState<EnrollRequest>({
+    name: "",
+    host: "",
+    ssh_port: 22,
+    ssh_user: "root",
+    port_start: 20000,
+    port_end: 20020,
+    via_node_id: null,
+  });
+  const [ticket, setTicket] = useState<EnrollTicket | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const set = <K extends keyof EnrollRequest>(key: K, value: EnrollRequest[K]) =>
+    setForm((f) => ({ ...f, [key]: value }));
+
+  async function generate(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      setTicket(await api.enrollTicket(form));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "生成失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copy() {
+    if (!ticket) return;
+    try {
+      await navigator.clipboard.writeText(ticket.command);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // 非 HTTPS 或权限受限时剪贴板不可用，命令本身仍可手动选中复制
+      setError("浏览器拒绝了剪贴板访问，请手动选中复制");
+    }
+  }
+
+  if (ticket) {
+    return (
+      <Modal title="一键注册命令" onClose={onClose}>
+        <Banner kind="ok">
+          在目标机器上以 root 执行下面这条命令即可完成注册，无需再填地址和密码。
+        </Banner>
+
+        <div
+          className="mono"
+          style={{
+            background: "var(--bg)",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            padding: 12,
+            wordBreak: "break-all",
+            userSelect: "all",
+            marginBottom: 12,
+          }}
+        >
+          {ticket.command}
+        </div>
+
+        <div className="row" style={{ marginBottom: 16 }}>
+          <button className="btn primary" onClick={() => void copy()}>
+            {copied ? "已复制" : "复制命令"}
+          </button>
+          <span className="muted" style={{ fontSize: 13 }}>
+            有效期至 {new Date(ticket.expires_at).toLocaleString("zh-CN")}，仅可使用一次
+          </span>
+        </div>
+
+        <h2>脚本会做什么</h2>
+        <ul className="hop-list" style={{ marginBottom: 16 }}>
+          <li>识别系统、架构与 init（支持 systemd 与 OpenRC，amd64 / arm64）</li>
+          <li>把面板公钥写入 authorized_keys —— 私钥始终留在面板，不经过网络</li>
+          <li>从面板下载 realm 并安装（节点无需访问 GitHub）</li>
+          <li>回报系统信息，面板随即回连验证并当场告诉你结果</li>
+        </ul>
+
+        <Banner kind="warn">
+          若这台是 NAT 机器，上面填的连接地址必须是服务商映射后的公网地址与端口，
+          不是机器自己看到的地址。填错时脚本会明确提示回连失败。
+        </Banner>
+
+        <div className="row" style={{ justifyContent: "flex-end", marginTop: 8 }}>
+          <button className="btn" onClick={onClose}>
+            关闭
+          </button>
+          <button
+            className="btn primary"
+            onClick={() => {
+              onEnrolled();
+              onClose();
+            }}
+          >
+            已执行，刷新列表
+          </button>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal title="生成一键注册命令" onClose={onClose}>
+      <form onSubmit={generate}>
+        {error && <Banner kind="err">{error}</Banner>}
+
+        <label>
+          节点名称
+          <input
+            value={form.name}
+            onChange={(e) => set("name", e.target.value)}
+            placeholder="小写字母、数字、连字符"
+            required
+          />
+        </label>
+
+        <div className="grid2">
+          <label>
+            SSH 连接地址
+            <input
+              value={form.host}
+              onChange={(e) => set("host", e.target.value)}
+              placeholder="面板用来连它的地址"
+              required
+            />
+          </label>
+          <label>
+            SSH 端口
+            <input
+              type="number"
+              value={form.ssh_port}
+              onChange={(e) => set("ssh_port", Number(e.target.value))}
+              required
+            />
+          </label>
+        </div>
+        <p className="hint">
+          NAT 机器填服务商映射后的公网地址和端口（例如 1.2.3.4:10022 映射到内网 22）。
+          这一项无法由脚本自动探测，因为 NAT 机器的出口地址与入口地址通常不同。
+        </p>
+
+        <label>
+          登录用户
+          <input value={form.ssh_user} onChange={(e) => set("ssh_user", e.target.value)} required />
+        </label>
+
+        <div className="grid2">
+          <label>
+            端口池起始
+            <input
+              type="number"
+              value={form.port_start}
+              onChange={(e) => set("port_start", Number(e.target.value))}
+              required
+            />
+          </label>
+          <label>
+            端口池结束
+            <input
+              type="number"
+              value={form.port_end}
+              onChange={(e) => set("port_end", Number(e.target.value))}
+              required
+            />
+          </label>
+        </div>
+        <p className="hint">转发链路会从这个范围里分配监听端口。NAT 机器只填实际映射到本机的范围。</p>
+
+        <label>
+          跳板节点
+          <select
+            value={form.via_node_id ?? ""}
+            onChange={(e) => set("via_node_id", e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">直连（无需跳板）</option>
+            {nodes.map((n) => (
+              <option key={n.id} value={n.id}>
+                {n.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="hint">仅对面板无法直连的内网节点设置。</p>
+
+        <div className="row" style={{ justifyContent: "flex-end", marginTop: 8 }}>
+          <button type="button" className="btn" onClick={onClose}>
+            取消
+          </button>
+          <button className="btn primary" disabled={busy}>
+            {busy ? "生成中…" : "生成命令"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}

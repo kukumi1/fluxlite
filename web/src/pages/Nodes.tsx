@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type Node, type NodeInput, type ProbeResult } from "../api";
 import { Banner, Modal } from "../components/Modal";
+import { EnrollDialog } from "./EnrollDialog";
 
 const emptyInput: NodeInput = {
   name: "",
@@ -22,6 +23,7 @@ export function Nodes() {
   const [creating, setCreating] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [probe, setProbe] = useState<{ node: string; result: ProbeResult } | null>(null);
+  const [enrolling, setEnrolling] = useState(false);
 
   const fail = (err: unknown) =>
     setError(err instanceof ApiError ? err.message : "请求失败");
@@ -77,9 +79,14 @@ export function Nodes() {
             转发链路的组成机器。内网节点需指定跳板，NAT 机器需按实际映射填写端口池。
           </p>
         </div>
-        <button className="btn primary" onClick={() => setCreating(true)}>
-          添加节点
-        </button>
+        <div className="row">
+          <button className="btn" onClick={() => setCreating(true)}>
+            手动添加
+          </button>
+          <button className="btn primary" onClick={() => setEnrolling(true)}>
+            一键注册
+          </button>
+        </div>
       </div>
 
       {error && <Banner kind="err">{error}</Banner>}
@@ -175,6 +182,14 @@ export function Nodes() {
           </table>
         )}
       </div>
+
+      {enrolling && (
+        <EnrollDialog
+          nodes={nodes}
+          onClose={() => setEnrolling(false)}
+          onEnrolled={() => void load()}
+        />
+      )}
 
       {(creating || editing) && (
         <NodeForm

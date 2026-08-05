@@ -96,7 +96,7 @@ func run() error {
 	realmSource := applier.NewCachedRealmSource(filepath.Join(*dataDir, "realm"))
 	ap := applier.New(pool, realmSource)
 	vf := verifier.New(pool)
-	svc := service.New(st, sealer, pool, ap, vf)
+	svc := service.New(st, sealer, pool, ap, vf, realmSource)
 	authSvc := auth.New(st)
 
 	static, err := web.Handler()

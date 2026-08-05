@@ -109,6 +109,7 @@ func (s *Server) Handler() http.Handler {
 			r.Put("/nodes/{id}", s.handleUpdateNode)
 			r.Delete("/nodes/{id}", s.handleDeleteNode)
 			r.Post("/nodes/{id}/probe", s.handleProbeNode)
+			r.Post("/nodes/{id}/realm", s.handleInstallRealm)
 
 			r.Get("/routes", s.handleListRoutes)
 			r.Post("/routes", s.handleCreateRoute)

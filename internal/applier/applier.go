@@ -109,7 +109,8 @@ func (a *Applier) applyHop(ctx context.Context, hop *planner.HopPlan) (bool, str
 		return false, "unreachable", fmt.Errorf("connect: %w", err)
 	}
 
-	if err := a.ensureRealm(ctx, client.Client, hop.Node); err != nil {
+	replacedRealm, err := a.ensureRealm(ctx, client.Client, hop.Node)
+	if err != nil {
 		return false, "realm-install-failed", err
 	}
 	if err := a.ensureUnit(ctx, client.Client, hop.Node, hop.RouteSlug); err != nil {
@@ -121,6 +122,16 @@ func (a *Applier) applyHop(ctx context.Context, hop *planner.HopPlan) (bool, str
 		return false, "read-config-failed", err
 	}
 	if current == hop.Config {
+		// A replaced binary does not reach the running process. Left alone the
+		// relay keeps serving the old build while `realm --version` reports the
+		// new one, so the panel would claim an upgrade that never took effect.
+		if replacedRealm {
+			if err := a.restart(ctx, client.Client, hop.Node, hop.RouteSlug); err != nil {
+				return false, "restart-failed", err
+			}
+			return true, "realm-upgraded", nil
+		}
+
 		// Still confirm the service is actually running: a matching config on
 		// a dead relay is the failure mode that hides longest.
 		active, err := a.isActive(ctx, client.Client, hop.Node, hop.RouteSlug)
@@ -146,39 +157,44 @@ func (a *Applier) applyHop(ctx context.Context, hop *planner.HopPlan) (bool, str
 }
 
 // ensureRealm installs or upgrades the pinned realm build on the node and
-// makes sure the directories it needs exist.
-func (a *Applier) ensureRealm(ctx context.Context, client *ssh.Client, node *model.Node) error {
+// makes sure the directories it needs exist. It reports whether the binary on
+// disk was replaced, which the caller must turn into a restart: an already
+// running relay goes on serving the build it started with.
+func (a *Applier) ensureRealm(ctx context.Context, client *ssh.Client, node *model.Node) (bool, error) {
 	// These must be created unconditionally. realm refuses to start when it
 	// cannot open its log file, and a node that already carries the right
 	// realm build would otherwise skip directory creation entirely and end up
 	// in a restart loop.
 	if _, err := sshx.RunCheck(ctx, client, "mkdir -p /etc/fluxlite/realm /var/log/fluxlite"); err != nil {
-		return fmt.Errorf("create directories: %w", err)
+		return false, fmt.Errorf("create directories: %w", err)
 	}
 
 	res, err := sshx.Run(ctx, client, realmPath+" --version 2>/dev/null | head -1")
 	if err != nil {
-		return fmt.Errorf("check realm: %w", err)
+		return false, fmt.Errorf("check realm: %w", err)
 	}
 	installed := ""
 	if fields := strings.Fields(strings.TrimSpace(res.Stdout)); len(fields) >= 2 {
 		installed = fields[1]
 	}
 	if installed == a.realm.Version() {
-		return nil
+		return false, nil
 	}
 
 	bin, err := a.realm.Binary(ctx, node.Arch)
 	if err != nil {
-		return fmt.Errorf("obtain realm for %s: %w", node.Arch, err)
+		return false, fmt.Errorf("obtain realm for %s: %w", node.Arch, err)
 	}
 	if err := sshx.WriteFile(ctx, client, realmPath, bin, "0755"); err != nil {
-		return fmt.Errorf("upload realm: %w", err)
+		return false, fmt.Errorf("upload realm: %w", err)
 	}
 	if _, err := sshx.RunCheck(ctx, client, realmPath+" --version"); err != nil {
-		return fmt.Errorf("verify realm after upload: %w", err)
+		return false, fmt.Errorf("verify realm after upload: %w", err)
 	}
-	return nil
+
+	// A first install is not an upgrade: nothing is running yet, and the
+	// caller is about to start it anyway.
+	return installed != "", nil
 }
 
 // ensureUnit installs the service definition for the node's init system.
@@ -341,4 +357,17 @@ func (a *Applier) Status(ctx context.Context, node *model.Node, slug string) (bo
 		return false, fmt.Errorf("connect to %s: %w", node.Name, err)
 	}
 	return a.isActive(ctx, client.Client, node, slug)
+}
+
+// InstallRealm puts the pinned realm build on a node without deploying a
+// route. A node carries no relay until a route reaches it, so its kernel would
+// otherwise stay absent until the first deploy — leaving an operator unable to
+// tell "not needed yet" apart from "install is broken" until the moment they
+// need it to work.
+func (a *Applier) InstallRealm(ctx context.Context, node *model.Node) (bool, error) {
+	client, err := a.pool.Get(ctx, node)
+	if err != nil {
+		return false, fmt.Errorf("connect to %s: %w", node.Name, err)
+	}
+	return a.ensureRealm(ctx, client.Client, node)
 }

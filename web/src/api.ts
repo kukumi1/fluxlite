@@ -219,6 +219,7 @@ export const api = {
     request<Node>(`/nodes/${id}`, { method: "PUT", body: JSON.stringify(input) }),
   deleteNode: (id: number) => request<{ ok: boolean }>(`/nodes/${id}`, { method: "DELETE" }),
   probeNode: (id: number) => post<ProbeResult>(`/nodes/${id}/probe`),
+  installRealm: (id: number) => post<{ realm_version: string }>(`/nodes/${id}/realm`),
 
   listRoutes: () => request<Route[] | null>("/routes"),
   createRoute: (input: RouteInput) => post<Route>("/routes", input),

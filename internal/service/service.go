@@ -152,6 +152,26 @@ func (s *Service) DeleteNode(ctx context.Context, id int64) error {
 	return s.store.DeleteNode(ctx, id)
 }
 
+// InstallRealm puts the forwarding kernel on a node ahead of any route, and
+// records the version so the node list stops reporting it as absent.
+func (s *Service) InstallRealm(ctx context.Context, id int64) (string, error) {
+	node, err := s.store.NodeByID(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if node.Arch == "" {
+		return "", ErrProbeFirst
+	}
+	if _, err := s.applier.InstallRealm(ctx, node); err != nil {
+		return "", err
+	}
+	node.RealmVersion = applier.RealmVersion
+	if err := s.store.UpdateNode(ctx, node); err != nil {
+		return "", err
+	}
+	return node.RealmVersion, nil
+}
+
 // ProbeResult reports what a probe learned.
 type ProbeResult struct {
 	Facts *prober.Facts     `json:"facts"`

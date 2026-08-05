@@ -64,6 +64,21 @@ export function Nodes() {
     }
   }
 
+  async function installRealm(node: Node) {
+    setBusyId(node.id);
+    setError("");
+    setNotice("");
+    try {
+      const { realm_version } = await api.installRealm(node.id);
+      setNotice(`${node.name} 已装好转发内核 realm ${realm_version}`);
+      await load();
+    } catch (err) {
+      fail(err);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function remove(node: Node) {
     if (!confirm(`确认删除节点 ${node.name}？`)) return;
     setBusyId(node.id);
@@ -177,6 +192,16 @@ export function Nodes() {
                       >
                         {busyId === n.id ? "探测中…" : "探测"}
                       </button>
+                      {n.arch !== "" && !n.realm_version && (
+                        <button
+                          className="btn sm"
+                          disabled={busyId === n.id}
+                          title="转发内核会在第一次下发链路时自动安装，这里可以提前装好"
+                          onClick={() => void installRealm(n)}
+                        >
+                          装内核
+                        </button>
+                      )}
                       <button className="btn sm" onClick={() => setEditing(n)}>
                         编辑
                       </button>

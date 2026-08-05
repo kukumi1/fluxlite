@@ -176,6 +176,20 @@ func (s *Server) handleDisableTOTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"enrolled": false})
 }
 
+func (s *Server) handleInstallRealm(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	version, err := s.svc.InstallRealm(r.Context(), id)
+	if err != nil {
+		writeError(w, statusForError(err), err.Error())
+		return
+	}
+	s.audit(r, "node.install_realm", strconv.FormatInt(id, 10), "realm "+version)
+	writeJSON(w, http.StatusOK, map[string]string{"realm_version": version})
+}
+
 // handleRevokeSessions logs every other browser out, which is what an operator
 // reaches for when they suspect a session is loose somewhere.
 func (s *Server) handleRevokeSessions(w http.ResponseWriter, r *http.Request) {

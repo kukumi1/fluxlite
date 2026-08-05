@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 
 	_ "modernc.org/sqlite"
 )
@@ -160,7 +161,6 @@ var migrations = []string{
 		port_start     INTEGER NOT NULL,
 		port_end       INTEGER NOT NULL,
 		via_node_id    INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
-		skip_udp_probe INTEGER NOT NULL DEFAULT 0,
 		private_key    BLOB    NOT NULL,
 		authorized_key TEXT    NOT NULL,
 		expires_at     DATETIME NOT NULL,
@@ -180,6 +180,8 @@ var migrations = []string{
 	`ALTER TABLE routes ADD COLUMN slug TEXT NOT NULL DEFAULT ''`,
 	`UPDATE routes SET slug = name WHERE slug = ''`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_routes_slug ON routes(slug)`,
+
+	`ALTER TABLE enroll_tokens ADD COLUMN skip_udp_probe INTEGER NOT NULL DEFAULT 0`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -201,14 +203,47 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 
 	for i := current; i < len(migrations); i++ {
-		if _, err := s.db.ExecContext(ctx, migrations[i]); err != nil {
-			return fmt.Errorf("apply migration %d: %w", i+1, err)
+		done, err := s.alreadyApplied(ctx, migrations[i])
+		if err != nil {
+			return err
+		}
+		if !done {
+			if _, err := s.db.ExecContext(ctx, migrations[i]); err != nil {
+				return fmt.Errorf("apply migration %d: %w", i+1, err)
+			}
 		}
 		if _, err := s.db.ExecContext(ctx, `UPDATE schema_version SET version = ?`, i+1); err != nil {
 			return fmt.Errorf("record migration %d: %w", i+1, err)
 		}
 	}
 	return nil
+}
+
+var addColumnPattern = regexp.MustCompile(`(?i)^\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)`)
+
+// alreadyApplied reports whether a migration's effect is present regardless of
+// what schema_version claims.
+//
+// Only ADD COLUMN can legitimately be a no-op. SQLite has no ADD COLUMN IF NOT
+// EXISTS, so a database created from a CREATE TABLE that already lists the
+// column would fail here on every start: its schema_version says the migration
+// is pending while its schema says it is done. Every other statement must
+// apply cleanly, so an unrecognised one is always executed.
+func (s *Store) alreadyApplied(ctx context.Context, stmt string) (bool, error) {
+	m := addColumnPattern.FindStringSubmatch(stmt)
+	if m == nil {
+		return false, nil
+	}
+	return s.hasColumn(ctx, m[1], m[2])
+}
+
+func (s *Store) hasColumn(ctx context.Context, table, column string) (bool, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&n); err != nil {
+		return false, fmt.Errorf("inspect %s.%s: %w", table, column, err)
+	}
+	return n > 0, nil
 }
 
 // inTx runs fn inside a transaction, rolling back on error.

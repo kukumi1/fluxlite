@@ -202,7 +202,7 @@ func renderConfig(route *model.Route, listen int, remote string) string {
 
 	b.WriteString("[log]\n")
 	b.WriteString("level = \"warn\"\n")
-	fmt.Fprintf(&b, "output = %q\n\n", LogPath(route.Name))
+	fmt.Fprintf(&b, "output = %q\n\n", LogPath(route.Slug))
 
 	b.WriteString("[network]\n")
 	b.WriteString("no_tcp = false\n")

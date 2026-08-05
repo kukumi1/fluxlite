@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -22,9 +23,16 @@ const RealmVersion = "2.9.4"
 const maxBinarySize = 64 << 20
 
 // releaseAsset maps a Go architecture to realm's release artifact name.
+//
+// The musl builds are statically linked and therefore run everywhere: on
+// Alpine, and equally on glibc distributions. The gnu builds do not — they
+// need /lib64/ld-linux-x86-64.so.2, and a kernel that cannot find a binary's
+// interpreter reports plain ENOENT, so Alpine answers a perfectly valid
+// x86-64 executable with "not found" and the failure looks like a CPU
+// architecture mismatch.
 var releaseAsset = map[string]string{
-	"amd64": "realm-x86_64-unknown-linux-gnu.tar.gz",
-	"arm64": "realm-aarch64-unknown-linux-gnu.tar.gz",
+	"amd64": "realm-x86_64-unknown-linux-musl.tar.gz",
+	"arm64": "realm-aarch64-unknown-linux-musl.tar.gz",
 }
 
 // downloadMirrors are tried in order. The bare GitHub URL usually fails from
@@ -79,7 +87,7 @@ func (s *CachedRealmSource) Binary(ctx context.Context, arch string) ([]byte, er
 	}
 	s.mu.Unlock()
 
-	path := filepath.Join(s.dir, fmt.Sprintf("realm-%s-%s", s.version, arch))
+	path := s.cachePath(asset)
 	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
 		s.store(arch, b)
 		return b, nil
@@ -97,6 +105,13 @@ func (s *CachedRealmSource) Binary(ctx context.Context, arch string) ([]byte, er
 	}
 	s.store(arch, bin)
 	return bin, nil
+}
+
+// cachePath keys the on-disk cache by release asset rather than architecture.
+// Keying it by architecture would let a panel that had already cached a
+// different build of the same version keep serving the old binary forever.
+func (s *CachedRealmSource) cachePath(asset string) string {
+	return filepath.Join(s.dir, s.version+"-"+strings.TrimSuffix(asset, ".tar.gz"))
 }
 
 func (s *CachedRealmSource) store(arch string, b []byte) {

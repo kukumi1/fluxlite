@@ -133,7 +133,12 @@ else
     chmod +x /tmp/.realm.new
     mv -f /tmp/.realm.new /usr/local/bin/realm
     REALM_VER="$(/usr/local/bin/realm --version 2>/dev/null | awk '{print $2}' || true)"
-    [ -n "$REALM_VER" ] || die "realm 安装后无法执行，可能架构不匹配"
+    if [ -z "$REALM_VER" ]; then
+        # 真实原因必须原样带出来。内核找不到动态链接器时只返回 ENOENT，
+        # shell 把它显示成 "not found"，看上去就像架构不对，其实是 libc 不匹配。
+        REALM_ERR="$(/usr/local/bin/realm --version 2>&1 | head -2 || true)"
+        die "realm 无法执行: ${REALM_ERR:-无输出}"
+    fi
     ok "realm $REALM_VER 已安装"
 fi
 

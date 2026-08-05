@@ -26,10 +26,18 @@ type Facts struct {
 
 // Probe collects basic facts over an established SSH connection.
 func Probe(ctx context.Context, client *ssh.Client) (*Facts, error) {
+	// The init system is decided on the node rather than from PID 1's name.
+	// Alpine's ps is busybox, which has no -p or -o, so asking it about PID 1
+	// yields a usage message instead of an answer — and Alpine is exactly the
+	// system this needs to get right. /proc/1/comm remains as a fallback for
+	// hosts with neither marker.
 	const script = `
 uname -m
 . /etc/os-release 2>/dev/null && echo "${ID:-unknown}" || echo unknown
-ps -p 1 -o comm= 2>/dev/null || echo unknown
+if [ -d /run/systemd/system ]; then echo systemd
+elif command -v rc-service >/dev/null 2>&1 || [ -x /sbin/openrc-run ]; then echo openrc
+else cat /proc/1/comm 2>/dev/null || echo unknown
+fi
 (command -v realm >/dev/null && realm --version 2>/dev/null | head -1) || echo ""
 hostname 2>/dev/null || echo ""
 `
@@ -75,12 +83,14 @@ func normaliseArch(uname string) string {
 	}
 }
 
-func detectInit(comm string) model.InitSystem {
+// detectInit reads the node's verdict, or PID 1's name when the node had no
+// marker to go on.
+func detectInit(token string) model.InitSystem {
 	switch {
-	case strings.Contains(comm, "systemd"):
+	case strings.Contains(token, "systemd"):
 		return model.InitSystemd
-	// Alpine's PID 1 is busybox init driving OpenRC.
-	case strings.Contains(comm, "init"), strings.Contains(comm, "openrc"), strings.Contains(comm, "busybox"):
+	// Alpine's PID 1 reports as plain "init": busybox driving OpenRC.
+	case strings.Contains(token, "init"), strings.Contains(token, "openrc"), strings.Contains(token, "busybox"):
 		return model.InitOpenRC
 	default:
 		return model.InitUnknown

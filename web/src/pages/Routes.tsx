@@ -12,6 +12,17 @@ import {
 } from "../api";
 import { Banner, Modal } from "../components/Modal";
 
+// onNodeIdentity spells out what a route is called on the machines. A display
+// name of "腾讯-IX-TW-SC" gives no hint that the unit to inspect is tw-b, and
+// that is exactly what an operator needs at the moment they are logged in.
+function onNodeIdentity(slug: string): string {
+  return (
+    `节点上的标识：${slug}\n` +
+    `服务：fluxlite-relay@${slug}（OpenRC 为 fluxlite-${slug}）\n` +
+    `配置：/etc/fluxlite/realm/${slug}.toml`
+  );
+}
+
 // staleAfterMs is how long a sample stays trustworthy. Sampling runs every 30
 // seconds, so anything several rounds old means the node stopped answering and
 // the number on screen is frozen, not live.
@@ -172,9 +183,10 @@ export function Routes() {
             <div className="spread">
               <div>
                 <h2 style={{ marginBottom: 6 }}>
-                  {route.name}{" "}
-                  <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>
-                    ({route.slug})
+                  {/* The slug is only ever needed while logged into a node, so
+                      it is one hover away rather than occupying the title. */}
+                  <span className="has-detail" title={onNodeIdentity(route.slug)}>
+                    {route.name}
                   </span>{" "}
                   <span className={`tag ${route.enabled ? "ok" : ""}`}>
                     {route.enabled ? "已启用" : "已停用"}

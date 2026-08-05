@@ -329,6 +329,12 @@ select:focus {
   color: var(--warn);
 }
 
+/* Hints that hovering reveals something, without the noise of showing it. */
+.has-detail {
+  border-bottom: 1px dotted var(--border);
+  cursor: help;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

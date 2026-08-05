@@ -182,6 +182,12 @@ var migrations = []string{
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_routes_slug ON routes(slug)`,
 
 	`ALTER TABLE enroll_tokens ADD COLUMN skip_udp_probe INTEGER NOT NULL DEFAULT 0`,
+
+	// Verification measures each hop's reach to what it forwards to. Keeping
+	// the result lets the route list show the shape of the chain's latency
+	// without re-running a probe on every page load.
+	`ALTER TABLE route_hops ADD COLUMN latency_ms INTEGER`,
+	`ALTER TABLE route_hops ADD COLUMN latency_at DATETIME`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

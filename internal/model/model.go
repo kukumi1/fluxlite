@@ -235,6 +235,16 @@ type RouteHop struct {
 	// RelayPort is the port this hop listens on. For hop 0 it mirrors
 	// Route.EntryPort; for later hops it is allocated from the node's pool.
 	RelayPort int `json:"relay_port"`
+
+	// LatencyMS is how long this hop took to reach what it forwards to — the
+	// next hop, or the landing target for the final hop. It is nil until a
+	// verification measures it, and nil is never shown as zero: an unmeasured
+	// link and an instant one are not the same claim.
+	LatencyMS *int `json:"latency_ms"`
+
+	// LatencyAt records when that measurement was taken, so a stale number is
+	// recognisable as one.
+	LatencyAt *time.Time `json:"latency_at"`
 }
 
 var (

@@ -241,7 +241,7 @@ func scanRoute(row interface{ Scan(...any) error }) (*model.Route, error) {
 
 func (s *Store) loadHops(ctx context.Context, r *model.Route) error {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT route_id, hop_order, node_id, relay_port
+		SELECT route_id, hop_order, node_id, relay_port, latency_ms, latency_at
 		FROM route_hops WHERE route_id = ? ORDER BY hop_order`, r.ID)
 	if err != nil {
 		return fmt.Errorf("query hops: %w", err)
@@ -251,8 +251,19 @@ func (s *Store) loadHops(ctx context.Context, r *model.Route) error {
 	r.Hops = nil
 	for rows.Next() {
 		var h model.RouteHop
-		if err := rows.Scan(&h.RouteID, &h.HopOrder, &h.NodeID, &h.RelayPort); err != nil {
+		var latency sql.NullInt64
+		var measured sql.NullTime
+		if err := rows.Scan(&h.RouteID, &h.HopOrder, &h.NodeID, &h.RelayPort,
+			&latency, &measured); err != nil {
 			return fmt.Errorf("scan hop: %w", err)
+		}
+		if latency.Valid {
+			ms := int(latency.Int64)
+			h.LatencyMS = &ms
+		}
+		if measured.Valid {
+			at := measured.Time
+			h.LatencyAt = &at
 		}
 		r.Hops = append(r.Hops, h)
 	}
@@ -263,4 +274,25 @@ func (s *Store) loadHops(ctx context.Context, r *model.Route) error {
 		r.EntryPort = r.Hops[0].RelayPort
 	}
 	return nil
+}
+
+// SetHopLatencies records the measurement a verification produced for each
+// hop. A hop whose latency could not be measured is left untouched rather than
+// cleared, so one probe that hit a node without a usable timer does not erase
+// an earlier good reading.
+func (s *Store) SetHopLatencies(ctx context.Context, routeID int64, latencies map[int]int) error {
+	if len(latencies) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		for hopOrder, ms := range latencies {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE route_hops SET latency_ms = ?, latency_at = ?
+				WHERE route_id = ? AND hop_order = ?`, ms, now, routeID, hopOrder); err != nil {
+				return fmt.Errorf("record hop %d latency: %w", hopOrder, err)
+			}
+		}
+		return nil
+	})
 }

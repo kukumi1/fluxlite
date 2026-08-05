@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/kukumi1/fluxlite/internal/applier"
@@ -32,10 +33,14 @@ type Service struct {
 	applier  *applier.Applier
 	verifier *verifier.Verifier
 	realm    applier.RealmSource
+	log      *slog.Logger
 }
 
-func New(st *store.Store, sealer *cryptox.Sealer, pool *sshx.Pool, ap *applier.Applier, vf *verifier.Verifier, realm applier.RealmSource) *Service {
-	return &Service{store: st, sealer: sealer, pool: pool, applier: ap, verifier: vf, realm: realm}
+func New(st *store.Store, sealer *cryptox.Sealer, pool *sshx.Pool, ap *applier.Applier, vf *verifier.Verifier, realm applier.RealmSource, log *slog.Logger) *Service {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &Service{store: st, sealer: sealer, pool: pool, applier: ap, verifier: vf, realm: realm, log: log}
 }
 
 // NodeInput is the client-supplied description of a node.
@@ -393,7 +398,23 @@ func (s *Service) VerifyRoute(ctx context.Context, id int64) (*verifier.Report, 
 	if err != nil {
 		return nil, err
 	}
-	return s.verifier.Verify(ctx, plan)
+	report, err := s.verifier.Verify(ctx, plan)
+	if err != nil {
+		return nil, err
+	}
+
+	latencies := make(map[int]int)
+	for _, check := range report.Checks {
+		if check.HopOrder != nil && check.LatencyMS != nil {
+			latencies[*check.HopOrder] = *check.LatencyMS
+		}
+	}
+	// The report is the operator's answer; failing to cache it must not turn a
+	// successful verification into an error.
+	if err := s.store.SetHopLatencies(ctx, id, latencies); err != nil {
+		s.log.Warn("record hop latencies", "route", route.Name, "error", err)
+	}
+	return report, nil
 }
 
 // DeleteRoute tears the route down on every hop, then removes it.

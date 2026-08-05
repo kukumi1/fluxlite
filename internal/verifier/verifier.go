@@ -39,7 +39,16 @@ type Check struct {
 	Name    string  `json:"name"`
 	Verdict Verdict `json:"verdict"`
 	Detail  string  `json:"detail"`
-	Latency string  `json:"latency,omitempty"`
+
+	// LatencyMS is nil when the check carries no timing, either because it is
+	// not a reachability probe or because the node had no timer with useful
+	// resolution. Nil is never rendered as zero.
+	LatencyMS *int `json:"latency_ms,omitempty"`
+
+	// HopOrder ties a reachability check back to the hop that performed it, so
+	// the measurement can be stored against that hop. It is nil for checks
+	// that belong to the route as a whole.
+	HopOrder *int `json:"-"`
 }
 
 // Report is the outcome of verifying a route.
@@ -69,6 +78,7 @@ func (v *Verifier) Verify(ctx context.Context, plan *planner.Plan) (*Report, err
 		to := plan.Hops[i+1]
 		check := v.checkReachable(ctx, from.Node, to.Node.Host, to.Listen,
 			fmt.Sprintf("hop %d (%s) -> hop %d (%s)", i, from.Node.Name, i+1, to.Node.Name))
+		check.HopOrder = &plan.Hops[i].HopOrder
 		report.Checks = append(report.Checks, check)
 	}
 
@@ -77,9 +87,10 @@ func (v *Verifier) Verify(ctx context.Context, plan *planner.Plan) (*Report, err
 	if err != nil {
 		return nil, err
 	}
-	report.Checks = append(report.Checks,
-		v.checkReachable(ctx, last.Node, host, portStr,
-			fmt.Sprintf("hop %d (%s) -> target %s", last.HopOrder, last.Node.Name, plan.Route.Target)))
+	lastCheck := v.checkReachable(ctx, last.Node, host, portStr,
+		fmt.Sprintf("hop %d (%s) -> target %s", last.HopOrder, last.Node.Name, plan.Route.Target))
+	lastCheck.HopOrder = &plan.Hops[len(plan.Hops)-1].HopOrder
+	report.Checks = append(report.Checks, lastCheck)
 
 	proof, proven := v.proveDelivery(ctx, plan, host, portStr)
 	report.Checks = append(report.Checks, proof)
@@ -104,22 +115,24 @@ func (v *Verifier) checkReachable(ctx context.Context, from *model.Node, host st
 	if len(fields) < 2 {
 		return Check{Name: name, Verdict: VerdictUnknown, Detail: "probe produced no result"}
 	}
-	latency := ""
-	if fields[1] != "-" {
-		latency = fields[1] + "ms"
+	var latency *int
+	if ms, err := strconv.Atoi(fields[1]); err == nil {
+		latency = &ms
 	}
 	switch fields[0] {
 	case "none":
 		return Check{Name: name, Verdict: VerdictUnknown,
 			Detail: "node has no usable probe tool (need python3, bash or nc)"}
 	case "fail":
-		return Check{Name: name, Verdict: VerdictFail, Detail: "connection refused or timed out", Latency: latency}
+		// A failed connect's timing measures how long the failure took, which
+		// says nothing about the link, so it is discarded.
+		return Check{Name: name, Verdict: VerdictFail, Detail: "connection refused or timed out"}
 	}
 	return Check{
-		Name:    name,
-		Verdict: VerdictPass,
-		Detail:  "TCP connect succeeded (does not by itself prove the payload is relayed)",
-		Latency: latency,
+		Name:      name,
+		Verdict:   VerdictPass,
+		Detail:    "TCP connect succeeded (does not by itself prove the payload is relayed)",
+		LatencyMS: latency,
 	}
 }
 

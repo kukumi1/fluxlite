@@ -36,6 +36,9 @@ export interface RouteHop {
   hop_order: number;
   node_id: number;
   relay_port: number;
+  // Latency of this hop's outgoing link, null until a verification measures it.
+  latency_ms: number | null;
+  latency_at: string | null;
 }
 
 export interface Route {
@@ -68,7 +71,7 @@ export interface Check {
   name: string;
   verdict: "pass" | "fail" | "unknown";
   detail: string;
-  latency?: string;
+  latency_ms?: number;
 }
 
 export interface VerifyReport {

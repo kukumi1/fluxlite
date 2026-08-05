@@ -308,6 +308,21 @@ select:focus {
 
 .chain .arrow {
   color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chain .lat {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.chain .lat.total {
+  padding: 2px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
 }
 
 .modal-backdrop {

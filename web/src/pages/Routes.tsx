@@ -5,11 +5,37 @@ import {
   type ApplyResult,
   type Node,
   type Route,
+  type RouteHop,
   type RouteInput,
   type RouteStatus,
   type VerifyReport,
 } from "../api";
 import { Banner, Modal } from "../components/Modal";
+
+// Link is the arrow between a hop and whatever it forwards to, carrying that
+// leg's measured latency. An unmeasured leg shows no number rather than a
+// zero, which would read as "instant".
+function Link({ ms, at }: { ms: number | null; at: string | null }) {
+  if (ms === null) return <span className="arrow">→</span>;
+  return (
+    <span className="arrow" title={at ? `测于 ${new Date(at).toLocaleString()}` : undefined}>
+      →<span className="lat">{ms}ms</span>
+    </span>
+  );
+}
+
+// ChainTotal sums the legs. It is deliberately absent unless every leg has
+// been measured: a partial sum understates the chain and invites the wrong
+// conclusion about which link is slow.
+function ChainTotal({ hops }: { hops: RouteHop[] }) {
+  if (hops.length === 0 || hops.some((h) => h.latency_ms === null)) return null;
+  const total = hops.reduce((sum, h) => sum + (h.latency_ms ?? 0), 0);
+  return (
+    <span className="lat total" title="各段建连耗时之和，不是端到端实测往返">
+      合计 {total}ms
+    </span>
+  );
+}
 
 export function Routes() {
   const [routes, setRoutes] = useState<Route[]>([]);
@@ -98,7 +124,7 @@ export function Routes() {
                   <span className="tag">{route.protocol}</span>
                 </h2>
                 <div className="chain">
-                  {route.hops.map((hop, i) => {
+                  {route.hops.map((hop) => {
                     const running = hopRunning(route.id, hop.hop_order);
                     return (
                       <span key={hop.hop_order} className="chain">
@@ -107,12 +133,12 @@ export function Routes() {
                           <span className="muted"> :{hop.relay_port}</span>
                           {running === false && <span className="muted"> ✕</span>}
                         </span>
-                        {i < route.hops.length - 1 && <span className="arrow">→</span>}
+                        <Link ms={hop.latency_ms} at={hop.latency_at} />
                       </span>
                     );
                   })}
-                  <span className="arrow">→</span>
                   <span className="hop mono">{route.target}</span>
+                  <ChainTotal hops={route.hops} />
                 </div>
                 <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
                   客户端连接：
@@ -261,7 +287,7 @@ export function Routes() {
                     {c.verdict === "pass" ? "通过" : c.verdict === "fail" ? "失败" : "未知"}
                   </span>
                   <strong>{c.name}</strong>
-                  {c.latency && <span className="muted">{c.latency}</span>}
+                  {c.latency_ms !== undefined && <span className="muted">{c.latency_ms}ms</span>}
                 </div>
                 <div className="muted" style={{ fontSize: 13 }}>
                   {c.detail}

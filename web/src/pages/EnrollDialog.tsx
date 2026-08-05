@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { api, ApiError, type EnrollRequest, type EnrollTicket, type Node } from "../api";
+import {
+  api,
+  ApiError,
+  DEFAULT_PORT_END,
+  DEFAULT_PORT_START,
+  type EnrollRequest,
+  type EnrollTicket,
+  type Node,
+} from "../api";
 import { Banner, Modal } from "../components/Modal";
 
 interface Props {
@@ -14,8 +22,8 @@ export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
     host: "",
     ssh_port: 22,
     ssh_user: "root",
-    port_start: 1,
-    port_end: 65535,
+    port_start: DEFAULT_PORT_START,
+    port_end: DEFAULT_PORT_END,
     via_node_id: null,
     skip_udp_probe: false,
   });
@@ -180,9 +188,10 @@ export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
           </label>
         </div>
         <p className="hint">
-          默认放开全部端口。分配时会从起始端口向上取第一个空闲端口，并自动跳过节点上
-          已被其他服务占用的端口（sshd、网页服务等）。NAT 机器请改成服务商实际映射到
-          本机的范围，否则会分配到映射之外、外部根本连不进来的端口。
+          分配时会从起始端口向上取第一个空闲端口，并自动跳过节点上已被其他服务占用的
+          端口（sshd、网页服务等）。起始端口默认避开 1-9999，那一段既有特权端口也常被
+          系统服务占用。NAT 机器请改成服务商实际映射到本机的范围，否则会分配到映射之
+          外、外部根本连不进来的端口。
         </p>
 
         <label>

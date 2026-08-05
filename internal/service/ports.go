@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/kukumi1/fluxlite/internal/model"
 	"github.com/kukumi1/fluxlite/internal/sshx"
+	"github.com/kukumi1/fluxlite/internal/store"
 )
 
 // liveLookup answers port-allocation queries with both the ports fluxlite has
@@ -27,6 +29,10 @@ type liveLookup struct {
 	// unreachable records nodes that could not be probed, so the failure is
 	// reported once rather than retried for every hop.
 	unreachable map[int64]error
+
+	// own maps a node to the ports the route being edited already holds there.
+	own       map[int64]map[int]bool
+	ownLoaded bool
 }
 
 func (s *Service) newLiveLookup(excludeRouteID *int64) *liveLookup {
@@ -54,10 +60,44 @@ func (l *liveLookup) UsedPortsOnNode(ctx context.Context, nodeID int64, excludeR
 	if err != nil {
 		return nil, err
 	}
+
+	// A deployed route holds its own listeners open, and the live scan cannot
+	// tell whose they are. Counting them would make every deployed route
+	// impossible to edit: its entry port would be reported as taken by itself.
+	own, err := l.ownPortsOn(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
 	for p := range live {
-		used[p] = true
+		if !own[p] {
+			used[p] = true
+		}
 	}
 	return used, nil
+}
+
+// ownPortsOn returns the ports the excluded route currently occupies on a node.
+func (l *liveLookup) ownPortsOn(ctx context.Context, nodeID int64) (map[int]bool, error) {
+	if l.excludeRouteID == nil {
+		return nil, nil
+	}
+	if !l.ownLoaded {
+		route, err := l.svc.store.RouteByID(ctx, *l.excludeRouteID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
+		l.own = make(map[int64]map[int]bool)
+		if route != nil {
+			for _, h := range route.Hops {
+				if l.own[h.NodeID] == nil {
+					l.own[h.NodeID] = make(map[int]bool)
+				}
+				l.own[h.NodeID][h.RelayPort] = true
+			}
+		}
+		l.ownLoaded = true
+	}
+	return l.own[nodeID], nil
 }
 
 func (l *liveLookup) listeningPorts(ctx context.Context, nodeID int64) (map[int]bool, error) {

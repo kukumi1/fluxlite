@@ -3,6 +3,13 @@ export type Protocol = "tcp" | "tcp+udp";
 export type NodeStatus = "unknown" | "online" | "offline";
 export type InitSystem = "systemd" | "openrc" | "";
 
+// Ports are allocated upward from the start of the pool, so starting at 1
+// would hand the first route a privileged port that scanners flag and cloud
+// security-group templates treat specially. 10000 keeps allocations in the
+// range operators expect to see.
+export const DEFAULT_PORT_START = 10000;
+export const DEFAULT_PORT_END = 65535;
+
 export interface Node {
   id: number;
   name: string;

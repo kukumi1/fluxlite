@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
-import { api, ApiError, type Node, type NodeInput, type ProbeResult } from "../api";
+import {
+  api,
+  ApiError,
+  DEFAULT_PORT_END,
+  DEFAULT_PORT_START,
+  type Node,
+  type NodeInput,
+  type ProbeResult,
+} from "../api";
 import { Banner, Modal } from "../components/Modal";
 import { EnrollDialog } from "./EnrollDialog";
 
@@ -11,8 +19,8 @@ const emptyInput: NodeInput = {
   auth_type: "password",
   secret: "",
   via_node_id: null,
-  port_start: 1,
-  port_end: 65535,
+  port_start: DEFAULT_PORT_START,
+  port_end: DEFAULT_PORT_END,
   skip_udp_probe: false,
 };
 
@@ -386,7 +394,8 @@ function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
           </label>
         </div>
         <p className="hint">
-          默认放开全部端口，分配时会自动跳过节点上已被占用的端口。
+          分配时会从起始端口向上取第一个空闲端口，并自动跳过节点上已被占用的端口。
+          起始端口默认避开 1-9999。
           NAT 机器只能填服务商实际映射到本机的端口范围。
         </p>
 

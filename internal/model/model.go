@@ -245,6 +245,15 @@ type RouteHop struct {
 	// LatencyAt records when that measurement was taken, so a stale number is
 	// recognisable as one.
 	LatencyAt *time.Time `json:"latency_at"`
+
+	// Running is the relay's state as of the last sample, nil when it has
+	// never been checked. Nil is not false: "not yet known" and "confirmed
+	// down" call for different reactions.
+	Running *bool `json:"running"`
+
+	// CheckedAt dates the liveness sample. A sample that stopped refreshing
+	// describes a node that stopped answering, not a healthy relay.
+	CheckedAt *time.Time `json:"checked_at"`
 }
 
 var (

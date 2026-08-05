@@ -8,6 +8,7 @@ package watcher
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/kukumi1/fluxlite/internal/model"
@@ -21,7 +22,7 @@ type Watcher struct {
 	store    *store.Store
 	log      *slog.Logger
 	interval time.Duration
-	latency  time.Duration
+	sample   time.Duration
 }
 
 // Config configures the watcher.
@@ -34,10 +35,11 @@ type Config struct {
 	// drifted routes.
 	Interval time.Duration
 
-	// LatencyInterval governs latency sampling. It is far shorter because a
-	// sample is one TCP connect per hop over an already-open SSH connection,
-	// where reconciliation runs a full probe including the UDP check.
-	LatencyInterval time.Duration
+	// SampleInterval governs runtime sampling: liveness and latency per hop.
+	// It is far shorter than Interval because a sample is two short commands
+	// per hop over an already-open SSH connection, where reconciliation probes
+	// every node and compares every config.
+	SampleInterval time.Duration
 }
 
 func New(cfg Config) *Watcher {
@@ -45,49 +47,70 @@ func New(cfg Config) *Watcher {
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
-	latency := cfg.LatencyInterval
-	if latency <= 0 {
-		latency = 30 * time.Second
+	sample := cfg.SampleInterval
+	if sample <= 0 {
+		sample = 30 * time.Second
 	}
 	return &Watcher{
 		svc: cfg.Service, store: cfg.Store, log: cfg.Logger,
-		interval: interval, latency: latency,
+		interval: interval, sample: sample,
 	}
 }
 
-// Run blocks until ctx is cancelled, reconciling on each tick.
+// Run blocks until ctx is cancelled.
+//
+// Reconciliation and sampling run on separate goroutines because they operate
+// on wildly different timescales: a reconcile probes every node, UDP check
+// included, and takes minutes on a fleet of any size. Sharing one loop let it
+// starve the sampler for that entire stretch, which is the opposite of what a
+// thirty-second sample interval promises.
 func (w *Watcher) Run(ctx context.Context) {
-	ticker := time.NewTicker(w.interval)
-	defer ticker.Stop()
-	latencyTicker := time.NewTicker(w.latency)
-	defer latencyTicker.Stop()
+	var wg sync.WaitGroup
+	wg.Add(2)
 
-	w.reconcile(ctx)
+	go func() {
+		defer wg.Done()
+		w.loop(ctx, w.interval, w.reconcile, true)
+	}()
+	go func() {
+		defer wg.Done()
+		w.loop(ctx, w.sample, w.sampleRoutes, true)
+	}()
+
+	wg.Wait()
+}
+
+// loop runs fn on a ticker, optionally once up front.
+func (w *Watcher) loop(ctx context.Context, every time.Duration, fn func(context.Context), immediate bool) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+
+	if immediate {
+		fn(ctx)
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			w.reconcile(ctx)
-		case <-latencyTicker.C:
-			w.sampleLatencies(ctx)
+			fn(ctx)
 		}
 	}
 }
 
-// sampleLatencies refreshes the per-hop timings shown on the route list.
+// sampleRoutes refreshes the liveness and timings shown on the route list.
 //
-// A sample that outlives its interval is dropped rather than queued: the next
-// tick produces a fresher number than a backlog ever could, and letting rounds
+// A round that outlives its interval is dropped rather than queued: the next
+// tick produces fresher facts than a backlog ever could, and letting rounds
 // pile up would multiply the load on the very nodes that are already slow.
-func (w *Watcher) sampleLatencies(ctx context.Context) {
+func (w *Watcher) sampleRoutes(ctx context.Context) {
 	routes, err := w.store.ListRoutes(ctx)
 	if err != nil {
-		w.log.Error("list routes for latency sampling", "error", err)
+		w.log.Error("list routes for sampling", "error", err)
 		return
 	}
 
-	deadline, cancel := context.WithTimeout(ctx, w.latency)
+	deadline, cancel := context.WithTimeout(ctx, w.sample)
 	defer cancel()
 
 	for _, route := range routes {
@@ -99,11 +122,11 @@ func (w *Watcher) sampleLatencies(ctx context.Context) {
 			return
 		default:
 		}
-		if err := w.svc.MeasureRouteLatencies(deadline, route.ID); err != nil {
+		if err := w.svc.SampleRoute(deadline, route.ID); err != nil {
 			// An unreachable node is ordinary here and already visible as the
 			// node's status, so this stays at debug rather than crying wolf
 			// every half minute.
-			w.log.Debug("latency sample failed", "route", route.Name, "error", err)
+			w.log.Debug("route sample failed", "route", route.Name, "error", err)
 		}
 	}
 }
@@ -148,41 +171,31 @@ func (w *Watcher) refreshNodeStatus(ctx context.Context) {
 	}
 }
 
-// reconcileRoutes re-applies enabled routes whose relays are not running.
-// Apply is idempotent: an unchanged config on a healthy service is a no-op,
-// so this only acts where something actually drifted.
+// reconcileRoutes re-applies every enabled route.
+//
+// Apply is idempotent by hash: a config that already matches on a running
+// service is left completely alone, so this costs a comparison per hop and
+// touches nothing that has not drifted.
+//
+// It deliberately does not gate on liveness. Gating there caught a relay that
+// had died but never a config someone had edited by hand — the process keeps
+// running happily on the edited file, and the drift would survive until the
+// next manual deploy. Rewriting it restarts the relay, which is the point:
+// what the node is running is no longer what the panel was asked for.
 func (w *Watcher) reconcileRoutes(ctx context.Context) {
-	statuses, err := w.svc.RouteStatuses(ctx)
+	routes, err := w.store.ListRoutes(ctx)
 	if err != nil {
-		w.log.Error("read route statuses", "error", err)
+		w.log.Error("list routes for reconcile", "error", err)
 		return
 	}
 
-	for _, status := range statuses {
+	for _, route := range routes {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-
-		route, err := w.store.RouteByID(ctx, status.RouteID)
-		if err != nil {
-			w.log.Error("load route", "route", status.Name, "error", err)
-			continue
-		}
 		if !route.Enabled {
-			continue
-		}
-
-		needsApply := false
-		for _, hop := range status.Hops {
-			if !hop.Running {
-				needsApply = true
-				w.log.Warn("relay not running, scheduling reconcile",
-					"route", status.Name, "node", hop.NodeName, "hop", hop.HopOrder, "error", hop.Error)
-			}
-		}
-		if !needsApply {
 			continue
 		}
 
@@ -203,6 +216,14 @@ func (w *Watcher) reconcileRoutes(ctx context.Context) {
 			}
 			continue
 		}
-		w.log.Info("route reconciled", "route", route.Name)
+
+		// Only a hop that actually changed is worth a line in the log; a quiet
+		// reconcile of a healthy fleet should stay quiet.
+		for _, hop := range result.Hops {
+			if hop.Changed {
+				w.log.Warn("node state had drifted, corrected",
+					"route", route.Name, "node", hop.NodeName, "action", hop.Action)
+			}
+		}
 	}
 }

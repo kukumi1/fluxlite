@@ -363,6 +363,11 @@ select:focus {
   border-color: color-mix(in srgb, var(--err) 55%, transparent);
 }
 
+.chain .hop.unsure {
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+  border-style: dashed;
+}
+
 .chain .arrow {
   color: var(--muted);
   display: inline-flex;

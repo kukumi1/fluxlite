@@ -188,6 +188,13 @@ var migrations = []string{
 	// without re-running a probe on every page load.
 	`ALTER TABLE route_hops ADD COLUMN latency_ms INTEGER`,
 	`ALTER TABLE route_hops ADD COLUMN latency_at DATETIME`,
+
+	// Liveness is sampled in the background alongside latency. Reading it from
+	// here keeps the status endpoint a database query; asking the nodes on
+	// every page load meant an SSH session per hop, which is why the route
+	// list could not poll it.
+	`ALTER TABLE route_hops ADD COLUMN running INTEGER`,
+	`ALTER TABLE route_hops ADD COLUMN checked_at DATETIME`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

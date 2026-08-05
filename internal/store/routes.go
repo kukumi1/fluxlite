@@ -309,7 +309,8 @@ func scanRoute(row interface{ Scan(...any) error }) (*model.Route, error) {
 
 func (s *Store) loadHops(ctx context.Context, r *model.Route) error {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT route_id, hop_order, node_id, relay_port, latency_ms, latency_at
+		SELECT route_id, hop_order, node_id, relay_port,
+			latency_ms, latency_at, running, checked_at
 		FROM route_hops WHERE route_id = ? ORDER BY hop_order`, r.ID)
 	if err != nil {
 		return fmt.Errorf("query hops: %w", err)
@@ -321,8 +322,10 @@ func (s *Store) loadHops(ctx context.Context, r *model.Route) error {
 		var h model.RouteHop
 		var latency sql.NullInt64
 		var measured sql.NullTime
+		var running sql.NullBool
+		var checked sql.NullTime
 		if err := rows.Scan(&h.RouteID, &h.HopOrder, &h.NodeID, &h.RelayPort,
-			&latency, &measured); err != nil {
+			&latency, &measured, &running, &checked); err != nil {
 			return fmt.Errorf("scan hop: %w", err)
 		}
 		if latency.Valid {
@@ -332,6 +335,14 @@ func (s *Store) loadHops(ctx context.Context, r *model.Route) error {
 		if measured.Valid {
 			at := measured.Time
 			h.LatencyAt = &at
+		}
+		if running.Valid {
+			up := running.Bool
+			h.Running = &up
+		}
+		if checked.Valid {
+			at := checked.Time
+			h.CheckedAt = &at
 		}
 		r.Hops = append(r.Hops, h)
 	}
@@ -363,4 +374,28 @@ func (s *Store) SetHopLatencies(ctx context.Context, routeID int64, latencies ma
 		}
 		return nil
 	})
+}
+
+// SetHopRunning records a liveness sample for one hop.
+func (s *Store) SetHopRunning(ctx context.Context, routeID int64, hopOrder int, running bool) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE route_hops SET running = ?, checked_at = ?
+		WHERE route_id = ? AND hop_order = ?`,
+		running, time.Now().UTC(), routeID, hopOrder)
+	if err != nil {
+		return fmt.Errorf("record hop %d liveness: %w", hopOrder, err)
+	}
+	return nil
+}
+
+// ClearHopRunning forgets a route's liveness samples. A stopped route has
+// nothing running to report, and leaving the last "up" reading in place would
+// keep the route looking healthy after it was torn down.
+func (s *Store) ClearHopRunning(ctx context.Context, routeID int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE route_hops SET running = NULL, checked_at = NULL WHERE route_id = ?`, routeID)
+	if err != nil {
+		return fmt.Errorf("clear hop liveness: %w", err)
+	}
+	return nil
 }

@@ -39,6 +39,9 @@ export interface RouteHop {
   // Latency of this hop's outgoing link, null until a verification measures it.
   latency_ms: number | null;
   latency_at: string | null;
+  // Liveness as of the last background sample; null means never checked.
+  running: boolean | null;
+  checked_at: string | null;
 }
 
 export interface Route {
@@ -100,7 +103,10 @@ export interface HopStatusEntry {
   node_name: string;
   hop_order: number;
   listen: number;
-  running: boolean;
+  // null until the background sampler has reached this hop. Not the same as
+  // false: unchecked must not be drawn as down.
+  running: boolean | null;
+  checked_at: string | null;
   error?: string;
 }
 

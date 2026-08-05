@@ -385,7 +385,23 @@ func (s *Service) ApplyRoute(ctx context.Context, id int64) (*applier.Result, er
 	if err != nil {
 		return nil, err
 	}
-	return s.applier.Apply(ctx, plan)
+	result, err := s.applier.Apply(ctx, plan)
+	if err != nil {
+		return nil, err
+	}
+
+	// The applier already confirmed each service stayed up, so the operator
+	// should not have to wait for the next sample to see it. Only hops the
+	// applier actually reached are recorded; a skipped hop is still unknown.
+	for _, hop := range result.Hops {
+		if hop.Action == "skipped" || hop.Action == "unreachable" {
+			continue
+		}
+		if serr := s.store.SetHopRunning(ctx, id, hop.HopOrder, hop.Error == ""); serr != nil {
+			s.log.Warn("record hop liveness after apply", "route", route.Name, "error", serr)
+		}
+	}
+	return result, nil
 }
 
 // VerifyRoute proves whether a deployed route actually carries traffic.
@@ -417,9 +433,14 @@ func (s *Service) VerifyRoute(ctx context.Context, id int64) (*verifier.Report, 
 	return report, nil
 }
 
-// MeasureRouteLatencies refreshes the stored per-hop latency for one route
-// without running a full verification.
-func (s *Service) MeasureRouteLatencies(ctx context.Context, id int64) error {
+// SampleRoute refreshes the runtime facts shown on the route list: whether
+// each relay is running, and how long each hop takes to reach what it forwards
+// to. Both come from the same pass over the chain, since asking twice would
+// double the sessions opened on every node.
+//
+// It is deliberately cheaper than a verification: no marker, no capture, and
+// therefore no proof of delivery. Proof stays where an operator asks for it.
+func (s *Service) SampleRoute(ctx context.Context, id int64) error {
 	route, err := s.store.RouteByID(ctx, id)
 	if err != nil {
 		return err
@@ -428,11 +449,31 @@ func (s *Service) MeasureRouteLatencies(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
+
+	// Liveness is recorded per hop as it is learned. A node that has gone away
+	// must not prevent the hops behind it from reporting.
+	var firstErr error
+	for _, hop := range plan.Hops {
+		running, err := s.applier.Status(ctx, hop.Node, route.Slug)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%s: %w", hop.Node.Name, err)
+			}
+			continue
+		}
+		if serr := s.store.SetHopRunning(ctx, id, hop.HopOrder, running); serr != nil {
+			return serr
+		}
+	}
+
 	latencies, err := s.verifier.MeasureLatencies(ctx, plan)
 	if err != nil {
 		return err
 	}
-	return s.store.SetHopLatencies(ctx, id, latencies)
+	if err := s.store.SetHopLatencies(ctx, id, latencies); err != nil {
+		return err
+	}
+	return firstErr
 }
 
 // DeleteRoute tears the route down on every hop, then removes it.
@@ -468,6 +509,9 @@ func (s *Service) StopRoute(ctx context.Context, id int64) error {
 			return fmt.Errorf("stop route on %s: %w", node.Name, rerr)
 		}
 	}
+	if err := s.store.ClearHopRunning(ctx, id); err != nil {
+		return err
+	}
 	return s.store.SetRouteEnabled(ctx, id, false)
 }
 
@@ -484,11 +528,19 @@ type HopStatusEntry struct {
 	NodeName string `json:"node_name"`
 	HopOrder int    `json:"hop_order"`
 	Listen   int    `json:"listen"`
-	Running  bool   `json:"running"`
-	Error    string `json:"error,omitempty"`
+	// Running is nil until the background sampler has reached this hop. Nil is
+	// not false: a hop nobody has checked yet must not be drawn as down.
+	Running   *bool      `json:"running"`
+	CheckedAt *time.Time `json:"checked_at"`
+	Error     string     `json:"error,omitempty"`
 }
 
 // RouteStatuses reports runtime state for every route.
+//
+// It answers from what the background sampler recorded rather than asking the
+// nodes. Asking meant an SSH session per hop on every call, which is why this
+// could not be polled; served from the database the route list can refresh
+// itself as often as it likes.
 func (s *Service) RouteStatuses(ctx context.Context) ([]RouteStatus, error) {
 	routes, err := s.store.ListRoutes(ctx)
 	if err != nil {
@@ -500,22 +552,18 @@ func (s *Service) RouteStatuses(ctx context.Context) ([]RouteStatus, error) {
 		status := RouteStatus{RouteID: r.ID, Name: r.Name}
 		for _, hop := range r.Hops {
 			entry := HopStatusEntry{
-				NodeID:   hop.NodeID,
-				HopOrder: hop.HopOrder,
-				Listen:   hop.RelayPort,
+				NodeID:    hop.NodeID,
+				HopOrder:  hop.HopOrder,
+				Listen:    hop.RelayPort,
+				Running:   hop.Running,
+				CheckedAt: hop.CheckedAt,
 			}
 			node, err := s.store.NodeByID(ctx, hop.NodeID)
 			if err != nil {
 				entry.Error = err.Error()
-				status.Hops = append(status.Hops, entry)
-				continue
+			} else {
+				entry.NodeName = node.Name
 			}
-			entry.NodeName = node.Name
-			running, err := s.applier.Status(ctx, node, r.Slug)
-			if err != nil {
-				entry.Error = err.Error()
-			}
-			entry.Running = running
 			status.Hops = append(status.Hops, entry)
 		}
 		out = append(out, status)

@@ -198,3 +198,79 @@ func TestRenamingARouteKeepsLatencies(t *testing.T) {
 		}
 	}
 }
+
+// A hop nobody has sampled must read as unknown, never as stopped: the route
+// list draws "down" from false, and a fresh route would look broken.
+func TestHopRunningStartsUnknown(t *testing.T) {
+	ctx := context.Background()
+	st := openTemp(t)
+	route := seedRoute(t, st)
+
+	loaded, err := st.RouteByID(ctx, route.ID)
+	if err != nil {
+		t.Fatalf("load route: %v", err)
+	}
+	for _, h := range loaded.Hops {
+		if h.Running != nil {
+			t.Errorf("hop %d reports running=%v before any sample", h.HopOrder, *h.Running)
+		}
+		if h.CheckedAt != nil {
+			t.Errorf("hop %d carries a check time before any sample", h.HopOrder)
+		}
+	}
+}
+
+func TestHopRunningRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	st := openTemp(t)
+	route := seedRoute(t, st)
+
+	if err := st.SetHopRunning(ctx, route.ID, 0, true); err != nil {
+		t.Fatalf("set hop 0: %v", err)
+	}
+	if err := st.SetHopRunning(ctx, route.ID, 1, false); err != nil {
+		t.Fatalf("set hop 1: %v", err)
+	}
+
+	loaded, err := st.RouteByID(ctx, route.ID)
+	if err != nil {
+		t.Fatalf("reload route: %v", err)
+	}
+	want := map[int]bool{0: true, 1: false}
+	for _, h := range loaded.Hops {
+		if h.Running == nil {
+			t.Fatalf("hop %d lost its sample", h.HopOrder)
+		}
+		if *h.Running != want[h.HopOrder] {
+			t.Errorf("hop %d running = %v, want %v", h.HopOrder, *h.Running, want[h.HopOrder])
+		}
+		if h.CheckedAt == nil {
+			t.Errorf("hop %d has a sample but no check time", h.HopOrder)
+		}
+	}
+}
+
+// A stopped route has been torn down on the nodes. Keeping its last "up"
+// reading would leave the card looking healthy after the relays were removed.
+func TestStoppingClearsLiveness(t *testing.T) {
+	ctx := context.Background()
+	st := openTemp(t)
+	route := seedRoute(t, st)
+
+	if err := st.SetHopRunning(ctx, route.ID, 0, true); err != nil {
+		t.Fatalf("set hop: %v", err)
+	}
+	if err := st.ClearHopRunning(ctx, route.ID); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+
+	loaded, err := st.RouteByID(ctx, route.ID)
+	if err != nil {
+		t.Fatalf("reload route: %v", err)
+	}
+	for _, h := range loaded.Hops {
+		if h.Running != nil {
+			t.Errorf("hop %d still reports running after the route was stopped", h.HopOrder)
+		}
+	}
+}

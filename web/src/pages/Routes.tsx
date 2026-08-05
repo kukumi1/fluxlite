@@ -40,6 +40,30 @@ function describeAge(ms: number): string {
   return `${Math.round(ms / 3600000)} 小时前`;
 }
 
+// HopState separates "nobody has looked yet" from "looked, and it is down"
+// from "the answer we have has stopped being refreshed". Collapsing any two of
+// them would show an outage as healthy or a healthy relay as broken.
+type HopState =
+  | { kind: "unknown" }
+  | { kind: "up" }
+  | { kind: "down" }
+  | { kind: "stale"; since: number; wasRunning: boolean };
+
+function hopStateHint(state: HopState): string | undefined {
+  switch (state.kind) {
+    case "unknown":
+      return "尚未采样，运行状态未知";
+    case "down":
+      return "转发进程未在运行";
+    case "stale":
+      return `已 ${describeAge(state.since)}未能采样，最后一次为${
+        state.wasRunning ? "运行中" : "已停止"
+      }，当前状态未知`;
+    default:
+      return undefined;
+  }
+}
+
 // Link is the arrow between a hop and whatever it forwards to, carrying that
 // leg's measured latency. An unmeasured leg shows no number rather than a
 // zero, which would read as "instant".
@@ -120,25 +144,37 @@ export function Routes() {
     void load();
   }, []);
 
-  // Latency is resampled in the background, so the list refreshes itself.
-  // Only the route read is polled: it is a database query, whereas the status
-  // call opens an SSH session per hop and must stay on demand.
+  // Liveness and latency are both resampled in the background and served from
+  // the database, so polling them costs two queries rather than an SSH session
+  // per hop.
   useEffect(() => {
     const timer = setInterval(() => {
-      api
-        .listRoutes()
-        .then((r) => setRoutes(r ?? []))
+      Promise.all([api.listRoutes(), api.status()])
+        .then(([r, s]) => {
+          setRoutes(r ?? []);
+          setStatuses(s ?? []);
+        })
         .catch(() => {
-          // A failed poll leaves the previous numbers on screen. Raising it as
-          // an error banner would bury whatever the operator is actually doing.
+          // A failed poll leaves the previous state on screen. Raising it as an
+          // error banner would bury whatever the operator is actually doing.
         });
-    }, 15000);
+    }, 10000);
     return () => clearInterval(timer);
   }, []);
 
-  function hopRunning(routeId: number, hopOrder: number): boolean | undefined {
-    const st = statuses.find((s) => s.route_id === routeId);
-    return st?.hops.find((h) => h.hop_order === hopOrder)?.running;
+  function hopState(routeId: number, hopOrder: number): HopState {
+    const entry = statuses
+      .find((s) => s.route_id === routeId)
+      ?.hops.find((h) => h.hop_order === hopOrder);
+    if (!entry || entry.running === null) return { kind: "unknown" };
+
+    const age = ageOf(entry.checked_at);
+    // A sample that stopped refreshing describes a node that stopped
+    // answering. Reporting its last "up" as current would hide an outage.
+    if (age !== null && age > staleAfterMs) {
+      return { kind: "stale", since: age, wasRunning: entry.running };
+    }
+    return { kind: entry.running ? "up" : "down" };
   }
 
   async function act(
@@ -195,13 +231,19 @@ export function Routes() {
                 </h2>
                 <div className="chain">
                   {route.hops.map((hop) => {
-                    const running = hopRunning(route.id, hop.hop_order);
+                    const state = hopState(route.id, hop.hop_order);
                     return (
                       <span key={hop.hop_order} className="chain">
-                        <span className={`hop ${running === false ? "down" : ""}`}>
+                        <span
+                          className={`hop ${state.kind === "down" ? "down" : ""} ${
+                            state.kind === "stale" ? "unsure" : ""
+                          }`}
+                          title={hopStateHint(state)}
+                        >
                           {nodeName(hop.node_id)}
                           <span className="muted"> :{hop.relay_port}</span>
-                          {running === false && <span className="muted"> ✕</span>}
+                          {state.kind === "down" && <span className="muted"> ✕</span>}
+                          {state.kind === "stale" && <span className="muted"> ⚠</span>}
                         </span>
                         <Link ms={hop.latency_ms} at={hop.latency_at} />
                       </span>

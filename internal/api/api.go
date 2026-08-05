@@ -69,6 +69,15 @@ func (s *Server) Handler() http.Handler {
 	r.Use(securityHeaders)
 
 	r.Route("/api", func(r chi.Router) {
+		// chi answers these with an empty body by default, which leaves an API
+		// client staring at a bare status code.
+		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, http.StatusNotFound, "no such endpoint: "+r.Method+" "+r.URL.Path)
+		})
+		r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, http.StatusMethodNotAllowed, r.Method+" is not allowed on "+r.URL.Path)
+		})
+
 		r.Get("/setup/status", s.handleSetupStatus)
 		r.With(s.rateLimit).Post("/setup", s.handleSetup)
 		r.With(s.rateLimit).Post("/setup/confirm", s.handleSetupConfirm)

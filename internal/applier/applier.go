@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
@@ -144,8 +145,17 @@ func (a *Applier) applyHop(ctx context.Context, hop *planner.HopPlan) (bool, str
 	return true, "applied", nil
 }
 
-// ensureRealm installs or upgrades the pinned realm build on the node.
+// ensureRealm installs or upgrades the pinned realm build on the node and
+// makes sure the directories it needs exist.
 func (a *Applier) ensureRealm(ctx context.Context, client *ssh.Client, node *model.Node) error {
+	// These must be created unconditionally. realm refuses to start when it
+	// cannot open its log file, and a node that already carries the right
+	// realm build would otherwise skip directory creation entirely and end up
+	// in a restart loop.
+	if _, err := sshx.RunCheck(ctx, client, "mkdir -p /etc/fluxlite/realm /var/log/fluxlite"); err != nil {
+		return fmt.Errorf("create directories: %w", err)
+	}
+
 	res, err := sshx.Run(ctx, client, realmPath+" --version 2>/dev/null | head -1")
 	if err != nil {
 		return fmt.Errorf("check realm: %w", err)
@@ -164,10 +174,6 @@ func (a *Applier) ensureRealm(ctx context.Context, client *ssh.Client, node *mod
 	}
 	if err := sshx.WriteFile(ctx, client, realmPath, bin, "0755"); err != nil {
 		return fmt.Errorf("upload realm: %w", err)
-	}
-
-	if _, err := sshx.RunCheck(ctx, client, "mkdir -p /etc/fluxlite/realm /var/log/fluxlite"); err != nil {
-		return fmt.Errorf("create directories: %w", err)
 	}
 	if _, err := sshx.RunCheck(ctx, client, realmPath+" --version"); err != nil {
 		return fmt.Errorf("verify realm after upload: %w", err)
@@ -233,14 +239,52 @@ func (a *Applier) restart(ctx context.Context, client *ssh.Client, node *model.N
 		return err
 	}
 	if _, err := sshx.RunCheck(ctx, client, cmds.restart); err != nil {
-		status, _ := sshx.Run(ctx, client, cmds.status)
-		detail := ""
-		if status != nil {
-			detail = strings.TrimSpace(status.Stdout)
-		}
-		return fmt.Errorf("restart service: %w (%s)", err, detail)
+		return fmt.Errorf("restart service: %w (%s)", err, a.serviceDetail(ctx, client, cmds))
+	}
+
+	// A restart command succeeding proves nothing: with Restart=always a relay
+	// that dies on startup leaves systemd reporting success while the service
+	// sits in a crash loop. Confirm it is still alive a moment later.
+	if err := sleepCtx(ctx, 2*time.Second); err != nil {
+		return err
+	}
+	active, err := a.isActive(ctx, client, node, routeName)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return fmt.Errorf("service did not stay running after restart: %s",
+			a.serviceDetail(ctx, client, cmds))
 	}
 	return nil
+}
+
+// serviceDetail collects whatever the service manager and realm's own log can
+// say about a failure, so the operator is not left with a bare exit code.
+func (a *Applier) serviceDetail(ctx context.Context, client *ssh.Client, cmds commands) string {
+	var parts []string
+	if status, err := sshx.Run(ctx, client, cmds.status); err == nil {
+		if s := strings.TrimSpace(status.Stdout); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	if logs, err := sshx.Run(ctx, client, cmds.recentLog); err == nil {
+		if s := strings.TrimSpace(logs.Stdout); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, " | ")
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (a *Applier) isActive(ctx context.Context, client *ssh.Client, node *model.Node, routeName string) (bool, error) {

@@ -95,10 +95,7 @@ func (v *Verifier) checkReachable(ctx context.Context, from *model.Node, host st
 		return Check{Name: name, Verdict: VerdictUnknown, Detail: "cannot reach node: " + err.Error()}
 	}
 
-	cmd := fmt.Sprintf(
-		`s=$(date +%%s%%N); timeout 8 sh -c 'cat < /dev/null > /dev/tcp/%s/%d' 2>/dev/null && r=ok || r=fail; e=$(date +%%s%%N); echo "$r $(( (e-s)/1000000 ))"`,
-		host, port)
-	res, err := sshx.Run(ctx, client.Client, cmd)
+	res, err := sshx.Run(ctx, client.Client, tcpProbeCommand(host, port))
 	if err != nil {
 		return Check{Name: name, Verdict: VerdictUnknown, Detail: "probe failed: " + err.Error()}
 	}
@@ -107,8 +104,15 @@ func (v *Verifier) checkReachable(ctx context.Context, from *model.Node, host st
 	if len(fields) < 2 {
 		return Check{Name: name, Verdict: VerdictUnknown, Detail: "probe produced no result"}
 	}
-	latency := fields[1] + "ms"
-	if fields[0] != "ok" {
+	latency := ""
+	if fields[1] != "-" {
+		latency = fields[1] + "ms"
+	}
+	switch fields[0] {
+	case "none":
+		return Check{Name: name, Verdict: VerdictUnknown,
+			Detail: "node has no usable probe tool (need python3, bash or nc)"}
+	case "fail":
 		return Check{Name: name, Verdict: VerdictFail, Detail: "connection refused or timed out", Latency: latency}
 	}
 	return Check{
@@ -117,6 +121,52 @@ func (v *Verifier) checkReachable(ctx context.Context, from *model.Node, host st
 		Detail:  "TCP connect succeeded (does not by itself prove the payload is relayed)",
 		Latency: latency,
 	}
+}
+
+// tcpProbeCommand builds a portable connectivity check.
+//
+// bash's /dev/tcp is unavailable on dash and on Alpine's busybox shell, so the
+// probe falls back through several implementations. Output is always
+// "ok|fail <milliseconds>", with "-" when no timer of useful resolution is
+// available (busybox date has no %N).
+func tcpProbeCommand(host string, port int) string {
+	return fmt.Sprintf(`
+if command -v python3 >/dev/null 2>&1; then
+  python3 -c 'import socket,time,sys
+t=time.time()
+try:
+    socket.create_connection(("%s",%d),8).close()
+    print("ok %%d"%%((time.time()-t)*1000))
+except Exception:
+    print("fail %%d"%%((time.time()-t)*1000))'
+elif command -v bash >/dev/null 2>&1; then
+  bash -c 'exec 3<>/dev/tcp/%s/%d' 2>/dev/null && echo "ok -" || echo "fail -"
+elif command -v nc >/dev/null 2>&1; then
+  nc -z -w 8 %s %d >/dev/null 2>&1 && echo "ok -" || echo "fail -"
+else
+  echo "none -"
+fi`, host, port, host, port, host, port)
+}
+
+// tcpInjectCommand opens a connection and writes a marker, holding it open
+// briefly so the relay chain has time to forward the payload.
+func tcpInjectCommand(host string, port int, marker string) string {
+	return fmt.Sprintf(`
+if command -v python3 >/dev/null 2>&1; then
+  python3 -c 'import socket,time
+try:
+    s=socket.create_connection(("%s",%d),8)
+    s.sendall(b"%s\n")
+    time.sleep(3)
+    s.close()
+    print("injected")
+except Exception as e:
+    print("inject-failed: %%s"%%e)'
+elif command -v bash >/dev/null 2>&1; then
+  bash -c '(exec 3<>/dev/tcp/%s/%d; printf "%s\n" >&3; sleep 3; exec 3<&-) 2>/dev/null && echo injected || echo inject-failed'
+else
+  echo "inject-unavailable"
+fi`, host, port, marker, host, port, marker)
 }
 
 var tcpdumpFlagsRe = regexp.MustCompile(`Flags \[([^\]]+)\]`)
@@ -155,12 +205,22 @@ func (v *Verifier) proveDelivery(ctx context.Context, plan *planner.Plan, target
 	marker = "FLUXLITE" + strings.NewReplacer("-", "", "_", "").Replace(marker)
 
 	capturePath := "/tmp/.fluxlite-verify-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	// Two things here are load-bearing:
+	//
+	// -U makes tcpdump flush every packet to the file immediately. Without it
+	// output is block buffered, so a low-traffic port leaves the capture file
+	// empty while a busy port happens to fill the buffer — the check would
+	// then pass or fail based on unrelated background traffic.
+	//
+	// The filter matches on port alone. Filtering by hostname makes tcpdump
+	// resolve the name itself, and a DDNS target can resolve to a different
+	// address than the one realm actually dialled.
 	startCapture := fmt.Sprintf(
-		`(setsid timeout 25 tcpdump -i any -nn -A 'host %s and port %d' > %s 2>/dev/null &) ; sleep 3`,
-		targetHost, targetPort, capturePath)
+		`(setsid timeout 25 tcpdump -i any -nn -A -U 'tcp port %d' > %s 2>/dev/null &) ; sleep 3`,
+		targetPort, capturePath)
 
 	defer func() {
-		cleanup := fmt.Sprintf("pkill -f 'tcpdump -i any -nn -A' 2>/dev/null; rm -f %s", capturePath)
+		cleanup := fmt.Sprintf("pkill -f 'tcpdump -i any -nn -A -U' 2>/dev/null; rm -f %s", capturePath)
 		_, _ = sshx.Run(context.WithoutCancel(ctx), lastClient.Client, cleanup)
 	}()
 
@@ -170,26 +230,42 @@ func (v *Verifier) proveDelivery(ctx context.Context, plan *planner.Plan, target
 
 	// Inject at the entry hop's own listener so the marker traverses the whole
 	// chain exactly as client traffic would.
-	inject := fmt.Sprintf(
-		`(exec 3<>/dev/tcp/127.0.0.1/%d; printf '%s\n' >&3; sleep 3; exec 3<&-) 2>/dev/null; echo injected`,
-		entry.Listen, marker)
-	if _, err := sshx.Run(ctx, entryClient.Client, inject); err != nil {
+	injectRes, err := sshx.Run(ctx, entryClient.Client, tcpInjectCommand("127.0.0.1", entry.Listen, marker))
+	if err != nil {
 		return Check{Name: name, Verdict: VerdictUnknown, Detail: "could not inject marker: " + err.Error()}, false
+	}
+	if injected := strings.TrimSpace(injectRes.Stdout); !strings.HasPrefix(injected, "injected") {
+		// Failing to even connect to the entry listener is a different fault
+		// from the chain dropping the payload, and must not be reported as one.
+		return Check{
+			Name:    name,
+			Verdict: VerdictFail,
+			Detail:  fmt.Sprintf("could not connect to the entry listener on %s: %s", entry.Node.Name, injected),
+		}, false
 	}
 
 	time.Sleep(4 * time.Second)
 
+	// Stop the capture before reading it. Even with -U this guarantees the
+	// file is complete rather than racing a writer.
+	if _, err := sshx.Run(ctx, lastClient.Client, "pkill -f 'tcpdump -i any -nn -A -U' 2>/dev/null; sleep 1"); err != nil {
+		return Check{Name: name, Verdict: VerdictUnknown, Detail: "could not stop capture: " + err.Error()}, false
+	}
+
 	res, err := sshx.Run(ctx, lastClient.Client,
-		fmt.Sprintf(`grep -c %s %s 2>/dev/null || echo 0; grep -o 'Flags \[[^]]*\]' %s 2>/dev/null | head -8`,
-			marker, capturePath, capturePath))
+		fmt.Sprintf(`grep -c %s %s 2>/dev/null || echo 0; grep -c 'IP ' %s 2>/dev/null || echo 0; grep -o 'Flags \[[^]]*\]' %s 2>/dev/null | head -8`,
+			marker, capturePath, capturePath, capturePath))
 	if err != nil {
 		return Check{Name: name, Verdict: VerdictUnknown, Detail: "could not read capture: " + err.Error()}, false
 	}
 
 	lines := strings.Split(strings.TrimSpace(res.Stdout), "\n")
-	hits := 0
+	hits, packets := 0, 0
 	if len(lines) > 0 {
 		hits, _ = strconv.Atoi(strings.TrimSpace(lines[0]))
+	}
+	if len(lines) > 1 {
+		packets, _ = strconv.Atoi(strings.TrimSpace(lines[1]))
 	}
 	flags := tcpdumpFlagsRe.FindAllString(res.Stdout, -1)
 
@@ -201,11 +277,22 @@ func (v *Verifier) proveDelivery(ctx context.Context, plan *planner.Plan, target
 				marker, last.Node.Name, targetHost, targetPort, strings.Join(flags, " ")),
 		}, true
 	}
+
+	// Distinguishing "captured nothing at all" from "captured traffic but not
+	// ours" tells the operator whether to suspect the chain or the capture.
+	if packets == 0 {
+		return Check{
+			Name:    name,
+			Verdict: VerdictUnknown,
+			Detail: fmt.Sprintf("capture on %s recorded no packets on port %d at all; cannot conclude anything about delivery",
+				last.Node.Name, targetPort),
+		}, false
+	}
 	return Check{
 		Name:    name,
 		Verdict: VerdictFail,
-		Detail: fmt.Sprintf("marker injected at %s never reached %s:%d; the chain accepts connections but does not relay payload",
-			entry.Node.Name, targetHost, targetPort),
+		Detail: fmt.Sprintf("capture on %s saw %d packets on port %d but none carried the marker injected at %s; the chain accepts connections without relaying payload",
+			last.Node.Name, packets, targetPort, entry.Node.Name),
 	}, false
 }
 

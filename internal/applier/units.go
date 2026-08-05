@@ -79,6 +79,7 @@ type commands struct {
 	disable     string
 	status      string
 	isActive    string
+	recentLog   string
 }
 
 func commandsFor(init model.InitSystem, routeName string) (commands, error) {
@@ -98,6 +99,7 @@ func commandsFor(init model.InitSystem, routeName string) (commands, error) {
 			disable:     "systemctl disable " + q(svc) + " 2>/dev/null || true",
 			status:      "systemctl status " + q(svc) + " --no-pager 2>&1 | head -20",
 			isActive:    "systemctl is-active " + q(svc),
+			recentLog:   "journalctl -u " + q(svc) + " -n 10 --no-pager 2>&1 | tail -10",
 		}, nil
 	case model.InitOpenRC:
 		return commands{
@@ -108,6 +110,7 @@ func commandsFor(init model.InitSystem, routeName string) (commands, error) {
 			disable:     "rc-update del " + q(svc) + " default 2>/dev/null || true",
 			status:      "rc-service " + q(svc) + " status 2>&1 | head -20",
 			isActive:    "rc-service " + q(svc) + " status >/dev/null 2>&1 && echo active || echo inactive",
+			recentLog:   "tail -10 /var/log/messages 2>/dev/null | grep -i " + q(svc) + " | tail -10",
 		}, nil
 	default:
 		return commands{}, fmt.Errorf("unsupported init system %q", init)

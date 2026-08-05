@@ -95,6 +95,11 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/logout", s.handleLogout)
 			r.Get("/me", s.handleMe)
 			r.Post("/password", s.handleChangePassword)
+			r.Post("/account/username", s.handleChangeUsername)
+			r.Post("/account/totp/begin", s.handleBeginTOTP)
+			r.Post("/account/totp/enable", s.handleEnableTOTP)
+			r.Post("/account/totp/disable", s.handleDisableTOTP)
+			r.Post("/account/sessions/revoke", s.handleRevokeSessions)
 
 			r.Post("/enroll/ticket", s.handleEnrollTicket)
 

@@ -93,10 +93,107 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r.Context())
+	sessions, err := s.svc.Store().CountUserSessions(r.Context(), u.ID)
+	if err != nil {
+		s.log.Error("count sessions", "error", err)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"username":      u.Username,
 		"totp_enrolled": u.TOTPEnrolled,
+		"created_at":    u.CreatedAt,
+		"updated_at":    u.UpdatedAt,
+		"sessions":      sessions,
 	})
+}
+
+type changeUsernameRequest struct {
+	Password string `json:"password"`
+	Next     string `json:"next"`
+}
+
+func (s *Server) handleChangeUsername(w http.ResponseWriter, r *http.Request) {
+	var req changeUsernameRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	u := userFrom(r.Context())
+	if err := s.auth.ChangeUsername(r.Context(), u.ID, req.Password, req.Next); err != nil {
+		writeError(w, statusForError(err), err.Error())
+		return
+	}
+	s.audit(r, "auth.username_changed", u.Username, "renamed to "+trimmed(req.Next))
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleBeginTOTP(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r.Context())
+	enrollment, err := s.auth.BeginTOTPEnrollment(r.Context(), u.ID)
+	if err != nil {
+		writeError(w, statusForError(err), err.Error())
+		return
+	}
+	s.audit(r, "auth.totp_enrollment_started", u.Username, "")
+	writeJSON(w, http.StatusOK, enrollment)
+}
+
+type totpCodeRequest struct {
+	Code string `json:"code"`
+}
+
+func (s *Server) handleEnableTOTP(w http.ResponseWriter, r *http.Request) {
+	var req totpCodeRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	u := userFrom(r.Context())
+	if err := s.auth.EnableTOTP(r.Context(), u.ID, req.Code); err != nil {
+		writeError(w, statusForError(err), err.Error())
+		return
+	}
+	s.audit(r, "auth.totp_enabled", u.Username, "two-factor turned on")
+	writeJSON(w, http.StatusOK, map[string]bool{"enrolled": true})
+}
+
+type disableTOTPRequest struct {
+	Password string `json:"password"`
+	Code     string `json:"code"`
+}
+
+func (s *Server) handleDisableTOTP(w http.ResponseWriter, r *http.Request) {
+	var req disableTOTPRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	u := userFrom(r.Context())
+	if err := s.auth.DisableTOTP(r.Context(), u.ID, req.Password, req.Code); err != nil {
+		writeError(w, statusForError(err), err.Error())
+		return
+	}
+	s.audit(r, "auth.totp_disabled", u.Username, "two-factor turned off")
+	writeJSON(w, http.StatusOK, map[string]bool{"enrolled": false})
+}
+
+// handleRevokeSessions logs every other browser out, which is what an operator
+// reaches for when they suspect a session is loose somewhere.
+func (s *Server) handleRevokeSessions(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r.Context())
+	if err := s.svc.Store().DeleteUserSessionsExcept(r.Context(), u.ID, sessionToken(r)); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "auth.sessions_revoked", u.Username, "other sessions revoked")
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// sessionToken returns the caller's own session token, empty when absent.
+func sessionToken(r *http.Request) string {
+	if cookie, err := r.Cookie(sessionCookie); err == nil {
+		return cookie.Value
+	}
+	return ""
 }
 
 type changePasswordRequest struct {
@@ -111,7 +208,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := userFrom(r.Context())
-	if err := s.auth.ChangePassword(r.Context(), u.ID, req.Current, req.Next); err != nil {
+	if err := s.auth.ChangePassword(r.Context(), u.ID, req.Current, req.Next, sessionToken(r)); err != nil {
 		writeError(w, statusForError(err), err.Error())
 		return
 	}

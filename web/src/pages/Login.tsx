@@ -134,6 +134,21 @@ export function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
             <button className="btn primary" disabled={busy} style={{ width: "100%" }}>
               {busy ? "验证中…" : "完成绑定"}
             </button>
+            {/* Skipping leaves the account unenrolled, which the login path
+                treats as "no second factor" rather than "setup unfinished".
+                Without this the secret shown above would be the only way in,
+                and a closed tab would mean a lost panel. */}
+            <button
+              type="button"
+              className="btn"
+              style={{ width: "100%", marginTop: 8 }}
+              onClick={() => {
+                setCode("");
+                setStage("login");
+              }}
+            >
+              暂时跳过（之后可在个人中心开启）
+            </button>
           </form>
         )}
 
@@ -160,7 +175,7 @@ export function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
                 onChange={(e) => setCode(e.target.value)}
                 inputMode="numeric"
                 maxLength={6}
-                required
+                placeholder="未开启两步验证则留空"
               />
             </label>
             <button className="btn primary" disabled={busy} style={{ width: "100%" }}>

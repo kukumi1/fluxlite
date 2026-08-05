@@ -4,8 +4,9 @@ import { Login } from "./pages/Login";
 import { Nodes } from "./pages/Nodes";
 import { Routes } from "./pages/Routes";
 import { Audit } from "./pages/Audit";
+import { Account } from "./pages/Account";
 
-type Tab = "routes" | "nodes" | "audit";
+type Tab = "routes" | "nodes" | "audit" | "account";
 type AuthState = "checking" | "in" | "out";
 
 export function App() {
@@ -60,7 +61,14 @@ export function App() {
           </button>
         </nav>
         <div className="sidebar-footer">
-          <div style={{ marginBottom: 8 }}>{username}</div>
+          <button
+            className={`account-link ${tab === "account" ? "active" : ""}`}
+            onClick={() => setTab("account")}
+            title="个人中心"
+          >
+            <span className="avatar">{username.slice(0, 1).toUpperCase()}</span>
+            <span className="account-name">{username}</span>
+          </button>
           <button className="btn sm" onClick={() => void logout()}>
             退出登录
           </button>
@@ -71,6 +79,9 @@ export function App() {
         {tab === "routes" && <Routes />}
         {tab === "nodes" && <Nodes />}
         {tab === "audit" && <Audit />}
+        {tab === "account" && (
+          <Account onUsernameChanged={setUsername} onSignedOut={() => setAuthState("out")} />
+        )}
       </main>
     </div>
   );

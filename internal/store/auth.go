@@ -248,3 +248,38 @@ func (s *Store) ListAudit(ctx context.Context, limit int) ([]*model.AuditLog, er
 	}
 	return out, rows.Err()
 }
+
+// SetUsername renames an operator account.
+func (s *Store) SetUsername(ctx context.Context, id int64, username string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE users SET username = ?, updated_at = ? WHERE id = ?`,
+		username, time.Now().UTC(), id)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("username %q %w", username, ErrConflict)
+		}
+		return fmt.Errorf("set username: %w", err)
+	}
+	return checkAffected(res, "user", id)
+}
+
+// DeleteUserSessionsExcept revokes every session of an account apart from one.
+func (s *Store) DeleteUserSessionsExcept(ctx context.Context, userID int64, keepToken string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM sessions WHERE user_id = ? AND token != ?`, userID, keepToken)
+	if err != nil {
+		return fmt.Errorf("revoke other sessions: %w", err)
+	}
+	return nil
+}
+
+// CountUserSessions reports how many sessions an account currently holds.
+func (s *Store) CountUserSessions(ctx context.Context, userID int64) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sessions WHERE user_id = ? AND expires_at > ?`,
+		userID, time.Now().UTC()).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count sessions: %w", err)
+	}
+	return n, nil
+}

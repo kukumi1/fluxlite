@@ -125,6 +125,14 @@ export interface Enrollment {
   url: string;
 }
 
+export interface Account {
+  username: string;
+  totp_enrolled: boolean;
+  created_at: string;
+  updated_at: string;
+  sessions: number;
+}
+
 export interface EnrollRequest {
   name: string;
   host: string;
@@ -185,7 +193,17 @@ export const api = {
   login: (username: string, password: string, code: string) =>
     post<{ username: string }>("/login", { username, password, code }),
   logout: () => post<{ ok: boolean }>("/logout"),
-  me: () => request<{ username: string; totp_enrolled: boolean }>("/me"),
+  me: () => request<Account>("/me"),
+
+  changePassword: (current: string, next: string) =>
+    post<{ ok: boolean }>("/password", { current, next }),
+  changeUsername: (password: string, next: string) =>
+    post<{ ok: boolean }>("/account/username", { password, next }),
+  beginTOTP: () => post<Enrollment>("/account/totp/begin"),
+  enableTOTP: (code: string) => post<{ enrolled: boolean }>("/account/totp/enable", { code }),
+  disableTOTP: (password: string, code: string) =>
+    post<{ enrolled: boolean }>("/account/totp/disable", { password, code }),
+  revokeSessions: () => post<{ ok: boolean }>("/account/sessions/revoke"),
 
   enrollTicket: (input: EnrollRequest) => post<EnrollTicket>("/enroll/ticket", input),
 

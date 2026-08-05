@@ -1,5 +1,6 @@
-// Package auth handles operator login: password verification, mandatory TOTP,
-// lockout after repeated failures, and opaque session tokens.
+// Package auth handles operator login: password verification, an optional
+// TOTP second factor, lockout after repeated failures, and opaque session
+// tokens.
 //
 // The panel holds root credentials for every managed node, so authentication
 // is treated as a perimeter, not a formality.
@@ -9,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pquerna/otp"
@@ -35,7 +37,6 @@ const (
 var (
 	ErrInvalidCredentials = errors.New("invalid username, password or code")
 	ErrAccountLocked      = errors.New("account is temporarily locked after repeated failures")
-	ErrTOTPRequired       = errors.New("two-factor enrollment is required before login")
 	ErrSetupClosed        = errors.New("initial setup has already been completed")
 	ErrNoSession          = errors.New("no valid session")
 )
@@ -129,26 +130,18 @@ func (s *Service) Login(ctx context.Context, username, password, code string) (s
 	if user.Locked(now) {
 		return "", time.Time{}, ErrAccountLocked
 	}
-	if !user.TOTPEnrolled {
-		return "", time.Time{}, ErrTOTPRequired
-	}
 
 	passwordOK, err := cryptox.VerifyPassword(password, user.PasswordHash)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("verify password: %w", err)
 	}
-	codeOK, err := totp.ValidateCustom(code, user.TOTPSecret, now, totp.ValidateOpts{
-		Period: 30,
-		// One period of drift each way tolerates ordinary clock skew without
-		// meaningfully widening the window for a stolen code.
-		Skew:      1,
-		Digits:    otp.DigitsSix,
-		Algorithm: otp.AlgorithmSHA1,
-	})
-	// A malformed code is a failed attempt, not a server error; it still has
-	// to count towards the lockout below.
-	if err != nil {
-		codeOK = false
+
+	// A second factor is only demanded from accounts that have one. The check
+	// is driven by the account's own state rather than a global setting, so
+	// turning it off for one account can never silently disarm another.
+	codeOK := true
+	if user.TOTPEnrolled {
+		codeOK = validateTOTP(code, user.TOTPSecret, now)
 	}
 
 	if !passwordOK || !codeOK {
@@ -173,6 +166,22 @@ func (s *Service) Login(ctx context.Context, username, password, code string) (s
 	return token, expires, nil
 }
 
+// validateTOTP checks a code against a secret.
+//
+// A malformed code is a failed attempt, not a server error: it must count
+// towards the lockout rather than surface as a 500.
+func validateTOTP(code, secret string, now time.Time) bool {
+	ok, err := totp.ValidateCustom(code, secret, now, totp.ValidateOpts{
+		Period: 30,
+		// One period of drift each way tolerates ordinary clock skew without
+		// meaningfully widening the window for a stolen code.
+		Skew:      1,
+		Digits:    otp.DigitsSix,
+		Algorithm: otp.AlgorithmSHA1,
+	})
+	return err == nil && ok
+}
+
 // Authenticate resolves a session token to its account.
 func (s *Service) Authenticate(ctx context.Context, token string) (*store.User, error) {
 	if token == "" {
@@ -190,8 +199,9 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	return s.store.DeleteSession(ctx, token)
 }
 
-// ChangePassword updates the password after verifying the current one.
-func (s *Service) ChangePassword(ctx context.Context, userID int64, current, next string) error {
+// ChangePassword updates the password after verifying the current one and
+// revokes every other session. keepToken is the caller's own session.
+func (s *Service) ChangePassword(ctx context.Context, userID int64, current, next, keepToken string) error {
 	user, err := s.store.UserByID(ctx, userID)
 	if err != nil {
 		return err
@@ -210,7 +220,100 @@ func (s *Service) ChangePassword(ctx context.Context, userID int64, current, nex
 	if err != nil {
 		return err
 	}
-	return s.store.SetUserPassword(ctx, userID, hash)
+	if err := s.store.SetUserPassword(ctx, userID, hash); err != nil {
+		return err
+	}
+	// A password is changed precisely when the old one is no longer trusted.
+	// Sessions opened with it must not outlive it; the caller's own session is
+	// spared so the operator is not logged out by their own housekeeping.
+	return s.store.DeleteUserSessionsExcept(ctx, userID, keepToken)
+}
+
+// ChangeUsername renames the account after verifying the password. Anyone who
+// can rename the account can also lock the owner out of it, so possession of
+// the session alone is not enough.
+func (s *Service) ChangeUsername(ctx context.Context, userID int64, password, next string) error {
+	user, err := s.store.UserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	ok, err := cryptox.VerifyPassword(password, user.PasswordHash)
+	if err != nil {
+		return fmt.Errorf("verify password: %w", err)
+	}
+	if !ok {
+		return ErrInvalidCredentials
+	}
+	next = strings.TrimSpace(next)
+	if len(next) < 3 {
+		return errors.New("username must be at least 3 characters")
+	}
+	if next == user.Username {
+		return nil
+	}
+	return s.store.SetUsername(ctx, userID, next)
+}
+
+// BeginTOTPEnrollment issues a fresh secret for an account that wants a second
+// factor. The secret is not stored until a code proves the authenticator app
+// holds it, so an abandoned enrollment cannot lock the operator out.
+func (s *Service) BeginTOTPEnrollment(ctx context.Context, userID int64) (*Enrollment, error) {
+	user, err := s.store.UserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user.TOTPEnrolled {
+		return nil, errors.New("two-factor is already enabled; disable it first")
+	}
+	key, err := totp.Generate(totp.GenerateOpts{Issuer: issuer, AccountName: user.Username})
+	if err != nil {
+		return nil, fmt.Errorf("generate totp secret: %w", err)
+	}
+	// Held unenrolled so a half-finished setup leaves login untouched.
+	if err := s.store.SetUserTOTP(ctx, userID, key.Secret(), false); err != nil {
+		return nil, err
+	}
+	return &Enrollment{Secret: key.Secret(), URL: key.URL()}, nil
+}
+
+// EnableTOTP switches the second factor on once a code confirms the secret.
+func (s *Service) EnableTOTP(ctx context.Context, userID int64, code string) error {
+	user, err := s.store.UserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if user.TOTPSecret == "" {
+		return errors.New("no pending enrollment; start one first")
+	}
+	if !validateTOTP(strings.TrimSpace(code), user.TOTPSecret, time.Now().UTC()) {
+		return ErrInvalidCredentials
+	}
+	return s.store.SetUserTOTP(ctx, userID, user.TOTPSecret, true)
+}
+
+// DisableTOTP turns the second factor off.
+//
+// Both the password and a current code are required: a session hijacked from a
+// logged-in browser must not be able to strip the factor that would have
+// stopped the attacker from logging in again later.
+func (s *Service) DisableTOTP(ctx context.Context, userID int64, password, code string) error {
+	user, err := s.store.UserByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !user.TOTPEnrolled {
+		return nil
+	}
+	ok, err := cryptox.VerifyPassword(password, user.PasswordHash)
+	if err != nil {
+		return fmt.Errorf("verify password: %w", err)
+	}
+	if !ok || !validateTOTP(strings.TrimSpace(code), user.TOTPSecret, time.Now().UTC()) {
+		return ErrInvalidCredentials
+	}
+	// The secret is cleared, not kept: re-enabling issues a new one, so a
+	// secret that may have been screenshotted or shared cannot come back.
+	return s.store.SetUserTOTP(ctx, userID, "", false)
 }
 
 const minPasswordLength = 12

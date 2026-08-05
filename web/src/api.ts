@@ -34,6 +34,7 @@ export interface RouteHop {
 export interface Route {
   id: number;
   name: string;
+  slug: string;
   target: string;
   protocol: Protocol;
   entry_port: number;

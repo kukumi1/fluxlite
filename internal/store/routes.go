@@ -21,9 +21,9 @@ func (s *Store) CreateRoute(ctx context.Context, r *model.Route) error {
 
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `
-			INSERT INTO routes (name, target, protocol, enabled, created_at, updated_at)
-			VALUES (?,?,?,?,?,?)`,
-			r.Name, r.Target, r.Protocol, r.Enabled, r.CreatedAt, r.UpdatedAt)
+			INSERT INTO routes (name, slug, target, protocol, enabled, created_at, updated_at)
+			VALUES (?,?,?,?,?,?,?)`,
+			r.Name, r.Slug, r.Target, r.Protocol, r.Enabled, r.CreatedAt, r.UpdatedAt)
 		if err != nil {
 			if isUniqueViolation(err) {
 				return fmt.Errorf("route name %q %w", r.Name, ErrConflict)
@@ -61,7 +61,7 @@ func insertHops(ctx context.Context, tx *sql.Tx, hops []model.RouteHop) error {
 // RouteByID returns a route with its hops loaded in order.
 func (s *Store) RouteByID(ctx context.Context, id int64) (*model.Route, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, target, protocol, enabled, created_at, updated_at
+		SELECT id, name, slug, target, protocol, enabled, created_at, updated_at
 		FROM routes WHERE id = ?`, id)
 
 	r, err := scanRoute(row)
@@ -80,7 +80,7 @@ func (s *Store) RouteByID(ctx context.Context, id int64) (*model.Route, error) {
 // RouteByName returns a route by its unique name.
 func (s *Store) RouteByName(ctx context.Context, name string) (*model.Route, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, target, protocol, enabled, created_at, updated_at
+		SELECT id, name, slug, target, protocol, enabled, created_at, updated_at
 		FROM routes WHERE name = ?`, name)
 
 	r, err := scanRoute(row)
@@ -96,10 +96,29 @@ func (s *Store) RouteByName(ctx context.Context, name string) (*model.Route, err
 	return r, nil
 }
 
+// RouteBySlug returns a route by its internal identifier.
+func (s *Store) RouteBySlug(ctx context.Context, slug string) (*model.Route, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, name, slug, target, protocol, enabled, created_at, updated_at
+		FROM routes WHERE slug = ?`, slug)
+
+	r, err := scanRoute(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("route %q: %w", slug, ErrNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scan route: %w", err)
+	}
+	if err := s.loadHops(ctx, r); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
 // ListRoutes returns every route with hops loaded.
 func (s *Store) ListRoutes(ctx context.Context) ([]*model.Route, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, target, protocol, enabled, created_at, updated_at
+		SELECT id, name, slug, target, protocol, enabled, created_at, updated_at
 		FROM routes ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("query routes: %w", err)
@@ -128,7 +147,7 @@ func (s *Store) ListRoutes(ctx context.Context) ([]*model.Route, error) {
 // RoutesOnNode returns routes that traverse the given node.
 func (s *Store) RoutesOnNode(ctx context.Context, nodeID int64) ([]*model.Route, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT r.id, r.name, r.target, r.protocol, r.enabled, r.created_at, r.updated_at
+		SELECT r.id, r.name, r.slug, r.target, r.protocol, r.enabled, r.created_at, r.updated_at
 		FROM routes r
 		JOIN route_hops h ON h.route_id = r.id
 		WHERE h.node_id = ?
@@ -213,7 +232,7 @@ func (s *Store) DeleteRoute(ctx context.Context, id int64) error {
 
 func scanRoute(row interface{ Scan(...any) error }) (*model.Route, error) {
 	var r model.Route
-	if err := row.Scan(&r.ID, &r.Name, &r.Target, &r.Protocol, &r.Enabled,
+	if err := row.Scan(&r.ID, &r.Name, &r.Slug, &r.Target, &r.Protocol, &r.Enabled,
 		&r.CreatedAt, &r.UpdatedAt); err != nil {
 		return nil, err
 	}

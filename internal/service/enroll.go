@@ -46,8 +46,8 @@ type EnrollTicket struct {
 // CreateEnrollTicket generates a key pair and a one-shot token, returning the
 // command to paste onto the new machine.
 func (s *Service) CreateEnrollTicket(ctx context.Context, baseURL string, req EnrollRequest) (*EnrollTicket, error) {
-	if !nameRe.MatchString(req.Name) {
-		return nil, ErrBadName
+	if err := model.ValidateDisplayName(req.Name); err != nil {
+		return nil, err
 	}
 	if req.Host == "" {
 		return nil, model.ErrNodeHostEmpty

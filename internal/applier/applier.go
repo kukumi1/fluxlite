@@ -112,7 +112,7 @@ func (a *Applier) applyHop(ctx context.Context, hop *planner.HopPlan) (bool, str
 	if err := a.ensureRealm(ctx, client.Client, hop.Node); err != nil {
 		return false, "realm-install-failed", err
 	}
-	if err := a.ensureUnit(ctx, client.Client, hop.Node, hop.RouteName); err != nil {
+	if err := a.ensureUnit(ctx, client.Client, hop.Node, hop.RouteSlug); err != nil {
 		return false, "unit-install-failed", err
 	}
 
@@ -123,14 +123,14 @@ func (a *Applier) applyHop(ctx context.Context, hop *planner.HopPlan) (bool, str
 	if current == hop.Config {
 		// Still confirm the service is actually running: a matching config on
 		// a dead relay is the failure mode that hides longest.
-		active, err := a.isActive(ctx, client.Client, hop.Node, hop.RouteName)
+		active, err := a.isActive(ctx, client.Client, hop.Node, hop.RouteSlug)
 		if err != nil {
 			return false, "status-check-failed", err
 		}
 		if active {
 			return false, "unchanged", nil
 		}
-		if err := a.restart(ctx, client.Client, hop.Node, hop.RouteName); err != nil {
+		if err := a.restart(ctx, client.Client, hop.Node, hop.RouteSlug); err != nil {
 			return false, "restart-failed", err
 		}
 		return true, "restarted-dead-service", nil
@@ -139,7 +139,7 @@ func (a *Applier) applyHop(ctx context.Context, hop *planner.HopPlan) (bool, str
 	if err := sshx.WriteFile(ctx, client.Client, hop.ConfigPath, []byte(hop.Config), "0600"); err != nil {
 		return false, "write-config-failed", err
 	}
-	if err := a.restart(ctx, client.Client, hop.Node, hop.RouteName); err != nil {
+	if err := a.restart(ctx, client.Client, hop.Node, hop.RouteSlug); err != nil {
 		return false, "restart-failed", err
 	}
 	return true, "applied", nil
@@ -182,8 +182,8 @@ func (a *Applier) ensureRealm(ctx context.Context, client *ssh.Client, node *mod
 }
 
 // ensureUnit installs the service definition for the node's init system.
-func (a *Applier) ensureUnit(ctx context.Context, client *ssh.Client, node *model.Node, routeName string) error {
-	cmds, err := commandsFor(node.InitSystem, routeName)
+func (a *Applier) ensureUnit(ctx context.Context, client *ssh.Client, node *model.Node, slug string) error {
+	cmds, err := commandsFor(node.InitSystem, slug)
 	if err != nil {
 		return err
 	}
@@ -203,8 +203,8 @@ func (a *Applier) ensureUnit(ctx context.Context, client *ssh.Client, node *mode
 			}
 		}
 	case model.InitOpenRC:
-		script := openrcScript(routeName)
-		path := openrcScriptPath(routeName)
+		script := openrcScript(slug)
+		path := openrcScriptPath(slug)
 		current, err := a.currentConfig(ctx, client, path)
 		if err != nil {
 			return err
@@ -233,8 +233,8 @@ func (a *Applier) currentConfig(ctx context.Context, client *ssh.Client, path st
 	return res.Stdout, nil
 }
 
-func (a *Applier) restart(ctx context.Context, client *ssh.Client, node *model.Node, routeName string) error {
-	cmds, err := commandsFor(node.InitSystem, routeName)
+func (a *Applier) restart(ctx context.Context, client *ssh.Client, node *model.Node, slug string) error {
+	cmds, err := commandsFor(node.InitSystem, slug)
 	if err != nil {
 		return err
 	}
@@ -248,7 +248,7 @@ func (a *Applier) restart(ctx context.Context, client *ssh.Client, node *model.N
 	if err := sleepCtx(ctx, 2*time.Second); err != nil {
 		return err
 	}
-	active, err := a.isActive(ctx, client, node, routeName)
+	active, err := a.isActive(ctx, client, node, slug)
 	if err != nil {
 		return err
 	}
@@ -287,8 +287,8 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func (a *Applier) isActive(ctx context.Context, client *ssh.Client, node *model.Node, routeName string) (bool, error) {
-	cmds, err := commandsFor(node.InitSystem, routeName)
+func (a *Applier) isActive(ctx context.Context, client *ssh.Client, node *model.Node, slug string) (bool, error) {
+	cmds, err := commandsFor(node.InitSystem, slug)
 	if err != nil {
 		return false, err
 	}
@@ -300,12 +300,12 @@ func (a *Applier) isActive(ctx context.Context, client *ssh.Client, node *model.
 }
 
 // Remove stops and deletes a route's deployment from a node.
-func (a *Applier) Remove(ctx context.Context, node *model.Node, routeName string) error {
+func (a *Applier) Remove(ctx context.Context, node *model.Node, slug string) error {
 	client, err := a.pool.Get(ctx, node)
 	if err != nil {
 		return fmt.Errorf("connect to %s: %w", node.Name, err)
 	}
-	cmds, err := commandsFor(node.InitSystem, routeName)
+	cmds, err := commandsFor(node.InitSystem, slug)
 	if err != nil {
 		return err
 	}
@@ -317,9 +317,9 @@ func (a *Applier) Remove(ctx context.Context, node *model.Node, routeName string
 		return fmt.Errorf("disable service: %w", err)
 	}
 
-	paths := []string{planner.ConfigPath(routeName)}
+	paths := []string{planner.ConfigPath(slug)}
 	if node.InitSystem == model.InitOpenRC {
-		paths = append(paths, openrcScriptPath(routeName))
+		paths = append(paths, openrcScriptPath(slug))
 	}
 	for _, p := range paths {
 		if _, err := sshx.Run(ctx, client.Client, "rm -f "+sshx.Quote(p)); err != nil {
@@ -335,10 +335,10 @@ func (a *Applier) Remove(ctx context.Context, node *model.Node, routeName string
 }
 
 // Status reports whether a route's relay is running on a node.
-func (a *Applier) Status(ctx context.Context, node *model.Node, routeName string) (bool, error) {
+func (a *Applier) Status(ctx context.Context, node *model.Node, slug string) (bool, error) {
 	client, err := a.pool.Get(ctx, node)
 	if err != nil {
 		return false, fmt.Errorf("connect to %s: %w", node.Name, err)
 	}
-	return a.isActive(ctx, client.Client, node, routeName)
+	return a.isActive(ctx, client.Client, node, slug)
 }

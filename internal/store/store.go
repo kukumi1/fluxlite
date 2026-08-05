@@ -172,6 +172,14 @@ var migrations = []string{
 	`CREATE INDEX IF NOT EXISTS idx_enroll_expiry ON enroll_tokens(expires_at)`,
 
 	`ALTER TABLE nodes ADD COLUMN skip_udp_probe INTEGER NOT NULL DEFAULT 0`,
+
+	// Display names became free-form (Chinese, punctuation), so the identifier
+	// that reaches systemd and the filesystem is split out. Existing routes
+	// keep their current name as slug: their deployed unit names must not
+	// change underneath them.
+	`ALTER TABLE routes ADD COLUMN slug TEXT NOT NULL DEFAULT ''`,
+	`UPDATE routes SET slug = name WHERE slug = ''`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_routes_slug ON routes(slug)`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

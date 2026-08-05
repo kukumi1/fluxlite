@@ -8,7 +8,39 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
+
+// MaxDisplayNameLen bounds a user-supplied name in runes, so a Chinese name
+// gets the same generous allowance as an ASCII one.
+const MaxDisplayNameLen = 64
+
+var (
+	ErrNameEmpty   = errors.New("名称不能为空")
+	ErrNameTooLong = fmt.Errorf("名称不能超过 %d 个字符", MaxDisplayNameLen)
+	ErrNameControl = errors.New("名称不能包含控制字符")
+)
+
+// ValidateDisplayName accepts any human-readable label: Chinese, emoji,
+// punctuation. It rejects only what would break something downstream —
+// emptiness, absurd length, and control characters, which can smuggle ANSI
+// escape sequences into logs and terminals.
+func ValidateDisplayName(name string) error {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return ErrNameEmpty
+	}
+	if utf8.RuneCountInString(trimmed) > MaxDisplayNameLen {
+		return ErrNameTooLong
+	}
+	for _, r := range trimmed {
+		if unicode.IsControl(r) {
+			return ErrNameControl
+		}
+	}
+	return nil
+}
 
 // AuthType selects how fluxlite authenticates to a node over SSH.
 type AuthType string
@@ -65,11 +97,11 @@ func (p Protocol) NeedsUDP() bool {
 
 // Node is a machine that can carry traffic and that fluxlite manages over SSH.
 type Node struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"`
-	Host     string `json:"host"`
-	SSHPort  int    `json:"ssh_port"`
-	SSHUser  string `json:"ssh_user"`
+	ID       int64    `json:"id"`
+	Name     string   `json:"name"`
+	Host     string   `json:"host"`
+	SSHPort  int      `json:"ssh_port"`
+	SSHUser  string   `json:"ssh_user"`
 	AuthType AuthType `json:"auth_type"`
 
 	// AuthSecret holds the private key PEM or the password, encrypted at rest.
@@ -131,19 +163,19 @@ func (n *Node) Probed() bool {
 }
 
 var (
-	ErrNodeNameEmpty  = errors.New("node name must not be empty")
-	ErrNodeHostEmpty  = errors.New("node host must not be empty")
-	ErrNodeUserEmpty  = errors.New("node ssh user must not be empty")
-	ErrNodeAuthType   = errors.New("node auth type must be key or password")
-	ErrNodeSSHPort    = errors.New("node ssh port must be between 1 and 65535")
-	ErrNodePortRange  = errors.New("node port range must satisfy 1 <= start <= end <= 65535")
-	ErrNodeSelfVia    = errors.New("node cannot use itself as a jump host")
+	ErrNodeNameEmpty = errors.New("node name must not be empty")
+	ErrNodeHostEmpty = errors.New("node host must not be empty")
+	ErrNodeUserEmpty = errors.New("node ssh user must not be empty")
+	ErrNodeAuthType  = errors.New("node auth type must be key or password")
+	ErrNodeSSHPort   = errors.New("node ssh port must be between 1 and 65535")
+	ErrNodePortRange = errors.New("node port range must satisfy 1 <= start <= end <= 65535")
+	ErrNodeSelfVia   = errors.New("node cannot use itself as a jump host")
 )
 
 // Validate checks the invariants that must hold before a node is persisted.
 func (n *Node) Validate() error {
-	if strings.TrimSpace(n.Name) == "" {
-		return ErrNodeNameEmpty
+	if err := ValidateDisplayName(n.Name); err != nil {
+		return err
 	}
 	if strings.TrimSpace(n.Host) == "" {
 		return ErrNodeHostEmpty
@@ -169,8 +201,15 @@ func (n *Node) Validate() error {
 // Route is a forwarding chain: traffic enters at hop 0 and is relayed through
 // each subsequent hop until the final hop dials Target.
 type Route struct {
-	ID       int64    `json:"id"`
-	Name     string   `json:"name"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+
+	// Slug is the ASCII-safe identifier used for systemd instance names, init
+	// script names and config paths on the nodes. Name is free-form and may be
+	// Chinese or contain punctuation; Slug is what actually touches the
+	// filesystem and the service manager, and never changes once assigned.
+	Slug string `json:"slug"`
+
 	Target   string   `json:"target"`
 	Protocol Protocol `json:"protocol"`
 
@@ -200,6 +239,7 @@ type RouteHop struct {
 
 var (
 	ErrRouteNameEmpty  = errors.New("route name must not be empty")
+	ErrRouteSlugEmpty  = errors.New("route slug must not be empty")
 	ErrRouteTargetBad  = errors.New("route target must be host:port")
 	ErrRouteProtocol   = errors.New("route protocol must be tcp or tcp+udp")
 	ErrRouteEntryPort  = errors.New("route entry port must be between 1 and 65535")
@@ -209,8 +249,11 @@ var (
 
 // Validate checks the invariants that must hold before a route is persisted.
 func (r *Route) Validate() error {
-	if strings.TrimSpace(r.Name) == "" {
-		return ErrRouteNameEmpty
+	if err := ValidateDisplayName(r.Name); err != nil {
+		return err
+	}
+	if r.Slug == "" {
+		return ErrRouteSlugEmpty
 	}
 	if err := ValidateTarget(r.Target); err != nil {
 		return err

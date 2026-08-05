@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"time"
 
 	"github.com/kukumi1/fluxlite/internal/applier"
@@ -19,13 +18,7 @@ import (
 	"github.com/kukumi1/fluxlite/internal/verifier"
 )
 
-// nameRe constrains node and route names. They end up in systemd instance
-// names, init script names and file paths, so anything exotic is rejected at
-// the boundary rather than escaped everywhere downstream.
-var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,30}[a-z0-9]$`)
-
 var (
-	ErrBadName        = errors.New("name must be 2-32 chars of lowercase letters, digits, hyphen or underscore")
 	ErrNodeInUse      = errors.New("node is still referenced")
 	ErrProbeFirst     = errors.New("node must be probed before it can carry a route")
 	ErrRouteNeedsHops = errors.New("route needs at least one hop")
@@ -61,8 +54,8 @@ type NodeInput struct {
 
 // CreateNode stores a node with its credential encrypted at rest.
 func (s *Service) CreateNode(ctx context.Context, in NodeInput) (*model.Node, error) {
-	if !nameRe.MatchString(in.Name) {
-		return nil, ErrBadName
+	if err := model.ValidateDisplayName(in.Name); err != nil {
+		return nil, err
 	}
 	if in.Secret == "" {
 		return nil, errors.New("credential must not be empty")
@@ -98,8 +91,8 @@ func (s *Service) UpdateNode(ctx context.Context, id int64, in NodeInput) (*mode
 	if err != nil {
 		return nil, err
 	}
-	if !nameRe.MatchString(in.Name) {
-		return nil, ErrBadName
+	if err := model.ValidateDisplayName(in.Name); err != nil {
+		return nil, err
 	}
 	if in.ViaNodeID != nil && *in.ViaNodeID == id {
 		return nil, model.ErrNodeSelfVia
@@ -271,11 +264,16 @@ type RouteInput struct {
 // CreateRoute allocates ports for every hop and persists the route. It does
 // not deploy; call ApplyRoute for that.
 func (s *Service) CreateRoute(ctx context.Context, in RouteInput) (*model.Route, error) {
-	if !nameRe.MatchString(in.Name) {
-		return nil, ErrBadName
+	if err := model.ValidateDisplayName(in.Name); err != nil {
+		return nil, err
 	}
 	if len(in.NodeIDs) == 0 {
 		return nil, ErrRouteNeedsHops
+	}
+
+	slug, err := makeSlug(ctx, s.store, in.Name)
+	if err != nil {
+		return nil, err
 	}
 
 	hops := make([]model.RouteHop, len(in.NodeIDs))
@@ -293,6 +291,7 @@ func (s *Service) CreateRoute(ctx context.Context, in RouteInput) (*model.Route,
 
 	route := &model.Route{
 		Name:     in.Name,
+		Slug:     slug,
 		Target:   in.Target,
 		Protocol: in.Protocol,
 		Enabled:  in.Enabled,
@@ -313,8 +312,8 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, in RouteInput) (*mo
 	if err != nil {
 		return nil, err
 	}
-	if !nameRe.MatchString(in.Name) {
-		return nil, ErrBadName
+	if err := model.ValidateDisplayName(in.Name); err != nil {
+		return nil, err
 	}
 	if len(in.NodeIDs) == 0 {
 		return nil, ErrRouteNeedsHops
@@ -346,7 +345,7 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, in RouteInput) (*mo
 
 	// Nodes dropped from the chain keep running a relay nobody routes to
 	// until their deployment is torn down.
-	s.removeOrphanedHops(ctx, previous, allocated, route.Name)
+	s.removeOrphanedHops(ctx, previous, allocated, route.Slug)
 	return route, nil
 }
 
@@ -354,7 +353,7 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, in RouteInput) (*mo
 // Failures are tolerated: the route itself is already updated, and a stale
 // relay on an unreachable node is reported by the next reconcile rather than
 // blocking the operator here.
-func (s *Service) removeOrphanedHops(ctx context.Context, previous, current []model.RouteHop, routeName string) {
+func (s *Service) removeOrphanedHops(ctx context.Context, previous, current []model.RouteHop, slug string) {
 	inUse := make(map[int64]bool, len(current))
 	for _, h := range current {
 		inUse[h.NodeID] = true
@@ -367,7 +366,7 @@ func (s *Service) removeOrphanedHops(ctx context.Context, previous, current []mo
 		if err != nil {
 			continue
 		}
-		_ = s.applier.Remove(ctx, node, routeName)
+		_ = s.applier.Remove(ctx, node, slug)
 	}
 }
 
@@ -408,7 +407,7 @@ func (s *Service) DeleteRoute(ctx context.Context, id int64) error {
 		if err != nil {
 			continue
 		}
-		if rerr := s.applier.Remove(ctx, node, route.Name); rerr != nil {
+		if rerr := s.applier.Remove(ctx, node, route.Slug); rerr != nil {
 			return fmt.Errorf("remove route from %s: %w", node.Name, rerr)
 		}
 	}
@@ -426,7 +425,7 @@ func (s *Service) StopRoute(ctx context.Context, id int64) error {
 		if err != nil {
 			continue
 		}
-		if rerr := s.applier.Remove(ctx, node, route.Name); rerr != nil {
+		if rerr := s.applier.Remove(ctx, node, route.Slug); rerr != nil {
 			return fmt.Errorf("stop route on %s: %w", node.Name, rerr)
 		}
 	}
@@ -473,7 +472,7 @@ func (s *Service) RouteStatuses(ctx context.Context) ([]RouteStatus, error) {
 				continue
 			}
 			entry.NodeName = node.Name
-			running, err := s.applier.Status(ctx, node, r.Name)
+			running, err := s.applier.Status(ctx, node, r.Slug)
 			if err != nil {
 				entry.Error = err.Error()
 			}

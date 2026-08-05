@@ -315,7 +315,7 @@ function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
           <input
             value={form.name}
             onChange={(e) => set("name", e.target.value)}
-            placeholder="小写字母、数字、连字符"
+            placeholder="随便起，支持中文"
             required
           />
         </label>

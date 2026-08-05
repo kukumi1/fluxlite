@@ -89,6 +89,9 @@ export function Routes() {
               <div>
                 <h2 style={{ marginBottom: 6 }}>
                   {route.name}{" "}
+                  <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>
+                    ({route.slug})
+                  </span>{" "}
                   <span className={`tag ${route.enabled ? "ok" : ""}`}>
                     {route.enabled ? "已启用" : "已停用"}
                   </span>{" "}
@@ -326,8 +329,18 @@ function RouteForm({ nodes, route, onClose, onSaved, onError }: RouteFormProps) 
       <form onSubmit={submit}>
         <label>
           名称
-          <input value={name} onChange={(e) => setName(e.target.value)} required />
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="随便起，支持中文"
+            required
+          />
         </label>
+        {!route && (
+          <p className="hint">
+            节点上的服务名和配置文件名会用自动生成的英文标识，中文名称不影响部署。
+          </p>
+        )}
 
         <div className="grid2">
           <label>

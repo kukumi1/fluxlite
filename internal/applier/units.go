@@ -32,8 +32,8 @@ const systemdUnitPath = "/etc/systemd/system/fluxlite-relay@.service"
 // openrcScript is written per route. supervise-daemon is mandatory: without a
 // supervisor an OOM-killed relay stays dead until someone notices, which is
 // exactly how a NAT node silently stops forwarding.
-func openrcScript(routeName string) string {
-	cfg := planner.ConfigPath(routeName)
+func openrcScript(slug string) string {
+	cfg := planner.ConfigPath(slug)
 	return fmt.Sprintf(`#!/sbin/openrc-run
 # Managed by fluxlite. Manual edits are overwritten on apply.
 
@@ -51,20 +51,20 @@ depend() {
 	need net
 	after firewall
 }
-`, routeName, routeName, cfg, routeName)
+`, slug, slug, cfg, slug)
 }
 
-func openrcScriptPath(routeName string) string {
-	return "/etc/init.d/fluxlite-" + routeName
+func openrcScriptPath(slug string) string {
+	return "/etc/init.d/fluxlite-" + slug
 }
 
 // serviceName is the identifier used with the node's service manager.
-func serviceName(init model.InitSystem, routeName string) string {
+func serviceName(init model.InitSystem, slug string) string {
 	switch init {
 	case model.InitSystemd:
-		return "fluxlite-relay@" + routeName
+		return "fluxlite-relay@" + slug
 	case model.InitOpenRC:
-		return "fluxlite-" + routeName
+		return "fluxlite-" + slug
 	default:
 		return ""
 	}
@@ -82,8 +82,8 @@ type commands struct {
 	recentLog   string
 }
 
-func commandsFor(init model.InitSystem, routeName string) (commands, error) {
-	svc := serviceName(init, routeName)
+func commandsFor(init model.InitSystem, slug string) (commands, error) {
+	svc := serviceName(init, slug)
 	if svc == "" {
 		return commands{}, fmt.Errorf("unsupported init system %q", init)
 	}

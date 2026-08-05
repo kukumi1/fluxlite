@@ -30,6 +30,7 @@ type NodeLookup interface {
 type HopPlan struct {
 	RouteID   int64
 	RouteName string
+	RouteSlug string
 	HopOrder  int
 	Node      *model.Node
 
@@ -52,20 +53,21 @@ type Plan struct {
 }
 
 // InstanceName is the realm instance identifier for a route, used in unit and
-// file names. It is derived from the route name, which the API constrains to
-// safe characters.
-func InstanceName(routeName string) string {
-	return "fluxlite-" + routeName
+// file names. It is built from the route's slug, never its display name: the
+// display name may be Chinese or contain punctuation that systemd instance
+// names and shell paths cannot carry.
+func InstanceName(slug string) string {
+	return "fluxlite-" + slug
 }
 
 // ConfigPath is where a route's realm config lives on a node.
-func ConfigPath(routeName string) string {
-	return "/etc/fluxlite/realm/" + routeName + ".toml"
+func ConfigPath(slug string) string {
+	return "/etc/fluxlite/realm/" + slug + ".toml"
 }
 
 // LogPath is where a route's realm log lives on a node.
-func LogPath(routeName string) string {
-	return "/var/log/fluxlite/" + routeName + ".log"
+func LogPath(slug string) string {
+	return "/var/log/fluxlite/" + slug + ".log"
 }
 
 var (
@@ -178,13 +180,14 @@ func Build(ctx context.Context, lookup NodeLookup, route *model.Route) (*Plan, e
 		plan.Hops[i] = HopPlan{
 			RouteID:    route.ID,
 			RouteName:  route.Name,
+			RouteSlug:  route.Slug,
 			HopOrder:   h.HopOrder,
 			Node:       nodes[i],
 			Listen:     h.RelayPort,
 			Remote:     remote,
 			Config:     cfg,
-			ConfigPath: ConfigPath(route.Name),
-			UnitName:   InstanceName(route.Name),
+			ConfigPath: ConfigPath(route.Slug),
+			UnitName:   InstanceName(route.Slug),
 			Hash:       hashConfig(cfg),
 		}
 	}

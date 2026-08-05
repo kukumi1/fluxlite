@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 
 	_ "modernc.org/sqlite"
 )
@@ -42,6 +43,17 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	if err := s.migrate(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
+	}
+
+	// SQLite creates the file with the process umask, which commonly yields
+	// 0644. The rows hold encrypted node credentials and session tokens, so
+	// the file is restricted to its owner regardless of umask. WAL and shared
+	// memory sidecars carry the same data and need the same treatment.
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := os.Chmod(path+suffix, 0o600); err != nil && !os.IsNotExist(err) {
+			db.Close()
+			return nil, fmt.Errorf("restrict database permissions: %w", err)
+		}
 	}
 	return s, nil
 }

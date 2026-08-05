@@ -11,8 +11,8 @@ const emptyInput: NodeInput = {
   auth_type: "password",
   secret: "",
   via_node_id: null,
-  port_start: 20000,
-  port_end: 20020,
+  port_start: 1,
+  port_end: 65535,
 };
 
 export function Nodes() {
@@ -379,7 +379,10 @@ function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
             />
           </label>
         </div>
-        <p className="hint">NAT 机器只能填服务商实际映射到本机的端口范围。</p>
+        <p className="hint">
+          默认放开全部端口，分配时会自动跳过节点上已被占用的端口。
+          NAT 机器只能填服务商实际映射到本机的端口范围。
+        </p>
 
         <label>
           跳板节点

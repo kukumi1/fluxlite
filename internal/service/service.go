@@ -253,7 +253,10 @@ func (s *Service) CreateRoute(ctx context.Context, in RouteInput) (*model.Route,
 		hops[i] = model.RouteHop{HopOrder: i, NodeID: nodeID}
 	}
 
-	allocated, err := planner.Allocate(ctx, s.store, hops, in.Protocol, in.EntryPort, nil)
+	// Allocation consults the live listener list on each node, not just
+	// fluxlite's own bookkeeping, so a wide port pool cannot hand out a port
+	// that sshd or another service already holds.
+	allocated, err := planner.Allocate(ctx, s.newLiveLookup(nil), hops, in.Protocol, in.EntryPort, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +297,7 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, in RouteInput) (*mo
 	for i, nodeID := range in.NodeIDs {
 		hops[i] = model.RouteHop{RouteID: id, HopOrder: i, NodeID: nodeID}
 	}
-	allocated, err := planner.Allocate(ctx, s.store, hops, in.Protocol, in.EntryPort, &id)
+	allocated, err := planner.Allocate(ctx, s.newLiveLookup(&id), hops, in.Protocol, in.EntryPort, &id)
 	if err != nil {
 		return nil, err
 	}

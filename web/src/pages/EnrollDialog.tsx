@@ -14,8 +14,8 @@ export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
     host: "",
     ssh_port: 22,
     ssh_user: "root",
-    port_start: 20000,
-    port_end: 20020,
+    port_start: 1,
+    port_end: 65535,
     via_node_id: null,
   });
   const [ticket, setTicket] = useState<EnrollTicket | null>(null);
@@ -178,7 +178,11 @@ export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
             />
           </label>
         </div>
-        <p className="hint">转发链路会从这个范围里分配监听端口。NAT 机器只填实际映射到本机的范围。</p>
+        <p className="hint">
+          默认放开全部端口。分配时会从起始端口向上取第一个空闲端口，并自动跳过节点上
+          已被其他服务占用的端口（sshd、网页服务等）。NAT 机器请改成服务商实际映射到
+          本机的范围，否则会分配到映射之外、外部根本连不进来的端口。
+        </p>
 
         <label>
           跳板节点

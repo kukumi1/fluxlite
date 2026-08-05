@@ -1,0 +1,37 @@
+# Build output
+/fluxlited
+/fluxlited-*
+/dist/
+*.exe
+
+# Runtime data — never commit: contains encrypted node credentials
+*.db
+*.db-wal
+*.db-shm
+/data/
+/var/
+
+# Real deployment configuration
+config.yaml
+*.pem
+*.key
+!config.example.yaml
+
+# Secrets
+.env
+.env.*
+master.key
+
+# Frontend
+/web/node_modules/
+/web/.vite/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Deployment plan — contains real node addresses and topology
+PLAN.md

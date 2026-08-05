@@ -17,6 +17,7 @@ export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
     port_start: 1,
     port_end: 65535,
     via_node_id: null,
+    skip_udp_probe: false,
   });
   const [ticket, setTicket] = useState<EnrollTicket | null>(null);
   const [error, setError] = useState("");
@@ -199,6 +200,20 @@ export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
           </select>
         </label>
         <p className="hint">仅对面板无法直连的内网节点设置。</p>
+
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={form.skip_udp_probe}
+            onChange={(e) => set("skip_udp_probe", e.target.checked)}
+            style={{ width: "auto", marginTop: 3 }}
+          />
+          <span>跳过 UDP 检测</span>
+        </label>
+        <p className="hint">
+          多数 NAT 机器只映射 TCP，不打算跑 UDP 链路的话可以勾选，每次探测省十几秒。
+          勾选后该节点的 UDP 能力标记为「已跳过」，建 tcp+udp 链路时不会拦你。
+        </p>
 
         <div className="row" style={{ justifyContent: "flex-end", marginTop: 8 }}>
           <button type="button" className="btn" onClick={onClose}>

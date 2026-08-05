@@ -56,6 +56,7 @@ type NodeInput struct {
 	ViaNodeID *int64         `json:"via_node_id"`
 	PortStart int            `json:"port_start"`
 	PortEnd   int            `json:"port_end"`
+	SkipUDP   bool           `json:"skip_udp_probe"`
 }
 
 // CreateNode stores a node with its credential encrypted at rest.
@@ -72,16 +73,17 @@ func (s *Service) CreateNode(ctx context.Context, in NodeInput) (*model.Node, er
 	}
 
 	node := &model.Node{
-		Name:       in.Name,
-		Host:       in.Host,
-		SSHPort:    in.SSHPort,
-		SSHUser:    in.SSHUser,
-		AuthType:   in.AuthType,
-		AuthSecret: sealed,
-		ViaNodeID:  in.ViaNodeID,
-		PortStart:  in.PortStart,
-		PortEnd:    in.PortEnd,
-		Status:     model.StatusUnknown,
+		Name:         in.Name,
+		Host:         in.Host,
+		SSHPort:      in.SSHPort,
+		SSHUser:      in.SSHUser,
+		AuthType:     in.AuthType,
+		AuthSecret:   sealed,
+		ViaNodeID:    in.ViaNodeID,
+		PortStart:    in.PortStart,
+		PortEnd:      in.PortEnd,
+		SkipUDPProbe: in.SkipUDP,
+		Status:       model.StatusUnknown,
 	}
 	if err := s.store.CreateNode(ctx, node); err != nil {
 		return nil, err
@@ -117,6 +119,7 @@ func (s *Service) UpdateNode(ctx context.Context, id int64, in NodeInput) (*mode
 	node.ViaNodeID = in.ViaNodeID
 	node.PortStart = in.PortStart
 	node.PortEnd = in.PortEnd
+	node.SkipUDPProbe = in.SkipUDP
 
 	if in.Secret != "" {
 		sealed, err := s.sealer.Seal([]byte(in.Secret))
@@ -198,34 +201,61 @@ func (s *Service) ProbeNode(ctx context.Context, id int64) (*ProbeResult, error)
 	return &ProbeResult{Facts: facts, UDP: udp}, nil
 }
 
-// probeUDP tests UDP reachability from the node's jump host when it has one,
-// since that is the vantage point traffic actually arrives from. A probe that
-// cannot run returns a result with a nil verdict, never a false one.
+// probeUDP tests whether UDP survives the path to the node.
+//
+// The datagrams are aimed at the node's configured ingress address, which is
+// where relay traffic actually lands. A NAT host egresses from a different
+// address than it ingresses on, so asking the node for its own public IP
+// would test a path no traffic ever takes.
 func (s *Service) probeUDP(ctx context.Context, node *model.Node) *prober.UDPResult {
+	if node.SkipUDPProbe {
+		return &prober.UDPResult{Detail: "已按节点设置跳过 UDP 检测"}
+	}
+
 	target, err := s.pool.Get(ctx, node)
 	if err != nil {
 		return &prober.UDPResult{Detail: "target unreachable: " + err.Error()}
 	}
 
-	var source *sshx.Client
-	if node.ViaNodeID != nil {
-		via, err := s.store.NodeByID(ctx, *node.ViaNodeID)
-		if err == nil {
-			if c, err := s.pool.Get(ctx, via); err == nil {
-				source = c
-			}
-		}
-	}
+	source, why := s.udpVantagePoint(ctx, node)
 	if source == nil {
-		return &prober.UDPResult{Detail: "no vantage point to send external UDP from; support undetermined"}
+		return &prober.UDPResult{Detail: why}
 	}
 
-	port := node.PortEnd
-	res, err := prober.ProbeUDP(ctx, target.Client, source.Client, port)
+	res, err := prober.ProbeUDP(ctx, target.Client, source.Client, node.Host, node.PortEnd)
 	if err != nil {
 		return &prober.UDPResult{Detail: "probe error: " + err.Error()}
 	}
 	return res
+}
+
+// udpVantagePoint picks a machine to send the external datagrams from.
+//
+// The jump host is preferred because it is the direction real traffic arrives
+// from. Otherwise any other reachable node will do — what matters is only that
+// the packets cross the public network rather than loop back inside the target.
+func (s *Service) udpVantagePoint(ctx context.Context, node *model.Node) (*sshx.Client, string) {
+	if node.ViaNodeID != nil {
+		if via, err := s.store.NodeByID(ctx, *node.ViaNodeID); err == nil {
+			if c, err := s.pool.Get(ctx, via); err == nil {
+				return c, ""
+			}
+		}
+	}
+
+	others, err := s.store.ListNodes(ctx)
+	if err != nil {
+		return nil, "无法枚举可用的发送点：" + err.Error()
+	}
+	for _, candidate := range others {
+		if candidate.ID == node.ID || candidate.Host == node.Host {
+			continue
+		}
+		if c, err := s.pool.Get(ctx, candidate); err == nil {
+			return c, ""
+		}
+	}
+	return nil, "没有其他可用节点作为发送点，无法判定 UDP 是否可达（至少需要两台在线节点）"
 }
 
 // RouteInput is the client-supplied description of a route.

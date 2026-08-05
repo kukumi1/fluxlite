@@ -13,7 +13,7 @@ import (
 
 const nodeColumns = `id, name, host, ssh_port, ssh_user, auth_type, auth_secret,
 	via_node_id, port_start, port_end, host_key, arch, os_id, init_system,
-	udp_capable, realm_version, status, last_seen, created_at, updated_at`
+	udp_capable, skip_udp_probe, realm_version, status, last_seen, created_at, updated_at`
 
 func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
 	var n model.Node
@@ -23,8 +23,8 @@ func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
 
 	err := row.Scan(&n.ID, &n.Name, &n.Host, &n.SSHPort, &n.SSHUser, &n.AuthType,
 		&n.AuthSecret, &via, &n.PortStart, &n.PortEnd, &n.HostKey, &n.Arch,
-		&n.OSID, &n.InitSystem, &udp, &n.RealmVersion, &n.Status, &lastSeen,
-		&n.CreatedAt, &n.UpdatedAt)
+		&n.OSID, &n.InitSystem, &udp, &n.SkipUDPProbe, &n.RealmVersion, &n.Status,
+		&lastSeen, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -54,12 +54,13 @@ func (s *Store) CreateNode(ctx context.Context, n *model.Node) error {
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO nodes (name, host, ssh_port, ssh_user, auth_type, auth_secret,
 			via_node_id, port_start, port_end, host_key, arch, os_id, init_system,
-			udp_capable, realm_version, status, last_seen, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			udp_capable, skip_udp_probe, realm_version, status, last_seen,
+			created_at, updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		n.Name, n.Host, n.SSHPort, n.SSHUser, n.AuthType, n.AuthSecret,
 		nullInt64(n.ViaNodeID), n.PortStart, n.PortEnd, n.HostKey, n.Arch,
-		n.OSID, n.InitSystem, nullBool(n.UDPCapable), n.RealmVersion, n.Status,
-		nullTime(n.LastSeen), n.CreatedAt, n.UpdatedAt)
+		n.OSID, n.InitSystem, nullBool(n.UDPCapable), n.SkipUDPProbe,
+		n.RealmVersion, n.Status, nullTime(n.LastSeen), n.CreatedAt, n.UpdatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("node name %q %w", n.Name, ErrConflict)
@@ -129,13 +130,13 @@ func (s *Store) UpdateNode(ctx context.Context, n *model.Node) error {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE nodes SET name=?, host=?, ssh_port=?, ssh_user=?, auth_type=?,
 			auth_secret=?, via_node_id=?, port_start=?, port_end=?, host_key=?,
-			arch=?, os_id=?, init_system=?, udp_capable=?, realm_version=?,
-			status=?, last_seen=?, updated_at=?
+			arch=?, os_id=?, init_system=?, udp_capable=?, skip_udp_probe=?,
+			realm_version=?, status=?, last_seen=?, updated_at=?
 		WHERE id=?`,
 		n.Name, n.Host, n.SSHPort, n.SSHUser, n.AuthType, n.AuthSecret,
 		nullInt64(n.ViaNodeID), n.PortStart, n.PortEnd, n.HostKey, n.Arch,
-		n.OSID, n.InitSystem, nullBool(n.UDPCapable), n.RealmVersion, n.Status,
-		nullTime(n.LastSeen), n.UpdatedAt, n.ID)
+		n.OSID, n.InitSystem, nullBool(n.UDPCapable), n.SkipUDPProbe,
+		n.RealmVersion, n.Status, nullTime(n.LastSeen), n.UpdatedAt, n.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("node name %q %w", n.Name, ErrConflict)

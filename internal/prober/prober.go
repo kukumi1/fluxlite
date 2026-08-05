@@ -153,14 +153,20 @@ except Exception:
 	},
 }
 
-// ProbeUDP determines whether UDP datagrams sent from source reach target on
-// the given port.
+// ProbeUDP determines whether UDP datagrams sent from source reach target at
+// ingressAddr on the given port.
+//
+// ingressAddr must be the address relay traffic actually arrives on, which is
+// the address the panel has configured for the node. It is deliberately not
+// discovered on the node itself: a NAT host reaches the internet from one
+// address and receives forwarded traffic on another, so self-discovery would
+// test a path no relay traffic ever takes.
 //
 // The check is only trustworthy with a control group: the target first sends
 // itself a datagram over loopback. If that fails the listener never came up
 // and the external result is meaningless, so the probe reports "unknown"
 // rather than a false negative.
-func ProbeUDP(ctx context.Context, target, source *ssh.Client, port int) (*UDPResult, error) {
+func ProbeUDP(ctx context.Context, target, source *ssh.Client, ingressAddr string, port int) (*UDPResult, error) {
 	const logPath = "/tmp/.fluxlite-udp-probe"
 	const localMarker = "FLUXLITE-LOCAL"
 	const remoteMarker = "FLUXLITE-REMOTE"
@@ -213,12 +219,12 @@ func ProbeUDP(ctx context.Context, target, source *ssh.Client, port int) (*UDPRe
 		}, nil
 	}
 
-	return externalUDPCheck(ctx, target, source, port, logPath, remoteMarker, backend)
+	return externalUDPCheck(ctx, target, source, ingressAddr, port, logPath, remoteMarker, backend)
 }
 
-// externalUDPCheck sends datagrams from source to the target's public address
+// externalUDPCheck sends datagrams from source to the node's ingress address
 // and reports whether any arrived.
-func externalUDPCheck(ctx context.Context, target, source *ssh.Client, port int, logPath, marker, backend string) (*UDPResult, error) {
+func externalUDPCheck(ctx context.Context, target, source *ssh.Client, ingressAddr string, port int, logPath, marker, backend string) (*UDPResult, error) {
 	if source == nil {
 		return &UDPResult{
 			Method: backend,
@@ -226,15 +232,11 @@ func externalUDPCheck(ctx context.Context, target, source *ssh.Client, port int,
 		}, nil
 	}
 
-	publicIP, err := sshx.RunCheck(ctx, target, `curl -s --max-time 8 https://api.ipify.org 2>/dev/null || echo ""`)
-	if err != nil {
-		return nil, fmt.Errorf("probe udp: resolve public ip: %w", err)
-	}
-	ip := strings.TrimSpace(publicIP)
+	ip := strings.TrimSpace(ingressAddr)
 	if ip == "" {
 		return &UDPResult{
 			Method: backend,
-			Detail: "could not determine the node's public address; UDP support is undetermined",
+			Detail: "node has no configured ingress address; UDP support is undetermined",
 		}, nil
 	}
 

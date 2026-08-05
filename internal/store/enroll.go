@@ -18,6 +18,7 @@ type EnrollToken struct {
 	PortStart     int
 	PortEnd       int
 	ViaNodeID     *int64
+	SkipUDPProbe  bool
 	PrivateKey    []byte
 	AuthorizedKey string
 	ExpiresAt     time.Time
@@ -36,11 +37,12 @@ func (s *Store) CreateEnrollToken(ctx context.Context, t *EnrollToken) error {
 	t.CreatedAt = time.Now().UTC()
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO enroll_tokens (token, name, host, ssh_port, ssh_user,
-			port_start, port_end, via_node_id, private_key, authorized_key,
-			expires_at, created_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+			port_start, port_end, via_node_id, skip_udp_probe, private_key,
+			authorized_key, expires_at, created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		t.Token, t.Name, t.Host, t.SSHPort, t.SSHUser, t.PortStart, t.PortEnd,
-		nullInt64(t.ViaNodeID), t.PrivateKey, t.AuthorizedKey, t.ExpiresAt.UTC(), t.CreatedAt)
+		nullInt64(t.ViaNodeID), t.SkipUDPProbe, t.PrivateKey, t.AuthorizedKey,
+		t.ExpiresAt.UTC(), t.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("create enroll token: %w", err)
 	}
@@ -51,16 +53,16 @@ func (s *Store) CreateEnrollToken(ctx context.Context, t *EnrollToken) error {
 func (s *Store) EnrollTokenByValue(ctx context.Context, token string) (*EnrollToken, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT token, name, host, ssh_port, ssh_user, port_start, port_end,
-			via_node_id, private_key, authorized_key, expires_at, used_at,
-			node_id, created_at
+			via_node_id, skip_udp_probe, private_key, authorized_key, expires_at,
+			used_at, node_id, created_at
 		FROM enroll_tokens WHERE token = ?`, token)
 
 	var t EnrollToken
 	var via, nodeID sql.NullInt64
 	var used sql.NullTime
 	err := row.Scan(&t.Token, &t.Name, &t.Host, &t.SSHPort, &t.SSHUser,
-		&t.PortStart, &t.PortEnd, &via, &t.PrivateKey, &t.AuthorizedKey,
-		&t.ExpiresAt, &used, &nodeID, &t.CreatedAt)
+		&t.PortStart, &t.PortEnd, &via, &t.SkipUDPProbe, &t.PrivateKey,
+		&t.AuthorizedKey, &t.ExpiresAt, &used, &nodeID, &t.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -103,8 +105,8 @@ func (s *Store) MarkEnrollTokenUsed(ctx context.Context, token string, nodeID in
 func (s *Store) ListPendingEnrollTokens(ctx context.Context) ([]*EnrollToken, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT token, name, host, ssh_port, ssh_user, port_start, port_end,
-			via_node_id, private_key, authorized_key, expires_at, used_at,
-			node_id, created_at
+			via_node_id, skip_udp_probe, private_key, authorized_key, expires_at,
+			used_at, node_id, created_at
 		FROM enroll_tokens
 		WHERE used_at IS NULL AND expires_at > ?
 		ORDER BY created_at DESC`, time.Now().UTC())
@@ -119,8 +121,8 @@ func (s *Store) ListPendingEnrollTokens(ctx context.Context) ([]*EnrollToken, er
 		var via, nodeID sql.NullInt64
 		var used sql.NullTime
 		if err := rows.Scan(&t.Token, &t.Name, &t.Host, &t.SSHPort, &t.SSHUser,
-			&t.PortStart, &t.PortEnd, &via, &t.PrivateKey, &t.AuthorizedKey,
-			&t.ExpiresAt, &used, &nodeID, &t.CreatedAt); err != nil {
+			&t.PortStart, &t.PortEnd, &via, &t.SkipUDPProbe, &t.PrivateKey,
+			&t.AuthorizedKey, &t.ExpiresAt, &used, &nodeID, &t.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan enroll token: %w", err)
 		}
 		if via.Valid {

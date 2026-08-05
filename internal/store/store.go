@@ -160,6 +160,7 @@ var migrations = []string{
 		port_start     INTEGER NOT NULL,
 		port_end       INTEGER NOT NULL,
 		via_node_id    INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
+		skip_udp_probe INTEGER NOT NULL DEFAULT 0,
 		private_key    BLOB    NOT NULL,
 		authorized_key TEXT    NOT NULL,
 		expires_at     DATETIME NOT NULL,
@@ -169,6 +170,8 @@ var migrations = []string{
 	)`,
 
 	`CREATE INDEX IF NOT EXISTS idx_enroll_expiry ON enroll_tokens(expires_at)`,
+
+	`ALTER TABLE nodes ADD COLUMN skip_udp_probe INTEGER NOT NULL DEFAULT 0`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

@@ -33,6 +33,7 @@ type EnrollRequest struct {
 	PortStart int    `json:"port_start"`
 	PortEnd   int    `json:"port_end"`
 	ViaNodeID *int64 `json:"via_node_id"`
+	SkipUDP   bool   `json:"skip_udp_probe"`
 }
 
 // EnrollTicket is what the panel shows the operator.
@@ -89,6 +90,7 @@ func (s *Service) CreateEnrollTicket(ctx context.Context, baseURL string, req En
 		PortStart:     req.PortStart,
 		PortEnd:       req.PortEnd,
 		ViaNodeID:     req.ViaNodeID,
+		SkipUDPProbe:  req.SkipUDP,
 		PrivateKey:    sealed,
 		AuthorizedKey: pair.AuthorizedKey,
 		ExpiresAt:     time.Now().UTC().Add(EnrollTTL),
@@ -163,6 +165,7 @@ func (s *Service) CompleteEnroll(ctx context.Context, report EnrollReport) (*Enr
 		ViaNodeID:    t.ViaNodeID,
 		PortStart:    t.PortStart,
 		PortEnd:      t.PortEnd,
+		SkipUDPProbe: t.SkipUDPProbe,
 		Arch:         report.Arch,
 		OSID:         report.OSID,
 		InitSystem:   init,

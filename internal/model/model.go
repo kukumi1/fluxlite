@@ -98,6 +98,11 @@ type Node struct {
 	// path to this node, which disqualifies it from tcp+udp routes.
 	UDPCapable *bool `json:"udp_capable"`
 
+	// SkipUDPProbe suppresses the UDP reachability check for this node. Most
+	// NAT hosts forward TCP only, so an operator who never intends to carry
+	// UDP can skip a probe that costs a dozen seconds on every refresh.
+	SkipUDPProbe bool `json:"skip_udp_probe"`
+
 	// RealmVersion is the realm build currently installed, empty if absent.
 	RealmVersion string `json:"realm_version"`
 

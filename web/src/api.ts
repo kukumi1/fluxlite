@@ -18,6 +18,7 @@ export interface Node {
   os_id: string;
   init_system: InitSystem;
   udp_capable: boolean | null;
+  skip_udp_probe: boolean;
   realm_version: string;
   status: NodeStatus;
   last_seen: string | null;
@@ -121,6 +122,7 @@ export interface EnrollRequest {
   port_start: number;
   port_end: number;
   via_node_id: number | null;
+  skip_udp_probe: boolean;
 }
 
 export interface EnrollTicket {
@@ -206,6 +208,7 @@ export interface NodeInput {
   via_node_id: number | null;
   port_start: number;
   port_end: number;
+  skip_udp_probe: boolean;
 }
 
 export interface RouteInput {

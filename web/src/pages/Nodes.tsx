@@ -13,6 +13,7 @@ const emptyInput: NodeInput = {
   via_node_id: null,
   port_start: 1,
   port_end: 65535,
+  skip_udp_probe: false,
 };
 
 export function Nodes() {
@@ -142,8 +143,12 @@ export function Nodes() {
                     {n.port_start}-{n.port_end}
                   </td>
                   <td>
-                    {n.udp_capable === null ? (
-                      <span className="tag">未知</span>
+                    {n.skip_udp_probe ? (
+                      <span className="tag">已跳过</span>
+                    ) : n.udp_capable === null ? (
+                      <span className="tag" title="尚未测出结果，不等于不通">
+                        未知
+                      </span>
                     ) : n.udp_capable ? (
                       <span className="tag ok">通</span>
                     ) : (
@@ -276,6 +281,7 @@ function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
           via_node_id: node.via_node_id,
           port_start: node.port_start,
           port_end: node.port_end,
+          skip_udp_probe: node.skip_udp_probe,
         }
       : emptyInput,
   );
@@ -401,6 +407,17 @@ function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
           </select>
         </label>
         <p className="hint">仅对控制器无法直连的内网节点设置，下发时会自动经跳板。</p>
+
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={form.skip_udp_probe}
+            onChange={(e) => set("skip_udp_probe", e.target.checked)}
+            style={{ width: "auto", marginTop: 3 }}
+          />
+          <span>跳过 UDP 检测</span>
+        </label>
+        <p className="hint">多数 NAT 机器只映射 TCP，不跑 UDP 链路可勾选，每次探测省十几秒。</p>
 
         <div className="row" style={{ justifyContent: "flex-end", marginTop: 8 }}>
           <button type="button" className="btn" onClick={onClose}>

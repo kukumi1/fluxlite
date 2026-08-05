@@ -54,13 +54,16 @@ func TestParseListeningPortsCatchesSSH(t *testing.T) {
 // to that port would start cleanly and receive nothing. ss cannot see these,
 // which is the whole reason the nat table is read.
 func TestParseNATPorts(t *testing.T) {
-	// Shapes taken from real hosts: docker publishing ports, a sing-box
-	// manager forwarding rule, a redirect, a multiport rule and a range.
+	// Verbatim from managed hosts: docker publishing ports and a sing-box
+	// manager's SB_DNAT chain, plus a redirect, a multiport rule and a range.
+	// The SNAT companion rule carries the same --dport and must not be counted:
+	// it describes the far side of the hop, not a claim on this machine.
 	const out = `
 -A DOCKER ! -i br-a685dbf5803f -p tcp -m tcp --dport 80 -j DNAT --to-destination 172.18.0.4:80
 -A DOCKER ! -i br-a685dbf5803f -p tcp -m tcp --dport 443 -j DNAT --to-destination 172.18.0.4:443
--A SB-FORWARD-DNAT -p tcp -m tcp --dport 31001 -j DNAT --to-destination 203.0.113.9:31001
--A SB-FORWARD-DNAT -p udp -m udp --dport 31001 -j DNAT --to-destination 203.0.113.9:31001
+-A SB_DNAT -p tcp -m tcp --dport 31001 -j DNAT --to-destination 112.105.152.213:31001
+-A SB_DNAT -p udp -m udp --dport 31001 -j DNAT --to-destination 112.105.152.213:31001
+-A SB_SNAT -d 112.105.152.213/32 -p tcp -m tcp --dport 31001 -j MASQUERADE
 -A PREROUTING -p tcp -m tcp --dport 8080 -j REDIRECT --to-ports 3128
 -A PREROUTING -p tcp -m multiport --dports 20000,20001,20005 -j DNAT --to-destination 10.0.0.2
 -A PREROUTING -p tcp -m tcp --dport 30000:30004 -j DNAT --to-destination 10.0.0.3

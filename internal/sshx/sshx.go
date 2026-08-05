@@ -365,9 +365,20 @@ func (p *Pool) Get(ctx context.Context, node *model.Node) (*Client, error) {
 	p.mu.Lock()
 	if c, ok := p.clients[node.ID]; ok {
 		p.mu.Unlock()
-		return c, nil
+		if alive(c) {
+			return c, nil
+		}
+		// The node rebooted or the link dropped. Handing the dead client back
+		// would fail every operation on this node until the panel restarts.
+		p.mu.Lock()
+		if current, ok := p.clients[node.ID]; ok && current == c {
+			delete(p.clients, node.ID)
+			c.Close()
+		}
+		p.mu.Unlock()
+	} else {
+		p.mu.Unlock()
 	}
-	p.mu.Unlock()
 
 	client, err := p.dialer.Dial(ctx, node)
 	if err != nil {
@@ -383,6 +394,14 @@ func (p *Pool) Get(ctx context.Context, node *model.Node) (*Client, error) {
 	}
 	p.clients[node.ID] = client
 	return client, nil
+}
+
+// alive reports whether a cached connection still answers. A keepalive request
+// costs one round trip, far less than the handshake a false negative would
+// force, and unlike opening a session it leaves no state behind on the node.
+func alive(c *Client) bool {
+	_, _, err := c.Client.SendRequest("keepalive@openssh.com", true, nil)
+	return err == nil
 }
 
 // Close tears down every cached client.

@@ -42,6 +42,7 @@ func run() error {
 		listen      = flag.String("listen", "127.0.0.1:7800", "address to listen on")
 		dataDir     = flag.String("data", "/var/lib/fluxlite", "data directory")
 		interval    = flag.Duration("reconcile-interval", 5*time.Minute, "how often to reconcile nodes and routes")
+		latency     = flag.Duration("latency-interval", 30*time.Second, "how often to sample per-hop latency")
 		insecure    = flag.Bool("insecure-cookies", false, "allow session cookies over plain HTTP (development only)")
 		genKey      = flag.Bool("genkey", false, "print a fresh master key and exit")
 		showVersion = flag.Bool("version", false, "print version and exit")
@@ -113,10 +114,11 @@ func run() error {
 	})
 
 	w := watcher.New(watcher.Config{
-		Service:  svc,
-		Store:    st,
-		Logger:   logger,
-		Interval: *interval,
+		Service:         svc,
+		Store:           st,
+		Logger:          logger,
+		Interval:        *interval,
+		LatencyInterval: *latency,
 	})
 	go w.Run(ctx)
 

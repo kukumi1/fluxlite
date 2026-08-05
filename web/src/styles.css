@@ -325,6 +325,10 @@ select:focus {
   border-radius: 6px;
 }
 
+.chain .lat.stale {
+  color: var(--warn);
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

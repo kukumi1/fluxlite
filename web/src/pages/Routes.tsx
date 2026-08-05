@@ -12,14 +12,45 @@ import {
 } from "../api";
 import { Banner, Modal } from "../components/Modal";
 
+// staleAfterMs is how long a sample stays trustworthy. Sampling runs every 30
+// seconds, so anything several rounds old means the node stopped answering and
+// the number on screen is frozen, not live.
+const staleAfterMs = 150000;
+
+function ageOf(at: string | null): number | null {
+  if (!at) return null;
+  const ms = Date.now() - new Date(at).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function describeAge(ms: number): string {
+  if (ms < 60000) return `${Math.max(1, Math.round(ms / 1000))} 秒前`;
+  if (ms < 3600000) return `${Math.round(ms / 60000)} 分钟前`;
+  return `${Math.round(ms / 3600000)} 小时前`;
+}
+
 // Link is the arrow between a hop and whatever it forwards to, carrying that
 // leg's measured latency. An unmeasured leg shows no number rather than a
 // zero, which would read as "instant".
 function Link({ ms, at }: { ms: number | null; at: string | null }) {
   if (ms === null) return <span className="arrow">→</span>;
+  const age = ageOf(at);
+  const stale = age !== null && age > staleAfterMs;
   return (
-    <span className="arrow" title={at ? `测于 ${new Date(at).toLocaleString()}` : undefined}>
-      →<span className="lat">{ms}ms</span>
+    <span
+      className="arrow"
+      title={
+        age === null
+          ? undefined
+          : stale
+            ? `测于 ${describeAge(age)}，此后未能再测到，该数字已不代表现状`
+            : `测于 ${describeAge(age)}`
+      }
+    >
+      →
+      <span className={`lat ${stale ? "stale" : ""}`}>
+        {ms}ms{stale && " ⚠"}
+      </span>
     </span>
   );
 }
@@ -30,9 +61,20 @@ function Link({ ms, at }: { ms: number | null; at: string | null }) {
 function ChainTotal({ hops }: { hops: RouteHop[] }) {
   if (hops.length === 0 || hops.some((h) => h.latency_ms === null)) return null;
   const total = hops.reduce((sum, h) => sum + (h.latency_ms ?? 0), 0);
+  const stale = hops.some((h) => {
+    const age = ageOf(h.latency_at);
+    return age !== null && age > staleAfterMs;
+  });
   return (
-    <span className="lat total" title="各段建连耗时之和，不是端到端实测往返">
-      合计 {total}ms
+    <span
+      className={`lat total ${stale ? "stale" : ""}`}
+      title={
+        stale
+          ? "其中有链段已停止更新，合计不代表现状"
+          : "各段建连耗时之和，不是端到端实测往返"
+      }
+    >
+      合计 {total}ms{stale && " ⚠"}
     </span>
   );
 }
@@ -65,6 +107,22 @@ export function Routes() {
 
   useEffect(() => {
     void load();
+  }, []);
+
+  // Latency is resampled in the background, so the list refreshes itself.
+  // Only the route read is polled: it is a database query, whereas the status
+  // call opens an SSH session per hop and must stay on demand.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      api
+        .listRoutes()
+        .then((r) => setRoutes(r ?? []))
+        .catch(() => {
+          // A failed poll leaves the previous numbers on screen. Raising it as
+          // an error banner would bury whatever the operator is actually doing.
+        });
+    }, 15000);
+    return () => clearInterval(timer);
   }, []);
 
   function hopRunning(routeId: number, hopOrder: number): boolean | undefined {

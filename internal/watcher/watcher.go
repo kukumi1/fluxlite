@@ -21,14 +21,23 @@ type Watcher struct {
 	store    *store.Store
 	log      *slog.Logger
 	interval time.Duration
+	latency  time.Duration
 }
 
 // Config configures the watcher.
 type Config struct {
-	Service  *service.Service
-	Store    *store.Store
-	Logger   *slog.Logger
+	Service *service.Service
+	Store   *store.Store
+	Logger  *slog.Logger
+
+	// Interval governs reconciliation, which probes every node and re-applies
+	// drifted routes.
 	Interval time.Duration
+
+	// LatencyInterval governs latency sampling. It is far shorter because a
+	// sample is one TCP connect per hop over an already-open SSH connection,
+	// where reconciliation runs a full probe including the UDP check.
+	LatencyInterval time.Duration
 }
 
 func New(cfg Config) *Watcher {
@@ -36,13 +45,22 @@ func New(cfg Config) *Watcher {
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
-	return &Watcher{svc: cfg.Service, store: cfg.Store, log: cfg.Logger, interval: interval}
+	latency := cfg.LatencyInterval
+	if latency <= 0 {
+		latency = 30 * time.Second
+	}
+	return &Watcher{
+		svc: cfg.Service, store: cfg.Store, log: cfg.Logger,
+		interval: interval, latency: latency,
+	}
 }
 
 // Run blocks until ctx is cancelled, reconciling on each tick.
 func (w *Watcher) Run(ctx context.Context) {
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
+	latencyTicker := time.NewTicker(w.latency)
+	defer latencyTicker.Stop()
 
 	w.reconcile(ctx)
 	for {
@@ -51,6 +69,41 @@ func (w *Watcher) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			w.reconcile(ctx)
+		case <-latencyTicker.C:
+			w.sampleLatencies(ctx)
+		}
+	}
+}
+
+// sampleLatencies refreshes the per-hop timings shown on the route list.
+//
+// A sample that outlives its interval is dropped rather than queued: the next
+// tick produces a fresher number than a backlog ever could, and letting rounds
+// pile up would multiply the load on the very nodes that are already slow.
+func (w *Watcher) sampleLatencies(ctx context.Context) {
+	routes, err := w.store.ListRoutes(ctx)
+	if err != nil {
+		w.log.Error("list routes for latency sampling", "error", err)
+		return
+	}
+
+	deadline, cancel := context.WithTimeout(ctx, w.latency)
+	defer cancel()
+
+	for _, route := range routes {
+		if !route.Enabled {
+			continue
+		}
+		select {
+		case <-deadline.Done():
+			return
+		default:
+		}
+		if err := w.svc.MeasureRouteLatencies(deadline, route.ID); err != nil {
+			// An unreachable node is ordinary here and already visible as the
+			// node's status, so this stays at debug rather than crying wolf
+			// every half minute.
+			w.log.Debug("latency sample failed", "route", route.Name, "error", err)
 		}
 	}
 }

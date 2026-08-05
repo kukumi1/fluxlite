@@ -417,6 +417,24 @@ func (s *Service) VerifyRoute(ctx context.Context, id int64) (*verifier.Report, 
 	return report, nil
 }
 
+// MeasureRouteLatencies refreshes the stored per-hop latency for one route
+// without running a full verification.
+func (s *Service) MeasureRouteLatencies(ctx context.Context, id int64) error {
+	route, err := s.store.RouteByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	plan, err := planner.Build(ctx, s.store, route)
+	if err != nil {
+		return err
+	}
+	latencies, err := s.verifier.MeasureLatencies(ctx, plan)
+	if err != nil {
+		return err
+	}
+	return s.store.SetHopLatencies(ctx, id, latencies)
+}
+
 // DeleteRoute tears the route down on every hop, then removes it.
 func (s *Service) DeleteRoute(ctx context.Context, id int64) error {
 	route, err := s.store.RouteByID(ctx, id)

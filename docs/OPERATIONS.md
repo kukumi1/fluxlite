@@ -1,0 +1,157 @@
+# 运维手册
+
+## 端口池
+
+端口池限定面板可以在这台机器上分配的范围，默认 `10000-65535`。
+
+**从池的起始向上分配**，所以起始设成 1 会把 1 号端口发给第一条链路——能绑上（realm 以 root 运行），但扫描器会告警、云厂商安全组模板对 1-1023 有默认策略、排查时也完全反应不过来。
+
+| 机器类型 | 建议 |
+|---|---|
+| 普通 VPS | `10000-65535` |
+| NAT 机器 | **改成服务商实际映射到本机的范围** |
+| 只放行了固定几个端口的机器 | 改成放行的区间 |
+
+NAT 机器如果保持默认的宽范围，面板会分配到映射之外的端口——链路建得起来、面板一片绿、外面根本连不进来。
+
+分配时会自动跳过节点上已被占用的端口，包括被 iptables DNAT 劫走的（`ss` 看不见那些）。
+
+## 升级面板
+
+版本是单个静态二进制，替换重启即可。数据库迁移在启动时自动执行。
+
+```bash
+# 建议先备份数据库
+cp /var/lib/fluxlite/fluxlite.db /var/lib/fluxlite/fluxlite.db.bak-$(date +%F)
+
+systemctl stop fluxlite
+curl -fsSL -o /usr/local/bin/fluxlited.new \
+  https://github.com/kukumi1/fluxlite/releases/latest/download/fluxlited-linux-amd64
+chmod +x /usr/local/bin/fluxlited.new
+/usr/local/bin/fluxlited.new --version          # 先确认能跑
+mv /usr/local/bin/fluxlited.new /usr/local/bin/fluxlited
+systemctl start fluxlite
+```
+
+> 走 SFTP 上传大二进制容易中途卡死。先 `gzip -9` 压到一半大小再传，落地前用 `gzip -tf` 校验完整性，再解压覆盖。
+
+升级面板**不会**动节点上的 realm，除非同时改了内核版本（见下）。
+
+## 升级 realm
+
+realm 的版本锁在代码里（`internal/applier/realm.go` 的 `RealmVersion`），面板不会自作主张升级。
+
+升级流程：
+
+1. 改 `RealmVersion`
+2. 重新编译、部署面板
+3. 剩下的自动完成——巡检对每条链路跑下发，发现节点上版本不符就上传新二进制**并重启中继**
+
+**注意时间点**：第 3 步意味着所有链路会在一个巡检周期（默认 5 分钟）内被逐条重启。想控制的话，先把 `--reconcile-interval` 调大或临时停掉面板，然后手动逐条点「下发」。
+
+单个节点也可以在节点页点「装内核」预装，那只写二进制、不重启任何东西（因为还没有链路在跑）。
+
+## 备份与恢复
+
+需要备份的只有两样：
+
+| 路径 | 内容 | 丢了会怎样 |
+|---|---|---|
+| `/etc/fluxlite/master.key` | 主密钥 | **所有节点凭据永久解不开**，只能全部重新纳管 |
+| `/var/lib/fluxlite/fluxlite.db` | 节点、链路、账号、审计 | 全部配置丢失 |
+
+主密钥必须**离线**另存一份，不要和数据库放在同一台机器、同一个备份集里——两者一起丢等于什么都没备份。
+
+恢复就是把两个文件放回原位、启动服务。节点上的 realm 和 systemd 单元不受影响，链路会在下一次巡检时自动对齐。
+
+## 账号
+
+- 忘记密码 / 两步验证：目前没有找回入口，只能到数据库改
+- 账号被锁（连续 5 次失败锁 15 分钟）可以直接清掉
+
+```bash
+python3 - <<'PY'
+import sqlite3
+d = sqlite3.connect('/var/lib/fluxlite/fluxlite.db')
+d.execute("UPDATE users SET failed_count = 0, locked_until = NULL")
+d.commit()
+PY
+```
+
+关闭两步验证需要密码加一个当前验证码，从个人中心操作。**如果验证码已经不可用**（换手机、删了条目），只能在数据库里关：
+
+```bash
+python3 -c "
+import sqlite3
+d = sqlite3.connect('/var/lib/fluxlite/fluxlite.db')
+d.execute(\"UPDATE users SET totp_enrolled = 0, totp_secret = ''\")
+d.commit()"
+```
+
+改密码会自动踢掉除当前浏览器外的所有会话。
+
+## 故障排查
+
+### 下发成功但验证不过
+
+「下发成功」只证明进程起来了，不证明流量能通。按这个顺序看验证结果：
+
+| 现象 | 通常原因 |
+|---|---|
+| 逐跳都通、抓包没过 | 中间某段被阻断，或落地端口没在监听 |
+| 抓包报「未知」 | 最后一跳没装 `tcpdump` |
+| 抓包报「一个包都没抓到」 | 流量根本没到最后一跳 |
+| 连入口监听都连不上 | 入口的 relay 没起来，看它的 journal |
+
+### 节点显示离线
+
+```bash
+# 从面板机器上手工试一次，看是认证问题还是网络问题
+ssh -p <端口> <用户>@<地址>
+```
+
+NAT 机器最常见的原因是**连接地址填错**：填了机器的出口 IP，而不是服务商映射的入口地址。这两个通常不是一个。
+
+### 链路端口莫名其妙连不上
+
+先确认这个端口没有被别的东西劫走：
+
+```bash
+ss -tuln | grep :<端口>                                   # 有没有别的进程在听
+iptables-save -t nat | grep -- "--dport <端口>"           # 有没有 DNAT 规则
+```
+
+DNAT 规则会让 relay 收不到任何数据，而进程和 `ss` 看起来一切正常。新版面板分配端口时会跳过这类端口，但**在别处手工建的规则可能是后加的**。
+
+### 手改了节点配置，几分钟后被改回去了
+
+这是设计行为。巡检每 5 分钟对每条启用的链路跑一次幂等下发，发现节点上的配置和面板不一致就改回并重启。
+
+要临时保留手工修改，先在面板上点「停止」。
+
+### 延迟数字变黄带 ⚠
+
+采样已经超过 150 秒（5 轮）没更新，说明节点连不上了，屏幕上那个数字是**冻住的旧值**，不代表现状。去节点页看该机器状态。
+
+### 面板日志
+
+```bash
+journalctl -u fluxlite -f
+journalctl -u fluxlite | grep -i drift     # 看纠正过哪些配置漂移
+```
+
+节点上：
+
+```bash
+systemctl status fluxlite-relay@<slug>     # systemd
+rc-service fluxlite-<slug> status          # OpenRC
+tail -f /var/log/fluxlite/<slug>.log       # realm 自己的日志
+```
+
+slug 不是链路的显示名。在链路卡片上把鼠标停在名字上可以看到。
+
+## 与其他转发工具共存
+
+面板只管自己部署的 realm 实例，不碰机器上别的东西。同一台机器上跑 sing-box 管理器、Docker、手写的 iptables 转发都没问题，前提是**端口不撞**——而端口分配已经会自动避让监听套接字和 nat 规则。
+
+有一个反向的注意点：**iptables DNAT 把域名解析结果写死在规则里**。落地用 DDNS 的话，域名换了 IP，规则不会自己跟上，那条转发会静默失效。realm 是按连接解析的，没有这个问题。

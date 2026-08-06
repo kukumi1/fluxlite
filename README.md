@@ -155,6 +155,16 @@ curl -fsSL https://your-panel/enroll.sh | sh -s -- https://your-panel <token>
 
 仍然可以走「手动添加」用密码或私钥纳管，两种方式并存。
 
+### 下线节点
+
+面板删除只清面板这边的记录，机器上的东西需要在那台机器上清：
+
+```bash
+curl -fsSL https://your-panel/uninstall.sh | sh
+```
+
+它会移除转发服务、配置目录和**面板的登录公钥**，只删注释以 `fluxlite-` 开头的那一行，你自己的密钥不受影响。详见[运维手册](docs/OPERATIONS.md#下线一台节点)。
+
 ### 读懂验证结果
 
 只有出现**「抓包已证实数据真实抵达落地」**才算真的通。其余项目全绿但这项没过，说明链路能建连但不转发。

@@ -89,6 +89,13 @@ for path in /etc/fluxlite /var/log/fluxlite; do
     fi
 done
 
+# supervise-daemon 的 pid 文件在 /run 下，正常停止时会自己清掉，异常退出时会残留。
+for pidfile in /run/fluxlite-*.pid; do
+    [ -e "$pidfile" ] || continue
+    rm -f "$pidfile"
+    ok "已删除 $pidfile"
+done
+
 # ---------- 撤销面板公钥 ----------
 step 3/5 "撤销面板的登录公钥"
 
@@ -201,5 +208,8 @@ say "确认离线后，到面板的节点页删除对应记录即可。"
 say ""
 say "提示：如果面板里还有链路经过本机，请先在面板上停止或删除那些链路，"
 say "      否则删不掉节点记录。"
+say ""
+say "本脚本不碰 iptables —— fluxlite 从不创建转发规则，它只跑 realm 进程。"
+say "机器上如果有 DNAT/端口转发规则，那是别的工具建的，请用那个工具清理。"
 say ""
 `

@@ -126,6 +126,7 @@ func (s *Server) Handler() http.Handler {
 	})
 
 	r.Get("/enroll.sh", s.handleEnrollScript)
+	r.Get("/uninstall.sh", s.handleUninstallScript)
 
 	if s.static != nil {
 		r.NotFound(s.static.ServeHTTP)

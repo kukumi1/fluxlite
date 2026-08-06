@@ -391,6 +391,20 @@ select:focus {
   color: var(--warn);
 }
 
+/* A shell command meant to be copied out whole. */
+.cmd {
+  margin: 0 0 12px;
+  padding: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: all;
+}
+
 /* Hints that hovering reveals something, without the noise of showing it. */
 .has-detail {
   border-bottom: 1px dotted var(--border);

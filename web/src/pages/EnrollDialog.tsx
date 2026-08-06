@@ -67,20 +67,7 @@ export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
           在目标机器上以 root 执行下面这条命令即可完成注册，无需再填地址和密码。
         </Banner>
 
-        <div
-          className="mono"
-          style={{
-            background: "var(--bg)",
-            border: "1px solid var(--border)",
-            borderRadius: 6,
-            padding: 12,
-            wordBreak: "break-all",
-            userSelect: "all",
-            marginBottom: 12,
-          }}
-        >
-          {ticket.command}
-        </div>
+        <pre className="cmd">{ticket.command}</pre>
 
         <div className="row" style={{ marginBottom: 16 }}>
           <button className="btn primary" onClick={() => void copy()}>

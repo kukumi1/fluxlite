@@ -24,6 +24,12 @@ const emptyInput: NodeInput = {
   skip_udp_probe: false,
 };
 
+// uninstallCommand points the node at this panel. The browser is already
+// talking to the right origin, so there is nothing to configure.
+function uninstallCommand(): string {
+  return `curl -fsSL ${window.location.origin}/uninstall.sh | sh`;
+}
+
 export function Nodes() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [error, setError] = useState("");
@@ -33,6 +39,7 @@ export function Nodes() {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [probe, setProbe] = useState<{ node: string; result: ProbeResult } | null>(null);
   const [enrolling, setEnrolling] = useState(false);
+  const [removed, setRemoved] = useState<string | null>(null);
 
   const fail = (err: unknown) =>
     setError(err instanceof ApiError ? err.message : "请求失败");
@@ -80,12 +87,26 @@ export function Nodes() {
   }
 
   async function remove(node: Node) {
-    if (!confirm(`确认删除节点 ${node.name}？`)) return;
+    if (
+      !confirm(
+        `确认删除节点 ${node.name}？
+
+` +
+          "面板只删除自己这边的记录，机器上的 realm、服务和面板公钥不会被清理。" +
+          "删除后会给出卸载命令。",
+      )
+    )
+      return;
     setBusyId(node.id);
     setError("");
     try {
       await api.deleteNode(node.id);
-      setNotice(`节点 ${node.name} 已删除`);
+      // The panel cannot reach into a machine it no longer manages, so the
+      // leftovers — not least its own key in authorized_keys — have to be
+      // removed from the node. Say so at the one moment the operator is
+      // looking, instead of leaving root access behind silently.
+      setRemoved(node.name);
+      setNotice("");
       await load();
     } catch (err) {
       fail(err);
@@ -220,6 +241,23 @@ export function Nodes() {
           </table>
         )}
       </div>
+
+      {removed && (
+        <Modal title={`节点 ${removed} 已从面板删除`} onClose={() => setRemoved(null)}>
+          <Banner kind="warn">
+            机器上还留着 realm、转发服务，以及面板的登录公钥 —— 面板已经管不到它了，
+            需要在那台机器上执行卸载。
+          </Banner>
+          <p className="hint" style={{ marginTop: 0 }}>
+            以 root 执行：
+          </p>
+          <pre className="cmd">{uninstallCommand()}</pre>
+          <p className="hint">
+            脚本只删除注释以 <code>fluxlite-</code> 开头的公钥，你自己的密钥不受影响。
+            转发内核 realm 如果还被别的服务引用会被保留，加 <code>--purge-realm</code> 可强制删除。
+          </p>
+        </Modal>
+      )}
 
       {enrolling && (
         <EnrollDialog

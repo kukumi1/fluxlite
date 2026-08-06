@@ -18,6 +18,17 @@ func (s *Server) handleEnrollScript(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleUninstallScript serves the teardown counterpart of the installer. It
+// needs no token: it grants nothing, and it has to work on a machine the panel
+// can no longer reach.
+func (s *Server) handleUninstallScript(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if _, err := w.Write([]byte(uninstallScript)); err != nil {
+		s.log.Error("write uninstall script", "error", err)
+	}
+}
+
 // handleEnrollTicket creates a pending enrollment and returns the command.
 func (s *Server) handleEnrollTicket(w http.ResponseWriter, r *http.Request) {
 	var req service.EnrollRequest

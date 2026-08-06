@@ -21,12 +21,15 @@ warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 die()  { printf '  \033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 PURGE_REALM=0
+KEEP_SESSIONS=0
 for arg in "$@"; do
     case "$arg" in
         --purge-realm) PURGE_REALM=1 ;;
+        --keep-sessions) KEEP_SESSIONS=1 ;;
         -h|--help)
-            say "用法: uninstall.sh [--purge-realm]"
-            say "  --purge-realm  即使别处仍在引用，也删除 /usr/local/bin/realm"
+            say "用法: uninstall.sh [--purge-realm] [--keep-sessions]"
+            say "  --purge-realm    即使别处仍在引用，也删除 /usr/local/bin/realm"
+            say "  --keep-sessions  不断开其他 SSH 会话（面板可能借旧连接继续管理本机）"
             exit 0 ;;
         *) die "未知参数: $arg" ;;
     esac
@@ -39,7 +42,7 @@ say "fluxlite 节点卸载"
 say ""
 
 # ---------- 停止并移除服务 ----------
-step 1/4 "停止转发服务"
+step 1/5 "停止转发服务"
 
 STOPPED=0
 if [ -d /run/systemd/system ]; then
@@ -77,7 +80,7 @@ fi
 [ "$STOPPED" -gt 0 ] || warn "没有找到 fluxlite 的转发服务"
 
 # ---------- 移除配置与日志 ----------
-step 2/4 "删除配置与日志"
+step 2/5 "删除配置与日志"
 
 for path in /etc/fluxlite /var/log/fluxlite; do
     if [ -e "$path" ]; then
@@ -87,7 +90,7 @@ for path in /etc/fluxlite /var/log/fluxlite; do
 done
 
 # ---------- 撤销面板公钥 ----------
-step 3/4 "撤销面板的登录公钥"
+step 3/5 "撤销面板的登录公钥"
 
 # 面板下发的公钥注释固定为 fluxlite-<节点名>。只按这个注释匹配，绝不整行清空：
 # 同一个 authorized_keys 里通常还有机主自己的密钥，删错就把人锁在门外了。
@@ -120,8 +123,53 @@ for home in /root /home/*; do
 done
 [ "$FOUND_KEY" = "1" ] || warn "没有找到面板下发的公钥"
 
+# ---------- 断开面板残留的连接 ----------
+step 4/5 "断开面板已建立的 SSH 会话"
+
+# 撤销公钥只影响之后的登录 —— SSH 仅在建连时校验授权，已经建立的会话不受影响。
+# 面板对每个节点保持一条长连接，不断开的话它会继续管理本机：只要还有链路经过
+# 这台机器，巡检就会在几分钟内把 realm 和配置原样装回来。
+drop_other_sessions() {
+    # 自己这条会话的进程链绝不能杀，否则脚本会把自己掐断。
+    mine=" "
+    pid=$$
+    while [ "$pid" -gt 1 ] 2>/dev/null; do
+        mine="$mine$pid "
+        parent="$(awk '/^PPid:/ { print $2 }' "/proc/$pid/status" 2>/dev/null || true)"
+        [ -n "$parent" ] || break
+        pid="$parent"
+    done
+
+    killed=0
+    for entry in /proc/[0-9]*; do
+        p="${entry#/proc/}"
+        case "$mine" in *" $p "*) continue ;; esac
+        # 命令替换会丢掉 NUL 分隔符，正好把 cmdline 拼成一串。
+        cmd="$(cat "$entry/cmdline" 2>/dev/null || true)"
+        # 每条会话的 sshd 进程标题形如 "sshd: root@notty"。监听进程和特权父进程
+        # 不含 @，所以匹配 @ 就不会误伤它们。
+        case "$cmd" in
+            "sshd: "*@*|"sshd-session: "*@*) ;;
+            *) continue ;;
+        esac
+        kill "$p" 2>/dev/null && killed=$((killed + 1))
+    done
+    printf '%s' "$killed"
+}
+
+if [ "$KEEP_SESSIONS" = "1" ]; then
+    warn "按 --keep-sessions 跳过；面板可能仍借旧连接管理本机"
+else
+    DROPPED="$(drop_other_sessions)"
+    if [ "$DROPPED" -gt 0 ]; then
+        ok "已断开 $DROPPED 条其他 SSH 会话（本次会话不受影响）"
+    else
+        ok "没有其他 SSH 会话"
+    fi
+fi
+
 # ---------- 转发内核 ----------
-step 4/4 "处理转发内核 realm"
+step 5/5 "处理转发内核 realm"
 
 REALM=/usr/local/bin/realm
 if [ ! -e "$REALM" ]; then
@@ -148,7 +196,10 @@ fi
 say ""
 printf '\033[32m卸载完成\033[0m\n'
 say ""
-say "本机已不再受面板管理。别忘了在面板的节点页删除对应记录，"
-say "否则它会一直显示离线并被反复探测。"
+say "本机已不再受面板管理，面板会在一个巡检周期内把它标记为离线。"
+say "确认离线后，到面板的节点页删除对应记录即可。"
+say ""
+say "提示：如果面板里还有链路经过本机，请先在面板上停止或删除那些链路，"
+say "      否则删不掉节点记录。"
 say ""
 `

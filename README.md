@@ -141,7 +141,7 @@ ssh -L 7800:127.0.0.1:7800 root@your-server
 curl -fsSL https://your-panel/enroll.sh | sh -s -- https://your-panel <token>
 ```
 
-脚本会识别系统架构与 init、把面板公钥写进 `authorized_keys`、从**面板**下载安装 realm，然后回报并触发面板立即回连验证，结果直接打在终端上。
+脚本会识别系统架构与 init、把面板公钥写进 `authorized_keys`、从**面板**下载安装 realm、装上抓包工具 `tcpdump`，然后回报并触发面板立即回连验证，结果直接打在终端上。
 
 几个要点：
 
@@ -150,6 +150,7 @@ curl -fsSL https://your-panel/enroll.sh | sh -s -- https://your-panel <token>
 - 令牌一次性、60 分钟过期
 - 严格 POSIX sh，Alpine 的 busybox ash 上同样可用
 - 会检查 sshd 是否禁用了公钥认证或 root 登录，提前告警而不是等回连失败
+- **`tcpdump` 装不上只警告不中断**。它只决定链路验证能不能拿到证据，不影响转发本身，所以没理由让它挡住注册
 
 **NAT 机器的连接地址必须手填**，脚本无法自动探测：NAT 主机的出口地址和入口地址通常不是一个。填服务商给你的映射地址即可，其余信息脚本自己搞定。
 
@@ -169,7 +170,13 @@ curl -fsSL https://your-panel/uninstall.sh | sh
 
 只有出现**「抓包已证实数据真实抵达落地」**才算真的通。其余项目全绿但这项没过，说明链路能建连但不转发。
 
-> 抓包验证需要最后一跳装有 `tcpdump`。没有时该项报「未知」而不是「通过」。
+> 抓包验证需要最后一跳装有 `tcpdump`。没有时该项报「未知」而不是「通过」——**缺工具既不能算健康也不能算故障**。
+>
+> 一键注册会自动装上它。0.9.3 之前注册的节点没有，手动补一次即可：
+>
+> ```bash
+> command -v tcpdump || { apt-get install -y tcpdump || apk add --no-cache tcpdump || dnf install -y tcpdump; }
+> ```
 
 ## 命令行参数
 

@@ -41,7 +41,7 @@ else
 fi
 
 # ---------- 系统识别 ----------
-step 1/5 "识别系统"
+step 1/6 "识别系统"
 
 case "$(uname -m)" in
     x86_64|amd64)  ARCH=amd64 ;;
@@ -67,7 +67,7 @@ fi
 ok "$OSID / $ARCH / $INIT"
 
 # ---------- 安装公钥 ----------
-step 2/5 "安装面板公钥"
+step 2/6 "安装面板公钥"
 
 KEY="$(http_get "$PANEL/api/enroll/key?token=$TOKEN")" || die "获取公钥失败：令牌无效或已过期"
 [ -n "$KEY" ] || die "面板返回了空公钥"
@@ -96,7 +96,7 @@ if command -v restorecon >/dev/null 2>&1; then
 fi
 
 # ---------- sshd 前置条件 ----------
-step 3/5 "检查 sshd 配置"
+step 3/6 "检查 sshd 配置"
 
 SSHD_CONF=/etc/ssh/sshd_config
 if [ -r "$SSHD_CONF" ]; then
@@ -117,7 +117,7 @@ else
 fi
 
 # ---------- 安装 realm ----------
-step 4/5 "安装转发内核 realm"
+step 4/6 "安装转发内核 realm"
 
 REALM_VER=""
 if [ -x /usr/local/bin/realm ]; then
@@ -145,8 +145,58 @@ fi
 mkdir -p /etc/fluxlite/realm /var/log/fluxlite
 ok "工作目录就绪"
 
+# ---------- 安装抓包工具 ----------
+step 5/6 "安装抓包工具 tcpdump"
+
+# 链路验证要在末跳抓包，才能证明数据真的转出去了 —— TCP 建连成功不能证明这一点，
+# realm 先接受客户端连接再拨下一跳，后面全断也照样秒通。
+#
+# 但 tcpdump 只影响「能不能拿到证据」，不影响转发本身，所以这一步永远不能中断注册：
+# 装不上就退化成验证时那一项报「未知」，机器照样能用。
+
+# 软件源不可达时包管理器会一路卡到 TCP 超时，注册流程不该陪着吊死
+
+if command -v timeout >/dev/null 2>&1; then
+    pm() { timeout 300 "$@"; }
+else
+    pm() { "$@"; }
+fi
+
+install_tcpdump() {
+    if command -v apk >/dev/null 2>&1; then
+        pm apk add --no-cache tcpdump
+    elif command -v apt-get >/dev/null 2>&1; then
+        export DEBIAN_FRONTEND=noninteractive
+        # 全新镜像多半没有包索引，但先试直装能省掉一次 update 的耗时
+        pm apt-get install -y tcpdump || { pm apt-get update && pm apt-get install -y tcpdump; }
+    elif command -v dnf >/dev/null 2>&1; then
+        pm dnf install -y tcpdump
+    elif command -v yum >/dev/null 2>&1; then
+        pm yum install -y tcpdump
+    elif command -v zypper >/dev/null 2>&1; then
+        pm zypper --non-interactive install tcpdump
+    elif command -v pacman >/dev/null 2>&1; then
+        pm pacman -Sy --noconfirm tcpdump
+    else
+        return 127
+    fi
+}
+
+TCPDUMP_LOG=/tmp/.fluxlite-tcpdump.log
+
+if command -v tcpdump >/dev/null 2>&1; then
+    ok "已安装，跳过"
+elif install_tcpdump > "$TCPDUMP_LOG" 2>&1 && command -v tcpdump >/dev/null 2>&1; then
+    # 包管理器返回 0 也不等于装上了，以命令是否真的存在为准
+    rm -f "$TCPDUMP_LOG"
+    ok "tcpdump 已安装"
+else
+    warn "tcpdump 安装失败，本机作为末跳时验证的「端到端投递」会显示为未知"
+    warn "转发功能不受影响，日志: $TCPDUMP_LOG"
+fi
+
 # ---------- 上报 ----------
-step 5/5 "向面板注册"
+step 6/6 "向面板注册"
 
 HOSTNAME_VAL="$(hostname 2>/dev/null || echo unknown)"
 PAYLOAD="$(printf '{"token":"%s","arch":"%s","os_id":"%s","init_system":"%s","realm_version":"%s","hostname":"%s"}' \

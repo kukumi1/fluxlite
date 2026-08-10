@@ -70,6 +70,18 @@ export interface ApplyResult {
   hops: HopOutcome[];
 }
 
+/** A node whose relay outlived the route's deletion. */
+export interface RouteLeftover {
+  node_id: number;
+  node_name: string;
+  reason: string;
+}
+
+export interface DeleteResult {
+  ok: boolean;
+  leftovers: RouteLeftover[] | null;
+}
+
 export interface Check {
   name: string;
   verdict: "pass" | "fail" | "unknown";
@@ -225,7 +237,7 @@ export const api = {
   createRoute: (input: RouteInput) => post<Route>("/routes", input),
   updateRoute: (id: number, input: RouteInput) =>
     request<Route>(`/routes/${id}`, { method: "PUT", body: JSON.stringify(input) }),
-  deleteRoute: (id: number) => request<{ ok: boolean }>(`/routes/${id}`, { method: "DELETE" }),
+  deleteRoute: (id: number) => request<DeleteResult>(`/routes/${id}`, { method: "DELETE" }),
   applyRoute: (id: number) => post<ApplyResult>(`/routes/${id}/apply`),
   verifyRoute: (id: number) => post<VerifyReport>(`/routes/${id}/verify`),
   stopRoute: (id: number) => post<{ ok: boolean }>(`/routes/${id}/stop`),

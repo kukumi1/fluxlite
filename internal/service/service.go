@@ -496,22 +496,60 @@ func (s *Service) SampleRoute(ctx context.Context, id int64) error {
 	return firstErr
 }
 
-// DeleteRoute tears the route down on every hop, then removes it.
-func (s *Service) DeleteRoute(ctx context.Context, id int64) error {
+// RouteLeftover names a node whose relay outlived the route's deletion.
+type RouteLeftover struct {
+	NodeID   int64  `json:"node_id"`
+	NodeName string `json:"node_name"`
+	Reason   string `json:"reason"`
+}
+
+// DeleteRoute tears the route down on every hop it can still reach, then
+// removes it.
+//
+// Deletion always succeeds. Cleanup runs on a best effort basis because the
+// commonest reason to delete a route is that one of its machines is gone for
+// good — letting an unreachable node veto the delete strands the route, and
+// with it the node record the route refers to, with no way out from the panel.
+//
+// What cleanup could not do is returned rather than swallowed: a relay left
+// running on a machine that later comes back is still forwarding traffic the
+// panel no longer knows about.
+func (s *Service) DeleteRoute(ctx context.Context, id int64) ([]RouteLeftover, error) {
 	route, err := s.store.RouteByID(ctx, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
+
+	var leftovers []RouteLeftover
 	for _, hop := range route.Hops {
 		node, err := s.store.NodeByID(ctx, hop.NodeID)
 		if err != nil {
 			continue
 		}
+		// Dialling a node already known to be down only makes the caller wait
+		// out the SSH timeout to learn what the panel had already recorded.
+		if node.Status == model.StatusOffline {
+			leftovers = append(leftovers, RouteLeftover{
+				NodeID: node.ID, NodeName: node.Name,
+				Reason: "node is offline, cleanup was not attempted",
+			})
+			continue
+		}
 		if rerr := s.applier.Remove(ctx, node, route.Slug); rerr != nil {
-			return fmt.Errorf("remove route from %s: %w", node.Name, rerr)
+			leftovers = append(leftovers, RouteLeftover{
+				NodeID: node.ID, NodeName: node.Name, Reason: rerr.Error(),
+			})
 		}
 	}
-	return s.store.DeleteRoute(ctx, id)
+
+	if err := s.store.DeleteRoute(ctx, id); err != nil {
+		return nil, err
+	}
+	for _, l := range leftovers {
+		s.log.Warn("route deleted but its relay could not be removed",
+			"route", route.Name, "slug", route.Slug, "node", l.NodeName, "reason", l.Reason)
+	}
+	return leftovers, nil
 }
 
 // StopRoute disables and stops a route without deleting it.

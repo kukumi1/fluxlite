@@ -120,6 +120,7 @@ export function Routes() {
   const [statuses, setStatuses] = useState<RouteStatus[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [warning, setWarning] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
   const [editing, setEditing] = useState<Route | null>(null);
   const [creating, setCreating] = useState(false);
@@ -184,6 +185,7 @@ export function Routes() {
     setBusyId(id);
     setError("");
     setNotice("");
+    setWarning("");
     try {
       await fn();
       await load();
@@ -209,6 +211,7 @@ export function Routes() {
       </div>
 
       {error && <Banner kind="err">{error}</Banner>}
+      {warning && <Banner kind="warn">{warning}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
 
       {routes.length === 0 ? (
@@ -306,10 +309,20 @@ export function Routes() {
                 className="btn danger"
                 disabled={busyId === route.id}
                 onClick={() => {
-                  if (!confirm(`确认删除链路 ${route.name}？会同时清理各节点上的配置。`)) return;
+                  if (!confirm(`确认删除链路 ${route.name}？会尽量清理各节点上的配置。`)) return;
                   void act(route.id, async () => {
-                    await api.deleteRoute(route.id);
-                    setNotice(`链路 ${route.name} 已删除`);
+                    const res = await api.deleteRoute(route.id);
+                    const left = res.leftovers ?? [];
+                    if (left.length === 0) {
+                      setNotice(`链路 ${route.name} 已删除，各节点上的转发已清理`);
+                      return;
+                    }
+                    // 记录没了但转发还在，是需要人去机器上收尾的状态，不能只报成功
+                    setWarning(
+                      `链路 ${route.name} 已删除，但以下节点上的转发未能清理，` +
+                        `机器恢复后需在其上执行卸载脚本：` +
+                        left.map((l) => `${l.node_name}（${l.reason}）`).join("；"),
+                    );
                   });
                 }}
               >

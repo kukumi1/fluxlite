@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -374,12 +375,24 @@ func (s *Server) handleDeleteRoute(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.svc.DeleteRoute(r.Context(), id); err != nil {
+	leftovers, err := s.svc.DeleteRoute(r.Context(), id)
+	if err != nil {
 		writeError(w, statusForError(err), err.Error())
 		return
 	}
-	s.audit(r, "route.delete", strconv.FormatInt(id, 10), "")
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	s.audit(r, "route.delete", strconv.FormatInt(id, 10), leftoverSummary(leftovers))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "leftovers": leftovers})
+}
+
+func leftoverSummary(leftovers []service.RouteLeftover) string {
+	if len(leftovers) == 0 {
+		return "removed from every hop"
+	}
+	names := make([]string, 0, len(leftovers))
+	for _, l := range leftovers {
+		names = append(names, l.NodeName)
+	}
+	return "relay left running on " + strings.Join(names, ", ")
 }
 
 func (s *Server) handleApplyRoute(w http.ResponseWriter, r *http.Request) {

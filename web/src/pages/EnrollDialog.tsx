@@ -8,6 +8,7 @@ import {
   type EnrollTicket,
   type Node,
 } from "../api";
+import { CopyButton } from "../components/CopyButton";
 import { Banner, Modal } from "../components/Modal";
 
 interface Props {
@@ -30,7 +31,6 @@ export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
   const [ticket, setTicket] = useState<EnrollTicket | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   const set = <K extends keyof EnrollRequest>(key: K, value: EnrollRequest[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -48,18 +48,6 @@ export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
     }
   }
 
-  async function copy() {
-    if (!ticket) return;
-    try {
-      await navigator.clipboard.writeText(ticket.command);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // 非 HTTPS 或权限受限时剪贴板不可用，命令本身仍可手动选中复制
-      setError("浏览器拒绝了剪贴板访问，请手动选中复制");
-    }
-  }
-
   if (ticket) {
     return (
       <Modal title="一键注册命令" onClose={onClose}>
@@ -70,9 +58,7 @@ export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
         <pre className="cmd">{ticket.command}</pre>
 
         <div className="row" style={{ marginBottom: 16 }}>
-          <button className="btn primary" onClick={() => void copy()}>
-            {copied ? "已复制" : "复制命令"}
-          </button>
+          <CopyButton text={ticket.command} />
           <span className="muted" style={{ fontSize: 13 }}>
             有效期至 {new Date(ticket.expires_at).toLocaleString("zh-CN")}，仅可使用一次
           </span>

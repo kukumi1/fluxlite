@@ -8,6 +8,7 @@ import {
   type NodeInput,
   type ProbeResult,
 } from "../api";
+import { CopyButton } from "../components/CopyButton";
 import { Banner, Modal } from "../components/Modal";
 import { EnrollDialog } from "./EnrollDialog";
 
@@ -252,6 +253,9 @@ export function Nodes() {
             以 root 执行：
           </p>
           <pre className="cmd">{uninstallCommand()}</pre>
+          <div className="row" style={{ marginBottom: 16 }}>
+            <CopyButton text={uninstallCommand()} label="复制卸载命令" />
+          </div>
           <p className="hint">
             脚本只删除注释以 <code>fluxlite-</code> 开头的公钥，你自己的密钥不受影响。
             转发内核 realm 如果还被别的服务引用会被保留，加 <code>--purge-realm</code> 可强制删除。

@@ -142,7 +142,7 @@ ssh -L 7800:127.0.0.1:7800 root@your-server
 curl -fsSL https://your-panel/enroll.sh | sh -s -- https://your-panel <token>
 ```
 
-脚本会识别系统架构与 init、把面板公钥写进 `authorized_keys`、从**面板**下载安装 realm、装上抓包工具 `tcpdump`，然后回报并触发面板立即回连验证，结果直接打在终端上。
+脚本会识别系统架构与 init、把面板公钥写进 `authorized_keys`、从**面板**下载安装 realm、补齐 `tcpdump` 与 `iptables`，然后回报并触发面板立即回连验证，结果直接打在终端上。
 
 几个要点：
 
@@ -151,7 +151,7 @@ curl -fsSL https://your-panel/enroll.sh | sh -s -- https://your-panel <token>
 - 令牌一次性、60 分钟过期
 - 严格 POSIX sh，Alpine 的 busybox ash 上同样可用
 - 会检查 sshd 是否禁用了公钥认证或 root 登录，提前告警而不是等回连失败
-- **`tcpdump` 装不上只警告不中断**。它只决定链路验证能不能拿到证据，不影响转发本身，所以没理由让它挡住注册
+- **辅助工具装不上只警告不中断**。`tcpdump` 决定抓包验证能不能拿到证据，`iptables` 决定流量统计数不数得了 —— 两个都不参与转发，没理由让它们挡住注册。Debian 13 起默认不带 `iptables`，这一步会补上
 
 **NAT 机器的连接地址必须手填**，脚本无法自动探测：NAT 主机的出口地址和入口地址通常不是一个。填服务商给你的映射地址即可，其余信息脚本自己搞定。
 

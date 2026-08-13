@@ -145,54 +145,81 @@ fi
 mkdir -p /etc/fluxlite/realm /var/log/fluxlite
 ok "工作目录就绪"
 
-# ---------- 安装抓包工具 ----------
-step 5/6 "安装抓包工具 tcpdump"
+# ---------- 安装辅助工具 ----------
+step 5/6 "安装辅助工具"
 
-# 链路验证要在末跳抓包，才能证明数据真的转出去了 —— TCP 建连成功不能证明这一点，
-# realm 先接受客户端连接再拨下一跳，后面全断也照样秒通。
+# 两个工具都只决定面板「能不能看清楚」，都不参与转发：
 #
-# 但 tcpdump 只影响「能不能拿到证据」，不影响转发本身，所以这一步永远不能中断注册：
-# 装不上就退化成验证时那一项报「未知」，机器照样能用。
+#   tcpdump  —— 链路验证要在末跳抓包才拿得到证据。TCP 建连成功证明不了投递：
+#               realm 先接受客户端连接再拨下一跳，后面全断也照样秒通。
+#   iptables —— 流量统计靠内核计数规则。Debian 13 起默认已经不带它了。
+#
+# 所以这一步永远不中断注册：装不上就退化成对应的那项显示「未知」，机器照样能用。
 
 # 软件源不可达时包管理器会一路卡到 TCP 超时，注册流程不该陪着吊死
-
 if command -v timeout >/dev/null 2>&1; then
     pm() { timeout 300 "$@"; }
 else
     pm() { "$@"; }
 fi
 
-install_tcpdump() {
+APT_REFRESHED=0
+install_pkg() {
     if command -v apk >/dev/null 2>&1; then
-        pm apk add --no-cache tcpdump
+        pm apk add --no-cache "$1"
     elif command -v apt-get >/dev/null 2>&1; then
         export DEBIAN_FRONTEND=noninteractive
-        # 全新镜像多半没有包索引，但先试直装能省掉一次 update 的耗时
-        pm apt-get install -y tcpdump || { pm apt-get update && pm apt-get install -y tcpdump; }
+        # 全新镜像多半没有包索引，但先试直装能省掉一次 update 的耗时。
+        # 索引只刷一次：两个包都缺时刷第二遍纯属浪费。
+        if [ "$APT_REFRESHED" = 0 ] && ! pm apt-get install -y "$1"; then
+            APT_REFRESHED=1
+            pm apt-get update && pm apt-get install -y "$1"
+        elif [ "$APT_REFRESHED" = 1 ]; then
+            pm apt-get install -y "$1"
+        fi
     elif command -v dnf >/dev/null 2>&1; then
-        pm dnf install -y tcpdump
+        pm dnf install -y "$1"
     elif command -v yum >/dev/null 2>&1; then
-        pm yum install -y tcpdump
+        pm yum install -y "$1"
     elif command -v zypper >/dev/null 2>&1; then
-        pm zypper --non-interactive install tcpdump
+        pm zypper --non-interactive install "$1"
     elif command -v pacman >/dev/null 2>&1; then
-        pm pacman -Sy --noconfirm tcpdump
+        pm pacman -Sy --noconfirm "$1"
     else
         return 127
     fi
 }
 
-TCPDUMP_LOG=/tmp/.fluxlite-tcpdump.log
+# 非交互 shell 的 PATH 不一定带 /usr/sbin，而 iptables 正好装在那里。只靠
+# command -v 会把一台装好了的机器判成没装。
+have_tool() {
+    command -v "$1" >/dev/null 2>&1 || [ -x "/usr/sbin/$1" ] || [ -x "/sbin/$1" ]
+}
 
-if command -v tcpdump >/dev/null 2>&1; then
-    ok "已安装，跳过"
-elif install_tcpdump > "$TCPDUMP_LOG" 2>&1 && command -v tcpdump >/dev/null 2>&1; then
+TOOL_LOG=/tmp/.fluxlite-tools.log
+TOOL_FAILED=0
+
+ensure_tool() {
+    if have_tool "$1"; then
+        ok "$1 已安装，跳过"
+        return 0
+    fi
     # 包管理器返回 0 也不等于装上了，以命令是否真的存在为准
-    rm -f "$TCPDUMP_LOG"
-    ok "tcpdump 已安装"
+    if install_pkg "$1" >> "$TOOL_LOG" 2>&1 && have_tool "$1"; then
+        ok "$1 已安装"
+        return 0
+    fi
+    warn "$1 安装失败 —— $2"
+    TOOL_FAILED=1
+}
+
+ensure_tool tcpdump "本机作为末跳时，验证的「端到端投递」会显示为未知"
+ensure_tool iptables "经过本机的链路，流量统计会显示为未知"
+
+if [ "$TOOL_FAILED" = 1 ]; then
+    warn "转发功能不受影响，安装日志: $TOOL_LOG"
 else
-    warn "tcpdump 安装失败，本机作为末跳时验证的「端到端投递」会显示为未知"
-    warn "转发功能不受影响，日志: $TCPDUMP_LOG"
+    rm -f "$TOOL_LOG"
 fi
 
 # ---------- 上报 ----------

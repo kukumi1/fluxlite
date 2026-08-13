@@ -136,6 +136,14 @@ curl -fsSL https://your-panel/uninstall.sh | sh
 
 计数规则在下发时装上，所以**已有链路要重新下发一次**才开始计数。之前跑掉的流量无法追溯。
 
+节点上必须有 `iptables`。**Debian 13 起默认不带它**，0.10.4 之后的一键注册会自动补上，更早注册的节点手动装一次：
+
+```bash
+command -v iptables || apt-get install -y iptables || apk add --no-cache iptables
+```
+
+装不上时该链路显示「未知」而不是 0，面板日志里会写明是哪台机器：`hop will not report traffic ... reason="iptables is not installed on this node"`。转发不受影响。
+
 ### 它是怎么数的
 
 节点上一条专用链 `FLUXLITE_ACCT`，每条链路 4 条规则（tcp/udp × 进/出），全部**没有 target**：

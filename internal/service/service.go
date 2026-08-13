@@ -420,6 +420,14 @@ func (s *Service) ApplyRoute(ctx context.Context, id int64) (*applier.Result, er
 		if serr := s.store.SetHopRunning(ctx, id, hop.HopOrder, hop.Error == ""); serr != nil {
 			s.log.Warn("record hop liveness after apply", "route", route.Name, "error", serr)
 		}
+		// Rebuilt counters start from zero. Left in place, the stored baseline
+		// would make the next reading look like a counter reset and credit the
+		// route with the whole of it a second time.
+		if hop.Accounting == applier.AcctRebuilt {
+			if serr := s.store.ResetTrafficBaseline(ctx, id); serr != nil {
+				s.log.Warn("reset traffic baseline after apply", "route", route.Name, "error", serr)
+			}
+		}
 	}
 	return result, nil
 }

@@ -43,6 +43,7 @@ func run() error {
 		dataDir     = flag.String("data", "/var/lib/fluxlite", "data directory")
 		interval    = flag.Duration("reconcile-interval", 5*time.Minute, "how often to reconcile nodes and routes")
 		sample      = flag.Duration("sample-interval", 30*time.Second, "how often to sample per-hop liveness and latency")
+		trafficPoll = flag.Duration("traffic-interval", time.Minute, "how often to collect per-route byte counters")
 		insecure    = flag.Bool("insecure-cookies", false, "allow session cookies over plain HTTP (development only)")
 		genKey      = flag.Bool("genkey", false, "print a fresh master key and exit")
 		showVersion = flag.Bool("version", false, "print version and exit")
@@ -114,11 +115,12 @@ func run() error {
 	})
 
 	w := watcher.New(watcher.Config{
-		Service:        svc,
-		Store:          st,
-		Logger:         logger,
-		Interval:       *interval,
-		SampleInterval: *sample,
+		Service:         svc,
+		Store:           st,
+		Logger:          logger,
+		Interval:        *interval,
+		SampleInterval:  *sample,
+		TrafficInterval: *trafficPoll,
 	})
 	go w.Run(ctx)
 

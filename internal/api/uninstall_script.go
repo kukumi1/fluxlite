@@ -42,7 +42,7 @@ say "fluxlite 节点卸载"
 say ""
 
 # ---------- 停止并移除服务 ----------
-step 1/5 "停止转发服务"
+step 1/6 "停止转发服务"
 
 STOPPED=0
 if [ -d /run/systemd/system ]; then
@@ -80,7 +80,7 @@ fi
 [ "$STOPPED" -gt 0 ] || warn "没有找到 fluxlite 的转发服务"
 
 # ---------- 移除配置与日志 ----------
-step 2/5 "删除配置与日志"
+step 2/6 "删除配置与日志"
 
 for path in /etc/fluxlite /var/log/fluxlite; do
     if [ -e "$path" ]; then
@@ -96,8 +96,32 @@ for pidfile in /run/fluxlite-*.pid; do
     ok "已删除 $pidfile"
 done
 
+# ---------- 流量计数规则 ----------
+step 3/6 "删除流量计数规则"
+
+# fluxlite 唯一会创建的 iptables 内容：一条专用链 FLUXLITE_ACCT，里面全是
+# 无 target 的计数规则（只累加字节数，不做任何判决），以及 INPUT/OUTPUT 上
+# 指向它的两条跳转。删掉这些不影响任何转发，也碰不到别的工具的规则。
+if ! command -v iptables >/dev/null 2>&1; then
+    ok "本机没有 iptables，跳过"
+elif ! iptables -nL FLUXLITE_ACCT >/dev/null 2>&1; then
+    ok "没有计数链，跳过"
+else
+    RULES="$(iptables -S FLUXLITE_ACCT 2>/dev/null | grep -c '^-A' || true)"
+    iptables -D INPUT -j FLUXLITE_ACCT 2>/dev/null || true
+    iptables -D OUTPUT -j FLUXLITE_ACCT 2>/dev/null || true
+    iptables -F FLUXLITE_ACCT 2>/dev/null || true
+    if iptables -X FLUXLITE_ACCT 2>/dev/null; then
+        ok "已删除计数链 FLUXLITE_ACCT（含 ${RULES:-0} 条计数规则）"
+    else
+        # -X 只在链还被引用时失败，那说明有别处也跳到了它
+        warn "计数链已清空但删不掉，可能还有别的规则引用它："
+        iptables -S 2>/dev/null | grep FLUXLITE_ACCT | sed 's/^/      /' || true
+    fi
+fi
+
 # ---------- 撤销面板公钥 ----------
-step 3/5 "撤销面板的登录公钥"
+step 4/6 "撤销面板的登录公钥"
 
 # 面板下发的公钥注释固定为 fluxlite-<节点名>。只按这个注释匹配，绝不整行清空：
 # 同一个 authorized_keys 里通常还有机主自己的密钥，删错就把人锁在门外了。
@@ -131,7 +155,7 @@ done
 [ "$FOUND_KEY" = "1" ] || warn "没有找到面板下发的公钥"
 
 # ---------- 断开面板残留的连接 ----------
-step 4/5 "断开面板已建立的 SSH 会话"
+step 5/6 "断开面板已建立的 SSH 会话"
 
 # 撤销公钥只影响之后的登录 —— SSH 仅在建连时校验授权，已经建立的会话不受影响。
 # 面板对每个节点保持一条长连接，不断开的话它会继续管理本机：只要还有链路经过
@@ -176,7 +200,7 @@ else
 fi
 
 # ---------- 转发内核 ----------
-step 5/5 "处理转发内核 realm"
+step 6/6 "处理转发内核 realm"
 
 REALM=/usr/local/bin/realm
 if [ ! -e "$REALM" ]; then
@@ -200,8 +224,43 @@ else
     fi
 fi
 
+# ---------- 残留自检 ----------
+# 「应该清干净了」和「确实清干净了」是两回事。逐项回头看一遍，把活下来的列出来。
+LEFT=""
+note_left() { LEFT="$LEFT
+      · $1"; }
+
+for path in /etc/fluxlite /var/log/fluxlite /etc/systemd/system/fluxlite-relay@.service \
+            /etc/init.d/fluxlite-* /run/fluxlite-*.pid /etc/runlevels/*/fluxlite-*; do
+    # 通配符没匹配到时 shell 原样保留模式串，-e 会判否，这里正好当作不存在
+    if [ -e "$path" ]; then
+        note_left "$path"
+    fi
+done
+
+if command -v iptables >/dev/null 2>&1; then
+    if iptables -nL FLUXLITE_ACCT >/dev/null 2>&1; then
+        note_left "iptables 计数链 FLUXLITE_ACCT"
+    fi
+fi
+
+for home in /root /home/*; do
+    if [ -f "$home/.ssh/authorized_keys" ] &&
+       awk '$3 ~ /^fluxlite-/ { found = 1 } END { exit !found }' "$home/.ssh/authorized_keys" 2>/dev/null; then
+        note_left "$home/.ssh/authorized_keys 里仍有 fluxlite- 公钥"
+    fi
+done
+
+if [ -e "$REALM" ]; then
+    note_left "$REALM（被其他服务引用，已刻意保留）"
+fi
+
 say ""
-printf '\033[32m卸载完成\033[0m\n'
+if [ -n "$LEFT" ]; then
+    printf '\033[33m卸载完成，但仍有残留\033[0m%s\n' "$LEFT"
+else
+    printf '\033[32m卸载完成，未发现残留\033[0m\n'
+fi
 say ""
 say "本机已不再受面板管理，面板会在一个巡检周期内把它标记为离线。"
 say "确认离线后，到面板的节点页删除对应记录即可。"
@@ -209,7 +268,8 @@ say ""
 say "提示：如果面板里还有链路经过本机，请先在面板上停止或删除那些链路，"
 say "      否则删不掉节点记录。"
 say ""
-say "本脚本不碰 iptables —— fluxlite 从不创建转发规则，它只跑 realm 进程。"
-say "机器上如果有 DNAT/端口转发规则，那是别的工具建的，请用那个工具清理。"
+say "fluxlite 不创建任何转发规则，它只跑 realm 进程 —— 上面删掉的计数链只统计"
+say "字节数，不做判决。机器上如果有 DNAT/端口转发规则，那是别的工具建的，"
+say "本脚本不会碰，请用那个工具清理。"
 say ""
 `

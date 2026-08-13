@@ -195,6 +195,32 @@ var migrations = []string{
 	// list could not poll it.
 	`ALTER TABLE route_hops ADD COLUMN running INTEGER`,
 	`ALTER TABLE route_hops ADD COLUMN checked_at DATETIME`,
+
+	// Byte counters live in the kernel and reset on reboot or a firewall
+	// flush, so the panel keeps its own running total. raw_in/raw_out hold the
+	// last reading the delta was computed against; NULL means no baseline has
+	// been taken yet, which is not the same as a counter sitting at zero.
+	`CREATE TABLE IF NOT EXISTS route_traffic (
+		route_id   INTEGER NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
+		hop_order  INTEGER NOT NULL,
+		bytes_in   INTEGER NOT NULL DEFAULT 0,
+		bytes_out  INTEGER NOT NULL DEFAULT 0,
+		raw_in     INTEGER,
+		raw_out    INTEGER,
+		updated_at DATETIME,
+		PRIMARY KEY (route_id, hop_order)
+	)`,
+
+	// Daily buckets are the entry hop's traffic only: every byte the route
+	// carries enters there, and summing all hops would count each byte once
+	// per machine it passed through.
+	`CREATE TABLE IF NOT EXISTS route_traffic_daily (
+		route_id  INTEGER NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
+		day       TEXT    NOT NULL,
+		bytes_in  INTEGER NOT NULL DEFAULT 0,
+		bytes_out INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (route_id, day)
+	)`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

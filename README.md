@@ -58,6 +58,7 @@
 - 每跳延迟与存活状态后台采样，链路卡片实时刷新
 - 采样过期会明确标记，不会拿旧数据冒充现状
 - 抓包验证端到端投递，这是唯一可信的结论
+- **按链路统计流量**，累计总量加按天明细 —— `vnstat` 只能告诉你整台机器用了多少
 - 完整审计日志
 
 **安全**
@@ -186,6 +187,7 @@ curl -fsSL https://your-panel/uninstall.sh | sh
 | `--data` | `/var/lib/fluxlite` | 数据目录（数据库与 realm 缓存） |
 | `--reconcile-interval` | `5m` | 巡检间隔：探测节点、纠正配置漂移 |
 | `--sample-interval` | `30s` | 采样间隔：每跳存活与延迟 |
+| `--traffic-interval` | `1m` | 流量计数采集间隔（每节点一条命令，与链路数无关） |
 | `--insecure-cookies` | `false` | 允许 HTTP 下发送 session cookie，仅开发用 |
 | `--genkey` | | 生成主密钥后退出 |
 | `--version` | | 打印版本后退出 |

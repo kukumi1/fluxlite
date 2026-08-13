@@ -120,7 +120,10 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/routes/{id}/verify", s.handleVerifyRoute)
 			r.Post("/routes/{id}/stop", s.handleStopRoute)
 
+			r.Get("/routes/{id}/traffic", s.handleRouteTraffic)
+
 			r.Get("/status", s.handleStatus)
+			r.Get("/traffic", s.handleTraffic)
 			r.Get("/audit", s.handleAudit)
 		})
 	})

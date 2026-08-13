@@ -40,6 +40,10 @@ type HopOutcome struct {
 	Changed  bool   `json:"changed"`
 	Action   string `json:"action"`
 	Error    string `json:"error,omitempty"`
+
+	// Accounting reports what happened to this hop's byte counters. A rebuild
+	// restarts them from zero, which invalidates the stored baseline.
+	Accounting AcctState `json:"accounting"`
 }
 
 // Result aggregates the outcome of applying a route.
@@ -74,9 +78,10 @@ func (a *Applier) Apply(ctx context.Context, plan *planner.Plan) (*Result, error
 			Remote:   hop.Remote,
 		}
 
-		changed, action, err := a.applyHop(ctx, &hop)
+		changed, action, acct, err := a.applyHop(ctx, &hop)
 		outcome.Changed = changed
 		outcome.Action = action
+		outcome.Accounting = acct
 		if err != nil {
 			outcome.Error = err.Error()
 		}
@@ -103,23 +108,31 @@ func (a *Applier) Apply(ctx context.Context, plan *planner.Plan) (*Result, error
 	return result, nil
 }
 
-func (a *Applier) applyHop(ctx context.Context, hop *planner.HopPlan) (bool, string, error) {
+func (a *Applier) applyHop(ctx context.Context, hop *planner.HopPlan) (bool, string, AcctState, error) {
 	client, err := a.pool.Get(ctx, hop.Node)
 	if err != nil {
-		return false, "unreachable", fmt.Errorf("connect: %w", err)
+		return false, "unreachable", AcctUnavailable, fmt.Errorf("connect: %w", err)
 	}
 
 	replacedRealm, err := a.ensureRealm(ctx, client.Client, hop.Node)
 	if err != nil {
-		return false, "realm-install-failed", err
+		return false, "realm-install-failed", AcctUnavailable, err
 	}
 	if err := a.ensureUnit(ctx, client.Client, hop.Node, hop.RouteSlug); err != nil {
-		return false, "unit-install-failed", err
+		return false, "unit-install-failed", AcctUnavailable, err
+	}
+
+	// Counting is diagnostics, not forwarding. A node that will not take the
+	// counter rules still relays traffic perfectly well, so this never fails
+	// the hop — it only leaves that hop's traffic reported as unknown.
+	acct, err := a.ensureAccounting(ctx, client.Client, hop.RouteSlug, hop.Listen)
+	if err != nil {
+		acct = AcctUnavailable
 	}
 
 	current, err := a.currentConfig(ctx, client.Client, hop.ConfigPath)
 	if err != nil {
-		return false, "read-config-failed", err
+		return false, "read-config-failed", acct, err
 	}
 	if current == hop.Config {
 		// A replaced binary does not reach the running process. Left alone the
@@ -127,33 +140,33 @@ func (a *Applier) applyHop(ctx context.Context, hop *planner.HopPlan) (bool, str
 		// new one, so the panel would claim an upgrade that never took effect.
 		if replacedRealm {
 			if err := a.restart(ctx, client.Client, hop.Node, hop.RouteSlug); err != nil {
-				return false, "restart-failed", err
+				return false, "restart-failed", acct, err
 			}
-			return true, "realm-upgraded", nil
+			return true, "realm-upgraded", acct, nil
 		}
 
 		// Still confirm the service is actually running: a matching config on
 		// a dead relay is the failure mode that hides longest.
 		active, err := a.isActive(ctx, client.Client, hop.Node, hop.RouteSlug)
 		if err != nil {
-			return false, "status-check-failed", err
+			return false, "status-check-failed", acct, err
 		}
 		if active {
-			return false, "unchanged", nil
+			return false, "unchanged", acct, nil
 		}
 		if err := a.restart(ctx, client.Client, hop.Node, hop.RouteSlug); err != nil {
-			return false, "restart-failed", err
+			return false, "restart-failed", acct, err
 		}
-		return true, "restarted-dead-service", nil
+		return true, "restarted-dead-service", acct, nil
 	}
 
 	if err := sshx.WriteFile(ctx, client.Client, hop.ConfigPath, []byte(hop.Config), "0600"); err != nil {
-		return false, "write-config-failed", err
+		return false, "write-config-failed", acct, err
 	}
 	if err := a.restart(ctx, client.Client, hop.Node, hop.RouteSlug); err != nil {
-		return false, "restart-failed", err
+		return false, "restart-failed", acct, err
 	}
-	return true, "applied", nil
+	return true, "applied", acct, nil
 }
 
 // ensureRealm installs or upgrades the pinned realm build on the node and
@@ -346,6 +359,12 @@ func (a *Applier) Remove(ctx context.Context, node *model.Node, slug string) err
 		if _, err := sshx.Run(ctx, client.Client, cmds.reloadUnits); err != nil {
 			return fmt.Errorf("daemon-reload: %w", err)
 		}
+	}
+
+	// Counters left behind would keep tallying whatever takes the port next,
+	// under the name of a route that no longer exists.
+	if err := removeAccounting(ctx, client.Client, slug); err != nil {
+		return err
 	}
 	return nil
 }

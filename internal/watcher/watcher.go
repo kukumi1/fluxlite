@@ -23,6 +23,7 @@ type Watcher struct {
 	log      *slog.Logger
 	interval time.Duration
 	sample   time.Duration
+	traffic  time.Duration
 }
 
 // Config configures the watcher.
@@ -40,6 +41,12 @@ type Config struct {
 	// per hop over an already-open SSH connection, where reconciliation probes
 	// every node and compares every config.
 	SampleInterval time.Duration
+
+	// TrafficInterval governs byte counter collection. It costs one command
+	// per node regardless of how many routes cross it, so it is cheap enough
+	// to run often, but the counters are cumulative — polling faster only
+	// changes how promptly the panel notices, never the totals.
+	TrafficInterval time.Duration
 }
 
 func New(cfg Config) *Watcher {
@@ -51,22 +58,26 @@ func New(cfg Config) *Watcher {
 	if sample <= 0 {
 		sample = 30 * time.Second
 	}
+	traffic := cfg.TrafficInterval
+	if traffic <= 0 {
+		traffic = time.Minute
+	}
 	return &Watcher{
 		svc: cfg.Service, store: cfg.Store, log: cfg.Logger,
-		interval: interval, sample: sample,
+		interval: interval, sample: sample, traffic: traffic,
 	}
 }
 
 // Run blocks until ctx is cancelled.
 //
-// Reconciliation and sampling run on separate goroutines because they operate
-// on wildly different timescales: a reconcile probes every node, UDP check
-// included, and takes minutes on a fleet of any size. Sharing one loop let it
-// starve the sampler for that entire stretch, which is the opposite of what a
+// The three loops are separate goroutines because they operate on wildly
+// different timescales: a reconcile probes every node, UDP check included, and
+// takes minutes on a fleet of any size. Sharing one loop let it starve the
+// sampler for that entire stretch, which is the opposite of what a
 // thirty-second sample interval promises.
 func (w *Watcher) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 
 	go func() {
 		defer wg.Done()
@@ -75,6 +86,10 @@ func (w *Watcher) Run(ctx context.Context) {
 	go func() {
 		defer wg.Done()
 		w.loop(ctx, w.sample, w.sampleRoutes, true)
+	}()
+	go func() {
+		defer wg.Done()
+		w.loop(ctx, w.traffic, w.collectTraffic, true)
 	}()
 
 	wg.Wait()
@@ -128,6 +143,17 @@ func (w *Watcher) sampleRoutes(ctx context.Context) {
 			// every half minute.
 			w.log.Debug("route sample failed", "route", route.Name, "error", err)
 		}
+	}
+}
+
+// collectTraffic folds every node's byte counters into the stored totals.
+func (w *Watcher) collectTraffic(ctx context.Context) {
+	deadline, cancel := context.WithTimeout(ctx, w.traffic)
+	defer cancel()
+
+	if err := w.svc.CollectTraffic(deadline); err != nil {
+		// An unreachable node is ordinary and already visible as its status.
+		w.log.Debug("traffic collection incomplete", "error", err)
 	}
 }
 

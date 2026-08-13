@@ -82,6 +82,19 @@ export interface DeleteResult {
   leftovers: RouteLeftover[] | null;
 }
 
+/** A route's cumulative byte counts, measured at its entry hop. */
+export interface Traffic {
+  bytes_in: number;
+  bytes_out: number;
+  updated_at: string;
+}
+
+export interface DailyTraffic {
+  day: string;
+  bytes_in: number;
+  bytes_out: number;
+}
+
 export interface Check {
   name: string;
   verdict: "pass" | "fail" | "unknown";
@@ -241,8 +254,11 @@ export const api = {
   applyRoute: (id: number) => post<ApplyResult>(`/routes/${id}/apply`),
   verifyRoute: (id: number) => post<VerifyReport>(`/routes/${id}/verify`),
   stopRoute: (id: number) => post<{ ok: boolean }>(`/routes/${id}/stop`),
+  routeTraffic: (id: number, days = 30) =>
+    request<DailyTraffic[] | null>(`/routes/${id}/traffic?days=${days}`),
 
   status: () => request<RouteStatus[] | null>("/status"),
+  traffic: () => request<Record<string, Traffic> | null>("/traffic"),
   audit: (limit = 100) => request<AuditEntry[] | null>(`/audit?limit=${limit}`),
 };
 

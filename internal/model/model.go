@@ -321,3 +321,20 @@ type AuditLog struct {
 	Detail string    `json:"detail"`
 	IP     string    `json:"ip"`
 }
+
+// Traffic is a route's cumulative byte count as measured at its entry hop.
+//
+// In and out are named from the node's point of view: BytesIn is what clients
+// sent to the entry listener, BytesOut is what the chain sent back to them.
+type Traffic struct {
+	BytesIn   int64     `json:"bytes_in"`
+	BytesOut  int64     `json:"bytes_out"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// DailyTraffic is one day's total for a route.
+type DailyTraffic struct {
+	Day      string `json:"day"`
+	BytesIn  int64  `json:"bytes_in"`
+	BytesOut int64  `json:"bytes_out"`
+}

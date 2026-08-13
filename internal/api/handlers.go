@@ -463,6 +463,33 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, statuses)
 }
 
+// handleTraffic reports cumulative totals keyed by route id.
+//
+// Routes absent from the response have never been sampled. That is not the
+// same as having carried nothing, so the client must render them as unknown.
+func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
+	traffic, err := s.svc.RouteTraffic(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, traffic)
+}
+
+func (s *Server) handleRouteTraffic(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+	daily, err := s.svc.DailyTraffic(r.Context(), id, days)
+	if err != nil {
+		writeError(w, statusForError(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, daily)
+}
+
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	entries, err := s.svc.Store().ListAudit(r.Context(), limit)

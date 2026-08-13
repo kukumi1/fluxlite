@@ -4,13 +4,30 @@ import {
   ApiError,
   type ApplyResult,
   type Node,
+  type DailyTraffic,
   type Route,
   type RouteHop,
   type RouteInput,
   type RouteStatus,
+  type Traffic,
   type VerifyReport,
 } from "../api";
 import { Banner, Modal } from "../components/Modal";
+
+// formatBytes renders a counter at three significant figures. Byte totals are
+// read to answer "am I going to blow the monthly allowance", a question no one
+// asks to the nearest kilobyte.
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB", "TB", "PB"];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v >= 100 ? v.toFixed(0) : v.toFixed(v >= 10 ? 1 : 2)} ${units[i]}`;
+}
 
 // onNodeIdentity spells out what a route is called on the machines. A display
 // name of "腾讯-IX-TW-SC" gives no hint that the unit to inspect is tw-b, and
@@ -118,6 +135,8 @@ export function Routes() {
   const [routes, setRoutes] = useState<Route[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [statuses, setStatuses] = useState<RouteStatus[]>([]);
+  const [traffic, setTraffic] = useState<Record<string, Traffic>>({});
+  const [trafficFor, setTrafficFor] = useState<Route | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [warning, setWarning] = useState("");
@@ -132,10 +151,16 @@ export function Routes() {
 
   async function load() {
     try {
-      const [r, n, s] = await Promise.all([api.listRoutes(), api.listNodes(), api.status()]);
+      const [r, n, s, t] = await Promise.all([
+        api.listRoutes(),
+        api.listNodes(),
+        api.status(),
+        api.traffic(),
+      ]);
       setRoutes(r ?? []);
       setNodes(n ?? []);
       setStatuses(s ?? []);
+      setTraffic(t ?? {});
     } catch (err) {
       fail(err);
     }
@@ -150,10 +175,11 @@ export function Routes() {
   // per hop.
   useEffect(() => {
     const timer = setInterval(() => {
-      Promise.all([api.listRoutes(), api.status()])
-        .then(([r, s]) => {
+      Promise.all([api.listRoutes(), api.status(), api.traffic()])
+        .then(([r, s, t]) => {
           setRoutes(r ?? []);
           setStatuses(s ?? []);
+          setTraffic(t ?? {});
         })
         .catch(() => {
           // A failed poll leaves the previous state on screen. Raising it as an
@@ -262,6 +288,22 @@ export function Routes() {
                     {route.entry_port}
                   </code>
                 </div>
+                <div className="muted" style={{ marginTop: 4, fontSize: 13 }}>
+                  流量：
+                  {traffic[route.id] ? (
+                    <span
+                      title={`统计自入口节点的内核计数器，更新于 ${new Date(
+                        traffic[route.id].updated_at,
+                      ).toLocaleString("zh-CN")}`}
+                    >
+                      ↑ {formatBytes(traffic[route.id].bytes_in)} ／ ↓{" "}
+                      {formatBytes(traffic[route.id].bytes_out)}
+                    </span>
+                  ) : (
+                    // 没采到不等于没跑流量，画成 0 会让人以为链路没在用
+                    <span className="tag warn">未知</span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -289,6 +331,9 @@ export function Routes() {
                 }
               >
                 验证
+              </button>
+              <button className="btn" onClick={() => setTrafficFor(route)}>
+                流量
               </button>
               <button className="btn" onClick={() => setEditing(route)}>
                 编辑
@@ -389,6 +434,10 @@ export function Routes() {
         </Modal>
       )}
 
+      {trafficFor && (
+        <TrafficDialog route={trafficFor} onClose={() => setTrafficFor(null)} />
+      )}
+
       {verifyReport && (
         <Modal title={`验证结果 · ${verifyReport.route_name}`} onClose={() => setVerifyReport(null)}>
           {verifyReport.proven ? (
@@ -423,6 +472,71 @@ export function Routes() {
         </Modal>
       )}
     </div>
+  );
+}
+
+// TrafficDialog shows a route's recent daily totals.
+//
+// Days with no traffic are absent from the response rather than present as
+// zero, so the list is what actually moved bytes, not a padded calendar.
+function TrafficDialog({ route, onClose }: { route: Route; onClose: () => void }) {
+  const [days, setDays] = useState<DailyTraffic[] | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api
+      .routeTraffic(route.id, 30)
+      .then((d) => setDays(d ?? []))
+      .catch((err) => setError(err instanceof ApiError ? err.message : "读取失败"));
+  }, [route.id]);
+
+  const total = (days ?? []).reduce(
+    (acc, d) => ({ in: acc.in + d.bytes_in, out: acc.out + d.bytes_out }),
+    { in: 0, out: 0 },
+  );
+
+  return (
+    <Modal title={`流量 · ${route.name}`} onClose={onClose}>
+      {error && <Banner kind="err">{error}</Banner>}
+
+      {days === null ? (
+        <p className="muted">读取中…</p>
+      ) : days.length === 0 ? (
+        <div className="card empty" style={{ marginBottom: 0 }}>
+          还没有按天数据。计数规则在下一次下发时装到入口节点上，之后才开始累计。
+        </div>
+      ) : (
+        <>
+          <p className="hint" style={{ marginTop: 0 }}>
+            近 {days.length} 天合计 ↑ {formatBytes(total.in)} ／ ↓ {formatBytes(total.out)}
+            ，按 UTC+8 切分自然日。
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>日期</th>
+                <th className="nowrap">上行</th>
+                <th className="nowrap">下行</th>
+              </tr>
+            </thead>
+            <tbody>
+              {days.map((d) => (
+                <tr key={d.day}>
+                  <td className="mono">{d.day}</td>
+                  <td className="mono nowrap">{formatBytes(d.bytes_in)}</td>
+                  <td className="mono nowrap">{formatBytes(d.bytes_out)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      <p className="hint" style={{ marginBottom: 0, marginTop: 12 }}>
+        数字取自入口节点的内核计数器，代表这条链路搬运的字节数。机器重启或防火墙被
+        清空会让计数器归零，面板已按此累加，不会丢账。
+      </p>
+    </Modal>
   );
 }
 

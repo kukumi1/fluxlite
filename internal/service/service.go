@@ -3,6 +3,7 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -427,6 +428,13 @@ func (s *Service) ApplyRoute(ctx context.Context, id int64) (*applier.Result, er
 			if serr := s.store.ResetTrafficBaseline(ctx, id); serr != nil {
 				s.log.Warn("reset traffic baseline after apply", "route", route.Name, "error", serr)
 			}
+		}
+		// A hop that will not count leaves the route's traffic permanently
+		// unknown. Nothing else surfaces that, so it has to be said out loud.
+		if hop.Accounting == applier.AcctUnavailable {
+			s.log.Warn("hop will not report traffic",
+				"route", route.Name, "node", hop.NodeName,
+				"reason", cmp.Or(hop.AccountingError, "node has no usable iptables"))
 		}
 	}
 	return result, nil

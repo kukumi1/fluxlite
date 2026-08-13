@@ -82,11 +82,14 @@ export interface DeleteResult {
   leftovers: RouteLeftover[] | null;
 }
 
-/** A route's cumulative byte counts, measured at its entry hop. */
+/** A route's cumulative byte counts, taken at the hop named by hop_order. */
 export interface Traffic {
   bytes_in: number;
   bytes_out: number;
   updated_at: string;
+  /** 计到这个数字的跳；from_entry 为假时它不是入口跳，数字会偏小。 */
+  hop_order: number;
+  from_entry: boolean;
 }
 
 export interface DailyTraffic {

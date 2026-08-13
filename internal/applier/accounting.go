@@ -47,37 +47,70 @@ func (a *Applier) ensureAccounting(ctx context.Context, client *ssh.Client, slug
 	if err != nil {
 		return AcctUnavailable, fmt.Errorf("install byte counters: %w", err)
 	}
-	switch strings.TrimSpace(res.Stdout) {
-	case "ok-unchanged":
+
+	// Only the last line is the verdict. Some iptables builds echo the rule
+	// they matched, and treating that chatter as part of the answer turned a
+	// working node into a reported failure.
+	verdict := lastLine(res.Stdout)
+	switch {
+	case verdict == "ok-unchanged":
 		return AcctUnchanged, nil
-	case "ok-rebuilt":
+	case verdict == "ok-rebuilt":
 		return AcctRebuilt, nil
-	case "no-iptables":
-		return AcctUnavailable, nil
+	case verdict == "no-iptables":
+		return AcctUnavailable, fmt.Errorf("iptables is not installed on this node")
+	case strings.HasPrefix(verdict, "failed:"):
+		return AcctUnavailable, fmt.Errorf("%s", strings.TrimPrefix(verdict, "failed:"))
 	default:
-		return AcctUnavailable, fmt.Errorf("install byte counters: %s",
-			strings.TrimSpace(res.Stdout+" "+res.Stderr))
+		return AcctUnavailable, fmt.Errorf("unexpected reply %q", verdict)
 	}
 }
 
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
+}
+
+// acctPrelude resolves the iptables binary.
+//
+// A non-interactive SSH session does not always carry /usr/sbin in PATH, and
+// on the distributions that put iptables there `command -v` alone would report
+// a machine as having no firewall tooling when it has it installed.
+const acctPrelude = `
+if command -v iptables >/dev/null 2>&1; then IPT=iptables
+elif [ -x /usr/sbin/iptables ]; then IPT=/usr/sbin/iptables
+elif [ -x /sbin/iptables ]; then IPT=/sbin/iptables
+else echo no-iptables; exit 0; fi
+`
+
 func ensureAcctCommand(slug string, listen int) string {
-	return fmt.Sprintf(`
+	return fmt.Sprintf(`%s
 CHAIN=%s
 TAG="fluxlite:%s:"
 L=%d
 
-command -v iptables >/dev/null 2>&1 || { echo no-iptables; exit 0; }
+# 每个 iptables 调用都必须闭嘴：有的构建在 -C 命中时会把匹配到的规则打到 stdout，
+# 混进判定结果里会让一台正常的机器被报成失败。失败时把 stderr 原样带出来 ——
+# 「装不上」和「为什么装不上」是两回事，只报前者就没法查。
+ipt_err=""
+ipt() {
+    ipt_err="$($IPT "$@" 2>&1 >/dev/null)" && return 0
+    return 1
+}
+ipt_quiet() { $IPT "$@" >/dev/null 2>&1; }
 
-iptables -nL "$CHAIN" >/dev/null 2>&1 || iptables -N "$CHAIN" 2>/dev/null || { echo no-iptables; exit 0; }
-iptables -C INPUT -j "$CHAIN" 2>/dev/null || iptables -I INPUT 1 -j "$CHAIN" 2>/dev/null || { echo no-iptables; exit 0; }
-iptables -C OUTPUT -j "$CHAIN" 2>/dev/null || iptables -I OUTPUT 1 -j "$CHAIN" 2>/dev/null || { echo no-iptables; exit 0; }
+if ! ipt_quiet -nL "$CHAIN"; then
+    ipt -N "$CHAIN" || { echo "failed:创建计数链: $ipt_err"; exit 0; }
+fi
+ipt_quiet -C INPUT -j "$CHAIN"  || ipt -I INPUT 1 -j "$CHAIN"  || { echo "failed:挂到 INPUT: $ipt_err"; exit 0; }
+ipt_quiet -C OUTPUT -j "$CHAIN" || ipt -I OUTPUT 1 -j "$CHAIN" || { echo "failed:挂到 OUTPUT: $ipt_err"; exit 0; }
 
 intact=1
 for p in tcp udp; do
-    iptables -C "$CHAIN" -p $p --dport "$L" -m comment --comment "${TAG}in"  2>/dev/null || intact=0
-    iptables -C "$CHAIN" -p $p --sport "$L" -m comment --comment "${TAG}out" 2>/dev/null || intact=0
+    ipt_quiet -C "$CHAIN" -p $p --dport "$L" -m comment --comment "${TAG}in"  || intact=0
+    ipt_quiet -C "$CHAIN" -p $p --sport "$L" -m comment --comment "${TAG}out" || intact=0
 done
-have=$(iptables -S "$CHAIN" 2>/dev/null | grep -c "$TAG" || true)
+have=$($IPT -S "$CHAIN" 2>/dev/null | grep -c "$TAG" || true)
 
 if [ "$intact" = 1 ] && [ "$have" = 4 ]; then
     echo ok-unchanged
@@ -86,25 +119,24 @@ fi
 
 # 端口变过或规则缺失才走到这里。先清掉这条链路的全部旧规则——按旧端口计数
 # 会把现在占用那个端口的别人的流量记到这条链路头上。
-iptables -S "$CHAIN" 2>/dev/null | grep "$TAG" | sed 's/^-A /-D /' | while read -r rule; do
-    eval "iptables $rule" 2>/dev/null || true
+$IPT -S "$CHAIN" 2>/dev/null | grep "$TAG" | sed 's/^-A /-D /' | while read -r rule; do
+    eval "$IPT $rule" >/dev/null 2>&1 || true
 done
 
 for p in tcp udp; do
-    iptables -A "$CHAIN" -p $p --dport "$L" -m comment --comment "${TAG}in"  2>/dev/null || { echo failed; exit 0; }
-    iptables -A "$CHAIN" -p $p --sport "$L" -m comment --comment "${TAG}out" 2>/dev/null || { echo failed; exit 0; }
+    ipt -A "$CHAIN" -p $p --dport "$L" -m comment --comment "${TAG}in"  || { echo "failed:添加 $p 入向计数规则: $ipt_err"; exit 0; }
+    ipt -A "$CHAIN" -p $p --sport "$L" -m comment --comment "${TAG}out" || { echo "failed:添加 $p 出向计数规则: $ipt_err"; exit 0; }
 done
-echo ok-rebuilt`, acctChain, slug, listen)
+echo ok-rebuilt`, acctPrelude, acctChain, slug, listen)
 }
 
 // removeAccounting drops one route's counters from a node.
 func removeAccounting(ctx context.Context, client *ssh.Client, slug string) error {
-	cmd := fmt.Sprintf(`
-command -v iptables >/dev/null 2>&1 || exit 0
-iptables -S %s 2>/dev/null | grep "fluxlite:%s:" | sed 's/^-A /-D /' | while read -r rule; do
-    eval "iptables $rule" 2>/dev/null || true
+	cmd := fmt.Sprintf(`%s
+$IPT -S %s 2>/dev/null | grep "fluxlite:%s:" | sed 's/^-A /-D /' | while read -r rule; do
+    eval "$IPT $rule" >/dev/null 2>&1 || true
 done
-exit 0`, acctChain, slug)
+exit 0`, strings.Replace(acctPrelude, "echo no-iptables; exit 0", "exit 0", 1), acctChain, slug)
 	if _, err := sshx.Run(ctx, client, cmd); err != nil {
 		return fmt.Errorf("remove byte counters: %w", err)
 	}
@@ -136,7 +168,9 @@ func (a *Applier) ReadCounters(ctx context.Context, node *model.Node) (map[strin
 	}
 
 	res, err := sshx.Run(ctx, client.Client,
-		fmt.Sprintf(`iptables -nvxL %s 2>/dev/null || true`, acctChain))
+		fmt.Sprintf(`%s
+$IPT -nvxL %s 2>/dev/null || true`,
+			strings.Replace(acctPrelude, "echo no-iptables; exit 0", "exit 0", 1), acctChain))
 	if err != nil {
 		return nil, fmt.Errorf("read byte counters on %s: %w", node.Name, err)
 	}

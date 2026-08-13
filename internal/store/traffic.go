@@ -101,11 +101,17 @@ func (s *Store) ResetTrafficBaseline(ctx context.Context, routeID int64) error {
 
 // RouteTraffic reports a route's cumulative totals keyed by route id.
 //
-// The figure is the entry hop's, which is the only hop every byte must cross.
+// The figure wanted is the entry hop's, which is the only hop every byte must
+// cross. When the entry hop is not counting — its node may have no iptables —
+// the lowest hop that is counting stands in, and FromEntry says so. Passing a
+// middle hop's bytes off as the route's total would understate any traffic the
+// chain drops before reaching it, with nothing on screen to suggest doubt.
+//
 // Routes absent from the map have never been sampled; that is not zero traffic.
 func (s *Store) RouteTraffic(ctx context.Context) (map[int64]*model.Traffic, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT t.route_id, t.bytes_in, t.bytes_out, t.updated_at
+		SELECT t.route_id, t.hop_order, t.bytes_in, t.bytes_out, t.updated_at,
+		       (SELECT MIN(hop_order) FROM route_hops WHERE route_id = t.route_id)
 		FROM route_traffic t
 		WHERE t.hop_order = (SELECT MIN(hop_order) FROM route_traffic WHERE route_id = t.route_id)`)
 	if err != nil {
@@ -116,10 +122,12 @@ func (s *Store) RouteTraffic(ctx context.Context) (map[int64]*model.Traffic, err
 	out := make(map[int64]*model.Traffic)
 	for rows.Next() {
 		var id int64
+		var entryHop sql.NullInt64
 		var t model.Traffic
-		if err := rows.Scan(&id, &t.BytesIn, &t.BytesOut, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&id, &t.HopOrder, &t.BytesIn, &t.BytesOut, &t.UpdatedAt, &entryHop); err != nil {
 			return nil, fmt.Errorf("scan route traffic: %w", err)
 		}
+		t.FromEntry = entryHop.Valid && int(entryHop.Int64) == t.HopOrder
 		out[id] = &t
 	}
 	return out, rows.Err()

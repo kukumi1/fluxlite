@@ -291,14 +291,29 @@ export function Routes() {
                 <div className="muted" style={{ marginTop: 4, fontSize: 13 }}>
                   流量：
                   {traffic[route.id] ? (
-                    <span
-                      title={`统计自入口节点的内核计数器，更新于 ${new Date(
-                        traffic[route.id].updated_at,
-                      ).toLocaleString("zh-CN")}`}
-                    >
-                      ↑ {formatBytes(traffic[route.id].bytes_in)} ／ ↓{" "}
-                      {formatBytes(traffic[route.id].bytes_out)}
-                    </span>
+                    <>
+                      <span
+                        title={`统计自内核计数器，更新于 ${new Date(
+                          traffic[route.id].updated_at,
+                        ).toLocaleString("zh-CN")}`}
+                      >
+                        ↑ {formatBytes(traffic[route.id].bytes_in)} ／ ↓{" "}
+                        {formatBytes(traffic[route.id].bytes_out)}
+                      </span>
+                      {/* 中间跳看不到链路在它之前丢掉的流量，数字只会偏小，
+                          不说清楚就等于把一个偏小的数字当成总量 */}
+                      {!traffic[route.id].from_entry && (
+                        <span
+                          className="tag warn"
+                          style={{ marginLeft: 6 }}
+                          title={`入口节点没有装 iptables，无法计数，这里退而取第 ${
+                            traffic[route.id].hop_order + 1
+                          } 跳。该跳看不到链路在它之前丢掉的流量，数字只会偏小。`}
+                        >
+                          非入口跳
+                        </span>
+                      )}
+                    </>
                   ) : (
                     // 没采到不等于没跑流量，画成 0 会让人以为链路没在用
                     <span className="tag warn">未知</span>

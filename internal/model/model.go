@@ -330,6 +330,13 @@ type Traffic struct {
 	BytesIn   int64     `json:"bytes_in"`
 	BytesOut  int64     `json:"bytes_out"`
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// HopOrder is the hop these bytes were counted at, and FromEntry says
+	// whether that is the route's entry. A count taken further down the chain
+	// misses whatever was dropped before it, so the difference has to travel
+	// with the number rather than being assumed away.
+	HopOrder  int  `json:"hop_order"`
+	FromEntry bool `json:"from_entry"`
 }
 
 // DailyTraffic is one day's total for a route.

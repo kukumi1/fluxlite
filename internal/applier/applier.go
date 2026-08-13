@@ -44,6 +44,11 @@ type HopOutcome struct {
 	// Accounting reports what happened to this hop's byte counters. A rebuild
 	// restarts them from zero, which invalidates the stored baseline.
 	Accounting AcctState `json:"accounting"`
+
+	// AccountingError explains an unavailable counter. Without it a hop that
+	// silently refuses to count is indistinguishable from one nobody has
+	// polled yet, and there is nothing to search the logs for.
+	AccountingError string `json:"accounting_error,omitempty"`
 }
 
 // Result aggregates the outcome of applying a route.
@@ -81,7 +86,8 @@ func (a *Applier) Apply(ctx context.Context, plan *planner.Plan) (*Result, error
 		changed, action, acct, err := a.applyHop(ctx, &hop)
 		outcome.Changed = changed
 		outcome.Action = action
-		outcome.Accounting = acct
+		outcome.Accounting = acct.state
+		outcome.AccountingError = acct.detail
 		if err != nil {
 			outcome.Error = err.Error()
 		}
@@ -108,26 +114,34 @@ func (a *Applier) Apply(ctx context.Context, plan *planner.Plan) (*Result, error
 	return result, nil
 }
 
-func (a *Applier) applyHop(ctx context.Context, hop *planner.HopPlan) (bool, string, AcctState, error) {
+// acctResult pairs a counter outcome with the reason it is not usable.
+type acctResult struct {
+	state  AcctState
+	detail string
+}
+
+func (a *Applier) applyHop(ctx context.Context, hop *planner.HopPlan) (bool, string, acctResult, error) {
 	client, err := a.pool.Get(ctx, hop.Node)
 	if err != nil {
-		return false, "unreachable", AcctUnavailable, fmt.Errorf("connect: %w", err)
+		return false, "unreachable", acctResult{state: AcctUnavailable}, fmt.Errorf("connect: %w", err)
 	}
 
 	replacedRealm, err := a.ensureRealm(ctx, client.Client, hop.Node)
 	if err != nil {
-		return false, "realm-install-failed", AcctUnavailable, err
+		return false, "realm-install-failed", acctResult{state: AcctUnavailable}, err
 	}
 	if err := a.ensureUnit(ctx, client.Client, hop.Node, hop.RouteSlug); err != nil {
-		return false, "unit-install-failed", AcctUnavailable, err
+		return false, "unit-install-failed", acctResult{state: AcctUnavailable}, err
 	}
 
 	// Counting is diagnostics, not forwarding. A node that will not take the
 	// counter rules still relays traffic perfectly well, so this never fails
 	// the hop — it only leaves that hop's traffic reported as unknown.
-	acct, err := a.ensureAccounting(ctx, client.Client, hop.RouteSlug, hop.Listen)
-	if err != nil {
-		acct = AcctUnavailable
+	acct := acctResult{state: AcctUnavailable}
+	if state, aerr := a.ensureAccounting(ctx, client.Client, hop.RouteSlug, hop.Listen); aerr != nil {
+		acct.detail = aerr.Error()
+	} else {
+		acct.state = state
 	}
 
 	current, err := a.currentConfig(ctx, client.Client, hop.ConfigPath)

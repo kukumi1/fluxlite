@@ -710,8 +710,93 @@ tbody tr:last-child td {
   align-items: start;
 }
 
+.route-grid.dense {
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 12px;
+}
+
 .route-grid .card {
   margin-bottom: 0;
+}
+
+.route-grid.dense .card {
+  padding: 14px;
+}
+
+.route-grid.dense h2 {
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+/* 紧凑模式把入口与落地压到一行。地址是这张卡上最常被复制的东西，
+   挤没了就失去意义，所以宁可让它横向滚动也不截断。 */
+.route-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in oklch, var(--muted) 45%, transparent);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.route-line .sep {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+/* 列表模式列多，窄屏放不下。让表格按内容撑开、容器横向滚动，好过把地址
+   截成半截或让操作按钮换行——换行会把行撑高，恰好抵消掉紧凑的意义。 */
+.table-scroll {
+  overflow-x: auto;
+}
+
+.table-scroll table {
+  min-width: max-content;
+}
+
+.table-scroll .row {
+  flex-wrap: nowrap;
+}
+
+/* ===== 视图切换 ===== */
+
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: color-mix(in oklch, var(--muted) 50%, transparent);
+}
+
+.segmented button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: background-color 140ms var(--ease-out), color 140ms var(--ease-out);
+}
+
+.segmented button:hover {
+  color: var(--foreground);
+}
+
+.segmented button.active {
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: 0 1px 2px color-mix(in oklch, var(--foreground) 12%, transparent);
 }
 
 .chain {

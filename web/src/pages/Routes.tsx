@@ -13,7 +13,7 @@ import {
   type Traffic,
   type VerifyReport,
 } from "../api";
-import { ArrowDown, ArrowUp, Plus, Waypoints } from "lucide-react";
+import { ArrowDown, ArrowUp, LayoutGrid, List, Plus, Rows3, Waypoints } from "lucide-react";
 import { Banner, Modal } from "../components/Modal";
 import { Card } from "../components/Card";
 import { CopyIconButton } from "../components/CopyButton";
@@ -21,6 +21,21 @@ import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatCard } from "../components/StatCard";
 import { ageOf, describeAge, formatBytes, staleAfterMs } from "../lib/format";
+
+type ViewMode = "card" | "compact" | "list";
+
+const VIEW_KEY = "fluxlite-routes-view";
+
+const VIEW_OPTIONS = [
+  { id: "card", label: "宽松卡片", icon: LayoutGrid },
+  { id: "compact", label: "紧凑卡片", icon: Rows3 },
+  { id: "list", label: "横向列表", icon: List },
+] as const;
+
+function storedView(): ViewMode {
+  const saved = localStorage.getItem(VIEW_KEY);
+  return saved === "card" || saved === "compact" || saved === "list" ? saved : "card";
+}
 
 // entryAddress is what a client actually points at: the entry node's reachable
 // host paired with the route's entry port. For a NAT box the reachable host is
@@ -184,6 +199,12 @@ export function Routes() {
   const [creating, setCreating] = useState(false);
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
   const [verifyReport, setVerifyReport] = useState<VerifyReport | null>(null);
+  const [view, setView] = useState<ViewMode>(storedView);
+
+  function chooseView(next: ViewMode) {
+    setView(next);
+    localStorage.setItem(VIEW_KEY, next);
+  }
 
   const fail = (err: unknown) => setError(err instanceof ApiError ? err.message : "请求失败");
   const nodeName = (id: number) => nodes.find((n) => n.id === id)?.name ?? `#${id}`;
@@ -264,6 +285,139 @@ export function Routes() {
     }
   }
 
+  const quotaOf = (routeID: number) => quotas.find((q) => q.route_id === routeID);
+
+  function chainOf(route: Route) {
+    return (
+      <div className="chain">
+        {route.hops.map((hop) => {
+          const state = hopState(route.id, hop.hop_order);
+          return (
+            <span key={hop.hop_order} className="chain">
+              <span
+                className={`hop ${state.kind === "down" ? "down" : ""} ${
+                  state.kind === "stale" ? "unsure" : ""
+                }`}
+                title={hopStateHint(state)}
+              >
+                {nodeName(hop.node_id)}
+                <span className="muted"> :{hop.relay_port}</span>
+                {state.kind === "down" && <span className="muted"> ✕</span>}
+                {state.kind === "stale" && <span className="muted"> ⚠</span>}
+              </span>
+              <Link ms={hop.latency_ms} at={hop.latency_at} />
+            </span>
+          );
+        })}
+        <span className="hop mono">{route.target}</span>
+        <ChainTotal hops={route.hops} />
+      </div>
+    );
+  }
+
+  function trafficOf(route: Route) {
+    const t = traffic[route.id];
+    if (!t) {
+      // 没采到不等于没跑流量，画成 0 会让人以为链路没在用
+      return <span className="tag warn">未知</span>;
+    }
+    return (
+      <>
+        <span
+          title={`统计自内核计数器，更新于 ${new Date(t.updated_at).toLocaleString("zh-CN")}`}
+        >
+          ↑ {formatBytes(t.bytes_in)} ／ ↓ {formatBytes(t.bytes_out)}
+        </span>
+        {/* 中间跳看不到链路在它之前丢掉的流量，数字只会偏小，
+            不说清楚就等于把一个偏小的数字当成总量 */}
+        {!t.from_entry && (
+          <span
+            className="tag warn"
+            style={{ marginLeft: 6 }}
+            title={`入口节点没有装 iptables，无法计数，这里退而取第 ${
+              t.hop_order + 1
+            } 跳。该跳看不到链路在它之前丢掉的流量，数字只会偏小。`}
+          >
+            非入口跳
+          </span>
+        )}
+      </>
+    );
+  }
+
+  function actionsOf(route: Route) {
+    const busy = busyId === route.id;
+    return (
+      <div className="row nowrap">
+        <button
+          className="btn sm primary"
+          disabled={busy}
+          onClick={() =>
+            void act(route.id, async () => {
+              const result = await api.applyRoute(route.id);
+              setApplyResult(result);
+            })
+          }
+        >
+          {busy ? "处理中…" : "下发"}
+        </button>
+        <button
+          className="btn sm"
+          disabled={busy}
+          onClick={() =>
+            void act(route.id, async () => {
+              const report = await api.verifyRoute(route.id);
+              setVerifyReport(report);
+            })
+          }
+        >
+          验证
+        </button>
+        <button className="btn sm" onClick={() => setTrafficFor(route)}>
+          流量
+        </button>
+        <button className="btn sm" onClick={() => setEditing(route)}>
+          编辑
+        </button>
+        <button
+          className="btn sm"
+          disabled={busy}
+          onClick={() =>
+            void act(route.id, async () => {
+              await api.stopRoute(route.id);
+              setNotice(`链路 ${route.name} 已停止`);
+            })
+          }
+        >
+          停止
+        </button>
+        <button
+          className="btn sm danger"
+          disabled={busy}
+          onClick={() => {
+            if (!confirm(`确认删除链路 ${route.name}？会尽量清理各节点上的配置。`)) return;
+            void act(route.id, async () => {
+              const res = await api.deleteRoute(route.id);
+              const left = res.leftovers ?? [];
+              if (left.length === 0) {
+                setNotice(`链路 ${route.name} 已删除，各节点上的转发已清理`);
+                return;
+              }
+              // 记录没了但转发还在，是需要人去机器上收尾的状态，不能只报成功
+              setWarning(
+                `链路 ${route.name} 已删除，但以下节点上的转发未能清理，` +
+                  `机器恢复后需在其上执行卸载脚本：` +
+                  left.map((l) => `${l.node_name}（${l.reason}）`).join("；"),
+              );
+            });
+          }}
+        >
+          删除
+        </button>
+      </div>
+    );
+  }
+
   const counted = Object.values(traffic);
   const totalIn = counted.reduce((sum, t) => sum + t.bytes_in, 0);
   const totalOut = counted.reduce((sum, t) => sum + t.bytes_out, 0);
@@ -274,10 +428,30 @@ export function Routes() {
         title="链路"
         desc="多跳转发链。流量从入口节点进入，逐跳中继，最后一跳拨向落地地址。"
         actions={
-          <button className="btn primary" onClick={() => setCreating(true)}>
-            <Plus size={15} />
-            新建链路
-          </button>
+          <>
+            {routes.length > 0 && (
+              <div className="segmented" role="group" aria-label="视图">
+                {VIEW_OPTIONS.map((option) => {
+                  const Icon = option.icon;
+                  return (
+                    <button
+                      key={option.id}
+                      className={view === option.id ? "active" : ""}
+                      title={option.label}
+                      aria-pressed={view === option.id}
+                      onClick={() => chooseView(option.id)}
+                    >
+                      <Icon size={15} />
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <button className="btn primary" onClick={() => setCreating(true)}>
+              <Plus size={15} />
+              新建链路
+            </button>
+          </>
         }
       />
 
@@ -328,167 +502,117 @@ export function Routes() {
           />
         </Card>
       ) : (
-        <div className="route-grid">
-          {routes.map((route, cardIndex) => (
-            <Card index={cardIndex} key={route.id}>
-              <h2 style={{ marginBottom: 8 }}>
-                {/* The slug is only ever needed while logged into a node, so
-                    it is one hover away rather than occupying the title. */}
-                <span className="has-detail" title={onNodeIdentity(route.slug)}>
-                  {route.name}
-                </span>{" "}
-                <span className={`tag ${route.enabled ? "ok" : ""}`}>
-                  {route.enabled ? "已启用" : "已停用"}
-                </span>{" "}
-                <span className="tag">{route.protocol}</span>
-              </h2>
+        view === "list" ? (
+          <Card className="flush">
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>链路</th>
+                    <th>入口</th>
+                    <th>落地</th>
+                    <th>拓扑与延迟</th>
+                    <th>流量</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {routes.map((route) => (
+                    <tr key={route.id}>
+                      <td>
+                        <div className="row" style={{ gap: 6 }}>
+                          <strong className="has-detail" title={onNodeIdentity(route.slug)}>
+                            {route.name}
+                          </strong>
+                          <span className={`tag ${route.enabled ? "ok" : ""}`}>
+                            {route.enabled ? "已启用" : "已停用"}
+                          </span>
+                        </div>
+                        <div className="muted" style={{ fontSize: 12 }}>{route.protocol}</div>
+                      </td>
+                      <td className="mono nowrap">
+                        <div className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
+                          {entryAddress(route, nodes)}
+                          <CopyIconButton text={entryAddress(route, nodes)} title="复制入口地址" />
+                        </div>
+                      </td>
+                      <td className="mono nowrap">
+                        <div className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
+                          {route.target}
+                          <CopyIconButton text={route.target} title="复制落地地址" />
+                        </div>
+                      </td>
+                      <td>{chainOf(route)}</td>
+                      <td className="nowrap">
+                        {trafficOf(route)}
+                        <QuotaBar route={route} state={quotaOf(route.id)} />
+                      </td>
+                      <td>{actionsOf(route)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        ) : (
+          <div className={`route-grid${view === "compact" ? " dense" : ""}`}>
+            {routes.map((route, cardIndex) => (
+              <Card index={cardIndex} key={route.id}>
+                <h2 style={{ marginBottom: 8 }}>
+                  {/* The slug is only ever needed while logged into a node, so
+                      it is one hover away rather than occupying the title. */}
+                  <span className="has-detail" title={onNodeIdentity(route.slug)}>
+                    {route.name}
+                  </span>{" "}
+                  <span className={`tag ${route.enabled ? "ok" : ""}`}>
+                    {route.enabled ? "已启用" : "已停用"}
+                  </span>{" "}
+                  <span className="tag">{route.protocol}</span>
+                </h2>
 
-              <div className="addr-flow">
-                <div>
-                  <div className="addr-label">客户端连接</div>
-                  <div className="addr-box">
+                {view === "compact" ? (
+                  <div className="route-line">
                     <span>{entryAddress(route, nodes)}</span>
                     <CopyIconButton text={entryAddress(route, nodes)} title="复制入口地址" />
-                  </div>
-                </div>
-                <div className="addr-arrow">
-                  <ArrowDown size={14} />
-                </div>
-                <div>
-                  <div className="addr-label">落地</div>
-                  <div className="addr-box">
+                    <span className="sep">→</span>
                     <span>{route.target}</span>
                     <CopyIconButton text={route.target} title="复制落地地址" />
                   </div>
-                </div>
-              </div>
+                ) : (
+                  <div className="addr-flow">
+                    <div>
+                      <div className="addr-label">客户端连接</div>
+                      <div className="addr-box">
+                        <span>{entryAddress(route, nodes)}</span>
+                        <CopyIconButton text={entryAddress(route, nodes)} title="复制入口地址" />
+                      </div>
+                    </div>
+                    <div className="addr-arrow">
+                      <ArrowDown size={14} />
+                    </div>
+                    <div>
+                      <div className="addr-label">落地</div>
+                      <div className="addr-box">
+                        <span>{route.target}</span>
+                        <CopyIconButton text={route.target} title="复制落地地址" />
+                      </div>
+                    </div>
+                  </div>
+                )}
 
-              <div className="chain">
-                {route.hops.map((hop) => {
-                  const state = hopState(route.id, hop.hop_order);
-                  return (
-                    <span key={hop.hop_order} className="chain">
-                      <span
-                        className={`hop ${state.kind === "down" ? "down" : ""} ${
-                          state.kind === "stale" ? "unsure" : ""
-                        }`}
-                        title={hopStateHint(state)}
-                      >
-                        {nodeName(hop.node_id)}
-                        <span className="muted"> :{hop.relay_port}</span>
-                        {state.kind === "down" && <span className="muted"> ✕</span>}
-                        {state.kind === "stale" && <span className="muted"> ⚠</span>}
-                      </span>
-                      <Link ms={hop.latency_ms} at={hop.latency_at} />
-                    </span>
-                  );
-                })}
-                <span className="hop mono">{route.target}</span>
-                <ChainTotal hops={route.hops} />
-              </div>
+                {chainOf(route)}
+
                 <div className="muted" style={{ marginTop: 10, fontSize: 13 }}>
-                  流量：
-                  {traffic[route.id] ? (
-                    <>
-                      <span
-                        title={`统计自内核计数器，更新于 ${new Date(
-                          traffic[route.id].updated_at,
-                        ).toLocaleString("zh-CN")}`}
-                      >
-                        ↑ {formatBytes(traffic[route.id].bytes_in)} ／ ↓{" "}
-                        {formatBytes(traffic[route.id].bytes_out)}
-                      </span>
-                      {/* 中间跳看不到链路在它之前丢掉的流量，数字只会偏小，
-                          不说清楚就等于把一个偏小的数字当成总量 */}
-                      {!traffic[route.id].from_entry && (
-                        <span
-                          className="tag warn"
-                          style={{ marginLeft: 6 }}
-                          title={`入口节点没有装 iptables，无法计数，这里退而取第 ${
-                            traffic[route.id].hop_order + 1
-                          } 跳。该跳看不到链路在它之前丢掉的流量，数字只会偏小。`}
-                        >
-                          非入口跳
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    // 没采到不等于没跑流量，画成 0 会让人以为链路没在用
-                    <span className="tag warn">未知</span>
-                  )}
+                  流量：{trafficOf(route)}
                 </div>
-              <QuotaBar route={route} state={quotas.find((q) => q.route_id === route.id)} />
 
-              <div className="row" style={{ marginTop: 14 }}>
-              <button
-                className="btn primary"
-                disabled={busyId === route.id}
-                onClick={() =>
-                  void act(route.id, async () => {
-                    const result = await api.applyRoute(route.id);
-                    setApplyResult(result);
-                  })
-                }
-              >
-                {busyId === route.id ? "处理中…" : "下发"}
-              </button>
-              <button
-                className="btn"
-                disabled={busyId === route.id}
-                onClick={() =>
-                  void act(route.id, async () => {
-                    const report = await api.verifyRoute(route.id);
-                    setVerifyReport(report);
-                  })
-                }
-              >
-                验证
-              </button>
-              <button className="btn" onClick={() => setTrafficFor(route)}>
-                流量
-              </button>
-              <button className="btn" onClick={() => setEditing(route)}>
-                编辑
-              </button>
-              <button
-                className="btn"
-                disabled={busyId === route.id}
-                onClick={() =>
-                  void act(route.id, async () => {
-                    await api.stopRoute(route.id);
-                    setNotice(`链路 ${route.name} 已停止`);
-                  })
-                }
-              >
-                停止
-              </button>
-              <button
-                className="btn danger"
-                disabled={busyId === route.id}
-                onClick={() => {
-                  if (!confirm(`确认删除链路 ${route.name}？会尽量清理各节点上的配置。`)) return;
-                  void act(route.id, async () => {
-                    const res = await api.deleteRoute(route.id);
-                    const left = res.leftovers ?? [];
-                    if (left.length === 0) {
-                      setNotice(`链路 ${route.name} 已删除，各节点上的转发已清理`);
-                      return;
-                    }
-                    // 记录没了但转发还在，是需要人去机器上收尾的状态，不能只报成功
-                    setWarning(
-                      `链路 ${route.name} 已删除，但以下节点上的转发未能清理，` +
-                        `机器恢复后需在其上执行卸载脚本：` +
-                        left.map((l) => `${l.node_name}（${l.reason}）`).join("；"),
-                    );
-                  });
-                }}
-              >
-                删除
-              </button>
-              </div>
-            </Card>
-          ))}
-        </div>
+                <QuotaBar route={route} state={quotaOf(route.id)} />
+
+                <div style={{ marginTop: 14 }}>{actionsOf(route)}</div>
+              </Card>
+            ))}
+          </div>
+        )
       )}
 
       {(creating || editing) && (

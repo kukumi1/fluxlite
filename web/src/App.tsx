@@ -1,18 +1,39 @@
 import { useEffect, useState } from "react";
+import {
+  LayoutDashboard,
+  LogOut,
+  Moon,
+  ScrollText,
+  Server,
+  Sun,
+  Waypoints,
+  Zap,
+} from "lucide-react";
 import { api } from "./api";
+import { useTheme } from "./theme";
 import { Login } from "./pages/Login";
+import { Dashboard } from "./pages/Dashboard";
 import { Nodes } from "./pages/Nodes";
 import { Routes } from "./pages/Routes";
 import { Audit } from "./pages/Audit";
 import { Account } from "./pages/Account";
 
-type Tab = "routes" | "nodes" | "audit" | "account";
+type Tab = "dashboard" | "routes" | "nodes" | "audit" | "account";
 type AuthState = "checking" | "in" | "out";
+
+const MAIN_NAV = [
+  { id: "dashboard", label: "仪表盘", icon: LayoutDashboard },
+  { id: "routes", label: "链路", icon: Waypoints },
+  { id: "nodes", label: "节点", icon: Server },
+] as const;
+
+const ADMIN_NAV = [{ id: "audit", label: "审计日志", icon: ScrollText }] as const;
 
 export function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [username, setUsername] = useState("");
-  const [tab, setTab] = useState<Tab>("routes");
+  const [tab, setTab] = useState<Tab>("dashboard");
+  const { theme, toggle } = useTheme();
 
   async function checkSession() {
     try {
@@ -43,45 +64,75 @@ export function App() {
     }
   }
 
+  function navButton(item: { id: string; label: string; icon: typeof Server }) {
+    const Icon = item.icon;
+    return (
+      <button
+        key={item.id}
+        className={tab === item.id ? "active" : ""}
+        onClick={() => setTab(item.id as Tab)}
+      >
+        <Icon className="nav-icon" size={16} />
+        {item.label}
+      </button>
+    );
+  }
+
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="brand">
-          flux<span>lite</span>
-        </div>
-        <nav className="nav">
-          <button className={tab === "routes" ? "active" : ""} onClick={() => setTab("routes")}>
-            链路
-          </button>
-          <button className={tab === "nodes" ? "active" : ""} onClick={() => setTab("nodes")}>
-            节点
-          </button>
-          <button className={tab === "audit" ? "active" : ""} onClick={() => setTab("audit")}>
-            审计日志
-          </button>
-        </nav>
-        <div className="sidebar-footer">
+        <div className="sidebar-head">
+          <div className="brand">
+            <span className="brand-mark">
+              <Zap size={16} />
+            </span>
+            fluxlite
+          </div>
           <button
-            className={`account-link ${tab === "account" ? "active" : ""}`}
-            onClick={() => setTab("account")}
-            title="个人中心"
+            className="icon-btn"
+            onClick={toggle}
+            title={theme === "dark" ? "切换到亮色" : "切换到暗色"}
           >
-            <span className="avatar">{username.slice(0, 1).toUpperCase()}</span>
-            <span className="account-name">{username}</span>
+            {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
           </button>
-          <button className="btn sm" onClick={() => void logout()}>
-            退出登录
-          </button>
+        </div>
+
+        <div className="sidebar-group-label">主菜单</div>
+        <nav className="nav">{MAIN_NAV.map(navButton)}</nav>
+
+        <div className="sidebar-group-label">管理</div>
+        <nav className="nav">{ADMIN_NAV.map(navButton)}</nav>
+
+        <div className="sidebar-footer">
+          <div className="row" style={{ flexWrap: "nowrap", gap: 6 }}>
+            <button
+              className={`account-link ${tab === "account" ? "active" : ""}`}
+              onClick={() => setTab("account")}
+              title="个人中心"
+            >
+              <span className="avatar">{username.slice(0, 1).toUpperCase()}</span>
+              <span className="account-meta">
+                <span className="account-name">{username}</span>
+                <span className="account-role">管理员</span>
+              </span>
+            </button>
+            <button className="icon-btn" onClick={() => void logout()} title="退出登录">
+              <LogOut size={16} />
+            </button>
+          </div>
         </div>
       </aside>
 
       <main className="main">
-        {tab === "routes" && <Routes />}
-        {tab === "nodes" && <Nodes />}
-        {tab === "audit" && <Audit />}
-        {tab === "account" && (
-          <Account onUsernameChanged={setUsername} onSignedOut={() => setAuthState("out")} />
-        )}
+        <div className="main-inner">
+          {tab === "dashboard" && <Dashboard onNavigate={setTab} />}
+          {tab === "routes" && <Routes />}
+          {tab === "nodes" && <Nodes />}
+          {tab === "audit" && <Audit />}
+          {tab === "account" && (
+            <Account onUsernameChanged={setUsername} onSignedOut={() => setAuthState("out")} />
+          )}
+        </div>
       </main>
     </div>
   );

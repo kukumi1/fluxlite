@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Zap } from "lucide-react";
 import { api, ApiError, type Enrollment } from "../api";
 import { Banner } from "../components/Modal";
 
@@ -74,8 +75,11 @@ export function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
   return (
     <div className="login-wrap">
       <div className="login-box">
-        <div className="brand" style={{ textAlign: "center", paddingBottom: 20 }}>
-          flux<span>lite</span>
+        <div className="login-brand">
+          <span className="brand-mark">
+            <Zap size={16} />
+          </span>
+          fluxlite
         </div>
 
         {error && <Banner kind="err">{error}</Banner>}
@@ -109,18 +113,7 @@ export function Login({ onAuthenticated }: { onAuthenticated: () => void }) {
             <p className="hint">
               把下面的密钥加入 Authenticator，然后输入当前验证码完成绑定。这个密钥只显示这一次。
             </p>
-            <div
-              className="mono"
-              style={{
-                wordBreak: "break-all",
-                background: "var(--bg)",
-                padding: 10,
-                borderRadius: 6,
-                marginBottom: 14,
-              }}
-            >
-              {enrollment.secret}
-            </div>
+            <div className="cmd">{enrollment.secret}</div>
             <label>
               验证码
               <input

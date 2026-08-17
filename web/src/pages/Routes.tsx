@@ -13,21 +13,22 @@ import {
   type Traffic,
   type VerifyReport,
 } from "../api";
+import { ArrowDown, ArrowUp, Plus, Waypoints } from "lucide-react";
 import { Banner, Modal } from "../components/Modal";
+import { Card } from "../components/Card";
+import { CopyIconButton } from "../components/CopyButton";
+import { EmptyState } from "../components/EmptyState";
+import { PageHeader } from "../components/PageHeader";
+import { StatCard } from "../components/StatCard";
+import { ageOf, describeAge, formatBytes, staleAfterMs } from "../lib/format";
 
-// formatBytes renders a counter at three significant figures. Byte totals are
-// read to answer "am I going to blow the monthly allowance", a question no one
-// asks to the nearest kilobyte.
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  const units = ["KB", "MB", "GB", "TB", "PB"];
-  let v = n / 1024;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v >= 100 ? v.toFixed(0) : v.toFixed(v >= 10 ? 1 : 2)} ${units[i]}`;
+// entryAddress is what a client actually points at: the entry node's reachable
+// host paired with the route's entry port. For a NAT box the reachable host is
+// the mapped address the provider gave out, not anything the machine knows
+// about itself, which is why it comes from the node record rather than a probe.
+function entryAddress(route: Route, nodes: Node[]): string {
+  const host = nodes.find((n) => n.id === route.hops[0]?.node_id)?.host ?? "?";
+  return `${host}:${route.entry_port}`;
 }
 
 // onNodeIdentity spells out what a route is called on the machines. A display
@@ -39,23 +40,6 @@ function onNodeIdentity(slug: string): string {
     `服务：fluxlite-relay@${slug}（OpenRC 为 fluxlite-${slug}）\n` +
     `配置：/etc/fluxlite/realm/${slug}.toml`
   );
-}
-
-// staleAfterMs is how long a sample stays trustworthy. Sampling runs every 30
-// seconds, so anything several rounds old means the node stopped answering and
-// the number on screen is frozen, not live.
-const staleAfterMs = 150000;
-
-function ageOf(at: string | null): number | null {
-  if (!at) return null;
-  const ms = Date.now() - new Date(at).getTime();
-  return Number.isFinite(ms) ? ms : null;
-}
-
-function describeAge(ms: number): string {
-  if (ms < 60000) return `${Math.max(1, Math.round(ms / 1000))} 秒前`;
-  if (ms < 3600000) return `${Math.round(ms / 60000)} 分钟前`;
-  return `${Math.round(ms / 3600000)} 小时前`;
 }
 
 // HopState separates "nobody has looked yet" from "looked, and it is down"
@@ -157,18 +141,29 @@ function QuotaBar({ route, state }: { route: Route; state: QuotaState | undefine
   const tone = ratio >= 1 ? "err" : ratio >= 0.8 ? "warn" : "ok";
 
   return (
-    <div className="muted" style={{ marginTop: 4, fontSize: 13 }}>
-      额度：
-      <span className={ratio >= 0.8 ? `tag ${tone}` : undefined}>
-        {formatBytes(state.used_bytes)} / {formatBytes(quota)}（{pct}%）
-      </span>
-      <span style={{ marginLeft: 8 }} title={`本周期自 ${state.period_start} 起，每月 ${route.quota_reset_day} 号重置`}>
-        周期起 {state.period_start}
-      </span>
-      {route.quota_paused_at && (
-        <span className="tag err" style={{ marginLeft: 8 }} title="下个周期开始后会自动恢复；想立刻恢复就调高额度">
-          已达额度，面板已自动停止
+    <div style={{ marginTop: 10 }}>
+      <div className="spread muted" style={{ marginBottom: 0, fontSize: 13 }}>
+        <span>
+          额度 {formatBytes(state.used_bytes)} / {formatBytes(quota)}
         </span>
+        <span
+          className={ratio >= 0.8 ? `tag ${tone}` : undefined}
+          title={`本周期自 ${state.period_start} 起，每月 ${route.quota_reset_day} 号重置`}
+        >
+          {pct}%
+        </span>
+      </div>
+      <div className="progress">
+        <div className={`progress-bar ${tone === "ok" ? "" : tone}`} style={{ width: `${pct}%` }} />
+      </div>
+      {route.quota_paused_at && (
+        <div
+          className="tag err"
+          style={{ marginTop: 8 }}
+          title="下个周期开始后会自动恢复；想立刻恢复就调高额度"
+        >
+          已达额度，面板已自动停止
+        </div>
       )}
     </div>
   );
@@ -269,73 +264,129 @@ export function Routes() {
     }
   }
 
+  const counted = Object.values(traffic);
+  const totalIn = counted.reduce((sum, t) => sum + t.bytes_in, 0);
+  const totalOut = counted.reduce((sum, t) => sum + t.bytes_out, 0);
+
   return (
     <div>
-      <div className="spread">
-        <div>
-          <h1>链路</h1>
-          <p className="page-desc">
-            多跳转发链。流量从入口节点进入，逐跳中继，最后一跳拨向落地地址。
-          </p>
-        </div>
-        <button className="btn primary" onClick={() => setCreating(true)}>
-          新建链路
-        </button>
-      </div>
+      <PageHeader
+        title="链路"
+        desc="多跳转发链。流量从入口节点进入，逐跳中继，最后一跳拨向落地地址。"
+        actions={
+          <button className="btn primary" onClick={() => setCreating(true)}>
+            <Plus size={15} />
+            新建链路
+          </button>
+        }
+      />
 
       {error && <Banner kind="err">{error}</Banner>}
       {warning && <Banner kind="warn">{warning}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
 
+      {routes.length > 0 && (
+        <div className="stat-grid">
+          <StatCard
+            index={0}
+            label="累计入向"
+            value={counted.length === 0 ? null : formatBytes(totalIn)}
+            sub={counted.length === 0 ? "还没有任何计数" : `来自 ${counted.length} 条链路`}
+            icon={<ArrowDown size={17} />}
+          />
+          <StatCard
+            index={1}
+            label="累计出向"
+            value={counted.length === 0 ? null : formatBytes(totalOut)}
+            sub={counted.length === 0 ? "还没有任何计数" : `来自 ${counted.length} 条链路`}
+            icon={<ArrowUp size={17} />}
+            tone="warm"
+          />
+          <StatCard
+            index={2}
+            label="链路"
+            value={String(routes.length)}
+            sub={`${routes.filter((r) => r.enabled).length} 条已启用`}
+            icon={<Waypoints size={17} />}
+            tone="cool"
+          />
+        </div>
+      )}
+
       {routes.length === 0 ? (
-        <div className="card empty">还没有链路。先在节点页添加并探测节点，再来建链路。</div>
+        <Card>
+          <EmptyState
+            icon={<Waypoints size={22} />}
+            title="还没有链路"
+            desc="先在节点页添加并探测节点，再来建第一条转发链路。"
+            action={
+              <button className="btn primary" onClick={() => setCreating(true)}>
+                <Plus size={15} />
+                新建链路
+              </button>
+            }
+          />
+        </Card>
       ) : (
-        routes.map((route) => (
-          <div className="card" key={route.id}>
-            <div className="spread">
-              <div>
-                <h2 style={{ marginBottom: 6 }}>
-                  {/* The slug is only ever needed while logged into a node, so
-                      it is one hover away rather than occupying the title. */}
-                  <span className="has-detail" title={onNodeIdentity(route.slug)}>
-                    {route.name}
-                  </span>{" "}
-                  <span className={`tag ${route.enabled ? "ok" : ""}`}>
-                    {route.enabled ? "已启用" : "已停用"}
-                  </span>{" "}
-                  <span className="tag">{route.protocol}</span>
-                </h2>
-                <div className="chain">
-                  {route.hops.map((hop) => {
-                    const state = hopState(route.id, hop.hop_order);
-                    return (
-                      <span key={hop.hop_order} className="chain">
-                        <span
-                          className={`hop ${state.kind === "down" ? "down" : ""} ${
-                            state.kind === "stale" ? "unsure" : ""
-                          }`}
-                          title={hopStateHint(state)}
-                        >
-                          {nodeName(hop.node_id)}
-                          <span className="muted"> :{hop.relay_port}</span>
-                          {state.kind === "down" && <span className="muted"> ✕</span>}
-                          {state.kind === "stale" && <span className="muted"> ⚠</span>}
-                        </span>
-                        <Link ms={hop.latency_ms} at={hop.latency_at} />
+        <div className="route-grid">
+          {routes.map((route, cardIndex) => (
+            <Card index={cardIndex} key={route.id}>
+              <h2 style={{ marginBottom: 8 }}>
+                {/* The slug is only ever needed while logged into a node, so
+                    it is one hover away rather than occupying the title. */}
+                <span className="has-detail" title={onNodeIdentity(route.slug)}>
+                  {route.name}
+                </span>{" "}
+                <span className={`tag ${route.enabled ? "ok" : ""}`}>
+                  {route.enabled ? "已启用" : "已停用"}
+                </span>{" "}
+                <span className="tag">{route.protocol}</span>
+              </h2>
+
+              <div className="addr-flow">
+                <div>
+                  <div className="addr-label">客户端连接</div>
+                  <div className="addr-box">
+                    <span>{entryAddress(route, nodes)}</span>
+                    <CopyIconButton text={entryAddress(route, nodes)} title="复制入口地址" />
+                  </div>
+                </div>
+                <div className="addr-arrow">
+                  <ArrowDown size={14} />
+                </div>
+                <div>
+                  <div className="addr-label">落地</div>
+                  <div className="addr-box">
+                    <span>{route.target}</span>
+                    <CopyIconButton text={route.target} title="复制落地地址" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="chain">
+                {route.hops.map((hop) => {
+                  const state = hopState(route.id, hop.hop_order);
+                  return (
+                    <span key={hop.hop_order} className="chain">
+                      <span
+                        className={`hop ${state.kind === "down" ? "down" : ""} ${
+                          state.kind === "stale" ? "unsure" : ""
+                        }`}
+                        title={hopStateHint(state)}
+                      >
+                        {nodeName(hop.node_id)}
+                        <span className="muted"> :{hop.relay_port}</span>
+                        {state.kind === "down" && <span className="muted"> ✕</span>}
+                        {state.kind === "stale" && <span className="muted"> ⚠</span>}
                       </span>
-                    );
-                  })}
-                  <span className="hop mono">{route.target}</span>
-                  <ChainTotal hops={route.hops} />
-                </div>
-                <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
-                  客户端连接：
-                  <code>
-                    {nodes.find((n) => n.id === route.hops[0]?.node_id)?.host ?? "?"}:
-                    {route.entry_port}
-                  </code>
-                </div>
-                <div className="muted" style={{ marginTop: 4, fontSize: 13 }}>
+                      <Link ms={hop.latency_ms} at={hop.latency_at} />
+                    </span>
+                  );
+                })}
+                <span className="hop mono">{route.target}</span>
+                <ChainTotal hops={route.hops} />
+              </div>
+                <div className="muted" style={{ marginTop: 10, fontSize: 13 }}>
                   流量：
                   {traffic[route.id] ? (
                     <>
@@ -366,11 +417,9 @@ export function Routes() {
                     <span className="tag warn">未知</span>
                   )}
                 </div>
-                <QuotaBar route={route} state={quotas.find((q) => q.route_id === route.id)} />
-              </div>
-            </div>
+              <QuotaBar route={route} state={quotas.find((q) => q.route_id === route.id)} />
 
-            <div className="row" style={{ marginTop: 14 }}>
+              <div className="row" style={{ marginTop: 14 }}>
               <button
                 className="btn primary"
                 disabled={busyId === route.id}
@@ -436,9 +485,10 @@ export function Routes() {
               >
                 删除
               </button>
-            </div>
-          </div>
-        ))
+              </div>
+            </Card>
+          ))}
+        </div>
       )}
 
       {(creating || editing) && (

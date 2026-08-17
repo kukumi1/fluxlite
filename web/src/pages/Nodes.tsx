@@ -8,9 +8,13 @@ import {
   type NodeInput,
   type ProbeResult,
 } from "../api";
+import { Plus, Server } from "lucide-react";
 import { CopyButton } from "../components/CopyButton";
 import { NumberField } from "../components/NumberField";
 import { Banner, Modal } from "../components/Modal";
+import { Card } from "../components/Card";
+import { EmptyState } from "../components/EmptyState";
+import { PageHeader } from "../components/PageHeader";
 import { EnrollDialog } from "./EnrollDialog";
 
 const emptyInput: NodeInput = {
@@ -119,29 +123,38 @@ export function Nodes() {
 
   return (
     <div>
-      <div className="spread">
-        <div>
-          <h1>节点</h1>
-          <p className="page-desc">
-            转发链路的组成机器。内网节点需指定跳板，NAT 机器需按实际映射填写端口池。
-          </p>
-        </div>
-        <div className="row">
-          <button className="btn" onClick={() => setCreating(true)}>
-            手动添加
-          </button>
-          <button className="btn primary" onClick={() => setEnrolling(true)}>
-            一键注册
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="节点"
+        desc="转发链路的组成机器。内网节点需指定跳板，NAT 机器需按实际映射填写端口池。"
+        actions={
+          <>
+            <button className="btn" onClick={() => setCreating(true)}>
+              手动添加
+            </button>
+            <button className="btn primary" onClick={() => setEnrolling(true)}>
+              <Plus size={15} />
+              一键注册
+            </button>
+          </>
+        }
+      />
 
       {error && <Banner kind="err">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
 
-      <div className="card" style={{ padding: 0 }}>
+      <Card className="flush">
         {nodes.length === 0 ? (
-          <div className="empty">还没有节点。先添加一台，再做能力探测。</div>
+          <EmptyState
+            icon={<Server size={22} />}
+            title="还没有节点"
+            desc="先添加一台机器，再做能力探测，之后才能用它组链路。"
+            action={
+              <button className="btn primary" onClick={() => setEnrolling(true)}>
+                <Plus size={15} />
+                一键注册
+              </button>
+            }
+          />
         ) : (
           <table>
             <thead>
@@ -242,7 +255,7 @@ export function Nodes() {
             </tbody>
           </table>
         )}
-      </div>
+      </Card>
 
       {removed && (
         <Modal title={`节点 ${removed} 已从面板删除`} onClose={() => setRemoved(null)}>

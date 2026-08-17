@@ -52,7 +52,19 @@ export interface Route {
   protocol: Protocol;
   entry_port: number;
   enabled: boolean;
+  quota_bytes: number | null;
+  quota_reset_day: number;
+  /** 非空表示这条链路是被面板按额度停掉的，不是人停的。 */
+  quota_paused_at: string | null;
   hops: RouteHop[];
+}
+
+export interface QuotaState {
+  route_id: number;
+  period_start: string;
+  used_bytes: number;
+  /** 本周期没有任何计数时为 false —— 用量数字无意义，额度也不会被执行。 */
+  measured: boolean;
 }
 
 export interface HopOutcome {
@@ -262,6 +274,7 @@ export const api = {
 
   status: () => request<RouteStatus[] | null>("/status"),
   traffic: () => request<Record<string, Traffic> | null>("/traffic"),
+  quotas: () => request<QuotaState[] | null>("/quotas"),
   audit: (limit = 100) => request<AuditEntry[] | null>(`/audit?limit=${limit}`),
 };
 
@@ -285,4 +298,7 @@ export interface RouteInput {
   node_ids: number[];
   entry_port: number | null;
   enabled: boolean;
+  /** null 表示不限额。0 不是同义词——那表示一个字节都不许跑。 */
+  quota_bytes: number | null;
+  quota_reset_day: number;
 }

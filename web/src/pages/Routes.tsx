@@ -8,6 +8,7 @@ import {
   type Route,
   type RouteHop,
   type RouteInput,
+  type QuotaState,
   type RouteStatus,
   type Traffic,
   type VerifyReport,
@@ -131,11 +132,54 @@ function ChainTotal({ hops }: { hops: RouteHop[] }) {
   );
 }
 
+// QuotaBar shows how much of a route's allowance is gone.
+//
+// An unmeasured period is not drawn as 0% used. The panel does not enforce a
+// quota it cannot measure, and a bar sitting reassuringly at zero would imply
+// the opposite of that.
+function QuotaBar({ route, state }: { route: Route; state: QuotaState | undefined }) {
+  const quota = route.quota_bytes;
+  if (!quota) return null;
+
+  if (!state || !state.measured) {
+    return (
+      <div className="muted" style={{ marginTop: 4, fontSize: 13 }}>
+        额度：{formatBytes(quota)} / 周期{" "}
+        <span className="tag warn" title="本周期还没有任何计数，无法判断用了多少，额度暂不执行">
+          未计量
+        </span>
+      </div>
+    );
+  }
+
+  const ratio = state.used_bytes / quota;
+  const pct = Math.min(100, Math.round(ratio * 100));
+  const tone = ratio >= 1 ? "err" : ratio >= 0.8 ? "warn" : "ok";
+
+  return (
+    <div className="muted" style={{ marginTop: 4, fontSize: 13 }}>
+      额度：
+      <span className={ratio >= 0.8 ? `tag ${tone}` : undefined}>
+        {formatBytes(state.used_bytes)} / {formatBytes(quota)}（{pct}%）
+      </span>
+      <span style={{ marginLeft: 8 }} title={`本周期自 ${state.period_start} 起，每月 ${route.quota_reset_day} 号重置`}>
+        周期起 {state.period_start}
+      </span>
+      {route.quota_paused_at && (
+        <span className="tag err" style={{ marginLeft: 8 }} title="下个周期开始后会自动恢复；想立刻恢复就调高额度">
+          已达额度，面板已自动停止
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function Routes() {
   const [routes, setRoutes] = useState<Route[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [statuses, setStatuses] = useState<RouteStatus[]>([]);
   const [traffic, setTraffic] = useState<Record<string, Traffic>>({});
+  const [quotas, setQuotas] = useState<QuotaState[]>([]);
   const [trafficFor, setTrafficFor] = useState<Route | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -151,16 +195,18 @@ export function Routes() {
 
   async function load() {
     try {
-      const [r, n, s, t] = await Promise.all([
+      const [r, n, s, t, q] = await Promise.all([
         api.listRoutes(),
         api.listNodes(),
         api.status(),
         api.traffic(),
+        api.quotas(),
       ]);
       setRoutes(r ?? []);
       setNodes(n ?? []);
       setStatuses(s ?? []);
       setTraffic(t ?? {});
+      setQuotas(q ?? []);
     } catch (err) {
       fail(err);
     }
@@ -175,11 +221,12 @@ export function Routes() {
   // per hop.
   useEffect(() => {
     const timer = setInterval(() => {
-      Promise.all([api.listRoutes(), api.status(), api.traffic()])
-        .then(([r, s, t]) => {
+      Promise.all([api.listRoutes(), api.status(), api.traffic(), api.quotas()])
+        .then(([r, s, t, q]) => {
           setRoutes(r ?? []);
           setStatuses(s ?? []);
           setTraffic(t ?? {});
+          setQuotas(q ?? []);
         })
         .catch(() => {
           // A failed poll leaves the previous state on screen. Raising it as an
@@ -319,6 +366,7 @@ export function Routes() {
                     <span className="tag warn">未知</span>
                   )}
                 </div>
+                <QuotaBar route={route} state={quotas.find((q) => q.route_id === route.id)} />
               </div>
             </div>
 
@@ -569,6 +617,11 @@ function RouteForm({ nodes, route, onClose, onSaved, onError }: RouteFormProps) 
   const [protocol, setProtocol] = useState<RouteInput["protocol"]>(route?.protocol ?? "tcp");
   const [hops, setHops] = useState<number[]>(route?.hops.map((h) => h.node_id) ?? []);
   const [entryPort, setEntryPort] = useState<string>(route ? String(route.entry_port) : "");
+  // 额度以 GB 输入。空串表示不限额 —— 和 0 不是一回事，0 表示一个字节都不许跑。
+  const [quotaGB, setQuotaGB] = useState<string>(
+    route?.quota_bytes ? String(route.quota_bytes / 1024 ** 3) : "",
+  );
+  const [resetDay, setResetDay] = useState<number>(route?.quota_reset_day ?? 1);
   const [busy, setBusy] = useState(false);
 
   const usable = nodes.filter((n) => n.arch !== "");
@@ -589,6 +642,8 @@ function RouteForm({ nodes, route, onClose, onSaved, onError }: RouteFormProps) 
       node_ids: hops,
       entry_port: entryPort ? Number(entryPort) : null,
       enabled: true,
+      quota_bytes: quotaGB.trim() === "" ? null : Math.round(Number(quotaGB) * 1024 ** 3),
+      quota_reset_day: resetDay,
     };
     try {
       if (route) {
@@ -672,6 +727,35 @@ function RouteForm({ nodes, route, onClose, onSaved, onError }: RouteFormProps) 
             placeholder="留空则自动从端口池分配"
           />
         </label>
+
+        <div className="grid2">
+          <label>
+            流量额度（GB）
+            <input
+              type="number"
+              step="any"
+              min="0"
+              value={quotaGB}
+              onChange={(e) => setQuotaGB(e.target.value)}
+              placeholder="留空表示不限"
+            />
+          </label>
+          <label>
+            每月重置日
+            <select value={resetDay} onChange={(e) => setResetDay(Number(e.target.value))}>
+              {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                <option key={d} value={d}>
+                  {d} 号
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <p className="hint">
+          按上行 + 下行合计，对齐服务商的计费口径（客户端下载 1GB → 机器进 1GB 出 1GB =
+          账单 2GB）。跑满后面板会自动停掉这条链路，下个周期自动恢复。
+          重置日只到 28 号，29 号之后并非每月都有。
+        </p>
 
         <h2 style={{ marginTop: 16 }}>转发链</h2>
         <p className="hint">按顺序选择节点，第一个是入口，最后一个负责拨向落地。</p>

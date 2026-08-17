@@ -221,6 +221,13 @@ var migrations = []string{
 		bytes_out INTEGER NOT NULL DEFAULT 0,
 		PRIMARY KEY (route_id, day)
 	)`,
+
+	// A per-period byte cap. NULL means uncapped; the period is derived from
+	// the reset day rather than stored, so there is no window state that can
+	// drift out of step with the calendar.
+	`ALTER TABLE routes ADD COLUMN quota_bytes INTEGER`,
+	`ALTER TABLE routes ADD COLUMN quota_reset_day INTEGER NOT NULL DEFAULT 1`,
+	`ALTER TABLE routes ADD COLUMN quota_paused_at DATETIME`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

@@ -285,6 +285,21 @@ type RouteInput struct {
 	NodeIDs   []int64        `json:"node_ids"`
 	EntryPort *int           `json:"entry_port"`
 	Enabled   bool           `json:"enabled"`
+
+	// QuotaBytes is nil for an uncapped route. Zero is not a synonym: it would
+	// mean an allowance of nothing, which stops the route the moment it moves
+	// a byte.
+	QuotaBytes    *int64 `json:"quota_bytes"`
+	QuotaResetDay int    `json:"quota_reset_day"`
+}
+
+// resetDayOr falls back to the first of the month when the client sends
+// nothing, which is what an older client or a hand-written request will do.
+func (in RouteInput) resetDayOr() int {
+	if in.QuotaResetDay == 0 {
+		return 1
+	}
+	return in.QuotaResetDay
 }
 
 // CreateRoute allocates ports for every hop and persists the route. It does
@@ -316,12 +331,14 @@ func (s *Service) CreateRoute(ctx context.Context, in RouteInput) (*model.Route,
 	}
 
 	route := &model.Route{
-		Name:     in.Name,
-		Slug:     slug,
-		Target:   in.Target,
-		Protocol: in.Protocol,
-		Enabled:  in.Enabled,
-		Hops:     allocated,
+		Name:          in.Name,
+		Slug:          slug,
+		Target:        in.Target,
+		Protocol:      in.Protocol,
+		Enabled:       in.Enabled,
+		QuotaBytes:    in.QuotaBytes,
+		QuotaResetDay: in.resetDayOr(),
+		Hops:          allocated,
 	}
 	if len(allocated) > 0 {
 		route.EntryPort = allocated[0].RelayPort
@@ -361,6 +378,8 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, in RouteInput) (*mo
 	route.Target = in.Target
 	route.Protocol = in.Protocol
 	route.Enabled = in.Enabled
+	route.QuotaBytes = in.QuotaBytes
+	route.QuotaResetDay = in.resetDayOr()
 	route.Hops = allocated
 	if len(allocated) > 0 {
 		route.EntryPort = allocated[0].RelayPort

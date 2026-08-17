@@ -476,6 +476,16 @@ func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, traffic)
 }
 
+// handleQuotas reports period usage for every capped route.
+func (s *Server) handleQuotas(w http.ResponseWriter, r *http.Request) {
+	states, err := s.svc.QuotaStates(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, states)
+}
+
 func (s *Server) handleRouteTraffic(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {

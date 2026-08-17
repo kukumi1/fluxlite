@@ -153,3 +153,32 @@ func (s *Store) DailyTraffic(ctx context.Context, routeID int64, days int) ([]mo
 	}
 	return out, rows.Err()
 }
+
+// PeriodUsage totals a route's daily buckets from the given day onward.
+//
+// counted reports whether any day contributed. A period with no rows is not
+// a period of zero traffic — it is a period nobody measured, and a quota must
+// not be enforced against it.
+func (s *Store) PeriodUsage(ctx context.Context, routeID int64, since string) (bytes int64, counted bool, err error) {
+	var in, out sql.NullInt64
+	var days int
+	err = s.db.QueryRowContext(ctx, `
+		SELECT SUM(bytes_in), SUM(bytes_out), COUNT(*)
+		FROM route_traffic_daily WHERE route_id = ? AND day >= ?`,
+		routeID, since).Scan(&in, &out, &days)
+	if err != nil {
+		return 0, false, fmt.Errorf("sum period traffic: %w", err)
+	}
+	return in.Int64 + out.Int64, days > 0, nil
+}
+
+// SetQuotaPaused records, or clears, that the panel stopped a route for
+// exceeding its quota. Nil clears it.
+func (s *Store) SetQuotaPaused(ctx context.Context, routeID int64, at *time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE routes SET quota_paused_at = ? WHERE id = ?`, at, routeID)
+	if err != nil {
+		return fmt.Errorf("record quota pause: %w", err)
+	}
+	return nil
+}

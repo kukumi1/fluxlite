@@ -89,7 +89,7 @@ func (w *Watcher) Run(ctx context.Context) {
 	}()
 	go func() {
 		defer wg.Done()
-		w.loop(ctx, w.traffic, w.collectTraffic, true)
+		w.trafficLoop(ctx)
 	}()
 
 	wg.Wait()
@@ -146,8 +146,31 @@ func (w *Watcher) sampleRoutes(ctx context.Context) {
 	}
 }
 
-// collectTraffic folds every node's byte counters into the stored totals.
-func (w *Watcher) collectTraffic(ctx context.Context) {
+// trafficLoop collects byte counters and enforces quotas, looking more often
+// while some route is close to its limit.
+//
+// A quota can only be acted on at a poll, so whatever the route carries between
+// two polls is overshoot. At a minute apart a saturated gigabit link can run
+// hundreds of megabytes past its allowance; tightening the interval as a route
+// approaches its cap keeps that within reason without polling every node every
+// few seconds for the rest of the time.
+func (w *Watcher) trafficLoop(ctx context.Context) {
+	for {
+		wait := w.traffic
+		if w.collectTraffic(ctx) {
+			wait = min(w.traffic/6, 10*time.Second)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+	}
+}
+
+// collectTraffic folds every node's byte counters into the stored totals and
+// applies quotas. It reports whether any capped route is near its limit.
+func (w *Watcher) collectTraffic(ctx context.Context) bool {
 	deadline, cancel := context.WithTimeout(ctx, w.traffic)
 	defer cancel()
 
@@ -155,6 +178,15 @@ func (w *Watcher) collectTraffic(ctx context.Context) {
 		// An unreachable node is ordinary and already visible as its status.
 		w.log.Debug("traffic collection incomplete", "error", err)
 	}
+
+	// Enforcement runs even when collection was partial: the routes that were
+	// measured deserve their quota applied, and the ones that were not are
+	// skipped by EnforceQuotas anyway.
+	near, err := w.svc.EnforceQuotas(deadline)
+	if err != nil {
+		w.log.Error("quota enforcement incomplete", "error", err)
+	}
+	return near
 }
 
 func (w *Watcher) reconcile(ctx context.Context) {

@@ -218,7 +218,27 @@ type Route struct {
 	// that one uniqueness constraint covers entry and relay ports alike.
 	EntryPort int `json:"entry_port"`
 
-	Enabled   bool      `json:"enabled"`
+	Enabled bool `json:"enabled"`
+
+	// QuotaBytes caps how much the route may carry in one billing period,
+	// counting both directions. Nil means no cap — which is not the same as a
+	// cap of zero, so it must never be flattened into one.
+	QuotaBytes *int64 `json:"quota_bytes"`
+
+	// QuotaResetDay is the day of month the period restarts on, so a route can
+	// line up with its provider's billing date. It is limited to 1-28: a reset
+	// day of 29 or later simply does not occur in every month.
+	//
+	// Zero means unset and is normalised to the 1st on write. The zero value of
+	// a Route has to be a valid Route, or every caller that does not care about
+	// quotas is forced to know about them.
+	QuotaResetDay int `json:"quota_reset_day"`
+
+	// QuotaPausedAt records that the panel stopped this route for exceeding its
+	// quota, as opposed to an operator stopping it. Only the former is resumed
+	// automatically when the period rolls over.
+	QuotaPausedAt *time.Time `json:"quota_paused_at"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 
@@ -264,6 +284,9 @@ var (
 	ErrRouteEntryPort  = errors.New("route entry port must be between 1 and 65535")
 	ErrRouteTooFewHops = errors.New("route must have at least one hop")
 	ErrRouteHopRepeat  = errors.New("route must not visit the same node twice in a row")
+
+	ErrRouteQuotaBytes    = errors.New("route quota must be greater than zero, or unset for no limit")
+	ErrRouteQuotaResetDay = errors.New("route quota reset day must be between 1 and 28")
 )
 
 // Validate checks the invariants that must hold before a route is persisted.
@@ -292,7 +315,23 @@ func (r *Route) Validate() error {
 			return ErrRouteHopRepeat
 		}
 	}
+	if r.QuotaBytes != nil && *r.QuotaBytes <= 0 {
+		return ErrRouteQuotaBytes
+	}
+	// 29-31 do not exist in every month, so a period anchored there would skip
+	// or double up depending on the calendar. Zero is the unset marker.
+	if r.QuotaResetDay < 0 || r.QuotaResetDay > 28 {
+		return ErrRouteQuotaResetDay
+	}
 	return nil
+}
+
+// NormaliseQuota fills in the defaults a stored route must carry, so that what
+// comes back out is always a concrete day rather than the unset marker.
+func (r *Route) NormaliseQuota() {
+	if r.QuotaResetDay == 0 {
+		r.QuotaResetDay = 1
+	}
 }
 
 // ValidateTarget checks that a landing address is a usable host:port pair.

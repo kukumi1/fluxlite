@@ -124,6 +124,7 @@ func (s *Server) Handler() http.Handler {
 
 			r.Get("/status", s.handleStatus)
 			r.Get("/traffic", s.handleTraffic)
+			r.Get("/quotas", s.handleQuotas)
 			r.Get("/audit", s.handleAudit)
 		})
 	})

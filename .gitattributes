@@ -1,0 +1,5 @@
+# Vite's output is embedded verbatim into the binary by go:embed. Line-ending
+# translation would leave the working tree disagreeing with the repository, so
+# a binary built on Windows would serve different bytes than one built on
+# Linux from the same commit. Treat these as opaque bytes, not text.
+web/dist/** -text

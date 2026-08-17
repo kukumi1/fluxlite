@@ -228,6 +228,35 @@ var migrations = []string{
 	`ALTER TABLE routes ADD COLUMN quota_bytes INTEGER`,
 	`ALTER TABLE routes ADD COLUMN quota_reset_day INTEGER NOT NULL DEFAULT 1`,
 	`ALTER TABLE routes ADD COLUMN quota_paused_at DATETIME`,
+
+	// One row per node: the latest snapshot, overwritten in place. Every
+	// measured column is nullable because a busybox without the file, or a
+	// container that hides the counter, has to be storable as "not known"
+	// rather than as a zero that reads like an idle machine.
+	`CREATE TABLE IF NOT EXISTS node_metrics (
+		node_id      INTEGER PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+		cpu_percent  REAL,
+		cores        INTEGER,
+		cpu_model    TEXT NOT NULL DEFAULT '',
+		mem_total    INTEGER,
+		mem_used     INTEGER,
+		swap_total   INTEGER,
+		swap_used    INTEGER,
+		disk_total   INTEGER,
+		disk_used    INTEGER,
+		load1        REAL,
+		load5        REAL,
+		load15       REAL,
+		uptime_sec   INTEGER,
+		kernel       TEXT NOT NULL DEFAULT '',
+		net_rx_bytes INTEGER,
+		net_tx_bytes INTEGER,
+		net_rx_rate  INTEGER,
+		net_tx_rate  INTEGER,
+		mem_source   TEXT NOT NULL DEFAULT 'host',
+		container    TEXT NOT NULL DEFAULT '',
+		collected_at DATETIME NOT NULL
+	)`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

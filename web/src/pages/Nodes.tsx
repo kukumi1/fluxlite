@@ -6,10 +6,13 @@ import {
   DEFAULT_PORT_START,
   type Node,
   type NodeInput,
+  type NodeMetrics,
   type ProbeResult,
 } from "../api";
-import { Plus, Server } from "lucide-react";
+import { ArrowDown, ArrowUp, LayoutGrid, List, Plus, Rows3, Server } from "lucide-react";
 import { CopyButton } from "../components/CopyButton";
+import { MetricBar } from "../components/MetricBar";
+import { formatBytes, formatRate, formatUptime, percentOf } from "../lib/format";
 import { NumberField } from "../components/NumberField";
 import { Banner, Modal } from "../components/Modal";
 import { Card } from "../components/Card";
@@ -30,6 +33,66 @@ const emptyInput: NodeInput = {
   skip_udp_probe: false,
 };
 
+type NodeView = "card" | "compact" | "list";
+
+const NODE_VIEW_KEY = "fluxlite-nodes-view";
+
+const NODE_VIEW_OPTIONS = [
+  { id: "card", label: "宽松卡片", icon: LayoutGrid },
+  { id: "compact", label: "紧凑卡片", icon: Rows3 },
+  { id: "list", label: "横向列表", icon: List },
+] as const;
+
+function storedNodeView(): NodeView {
+  const saved = localStorage.getItem(NODE_VIEW_KEY);
+  return saved === "card" || saved === "compact" || saved === "list" ? saved : "card";
+}
+
+// memCaveat explains why a container's memory figures may describe the wrong
+// machine. An unprivileged container shares the host's /proc, so without a
+// readable cgroup limit the totals are the host's — a 512 MB container drawn
+// as a comfortable 4% of 64 GB.
+function memCaveat(m: NodeMetrics | undefined): string | undefined {
+  if (!m || !m.container || m.mem_source === "cgroup") return undefined;
+  return `这是 ${m.container} 容器，但读不到它的 cgroup 限额，所以内存与 CPU 读数来自宿主机，描述的不是这台容器本身`;
+}
+
+function statusTag(n: Node) {
+  const tone = n.status === "online" ? "ok" : n.status === "offline" ? "err" : "";
+  const label = n.status === "online" ? "在线" : n.status === "offline" ? "离线" : "未知";
+  return <span className={`tag ${tone}`}>{label}</span>;
+}
+
+function udpTag(n: Node) {
+  if (n.skip_udp_probe) return <span className="tag">已跳过</span>;
+  if (n.udp_capable === null) {
+    return (
+      <span className="tag" title="尚未测出结果，不等于不通">
+        未知
+      </span>
+    );
+  }
+  return n.udp_capable ? <span className="tag ok">通</span> : <span className="tag err">不通</span>;
+}
+
+function systemCell(n: Node) {
+  if (!n.arch) return <span className="tag warn">未探测</span>;
+  return (
+    <span className="muted">
+      {n.os_id}/{n.arch} · {n.init_system} · realm {n.realm_version || "未装"}
+    </span>
+  );
+}
+
+function pctText(value: number | null) {
+  return value === null ? <span className="muted">—</span> : `${value.toFixed(0)}%`;
+}
+
+function ratioText(used: number | null, total: number | null) {
+  if (used === null || total === null) return <span className="muted">—</span>;
+  return `${formatBytes(used)} / ${formatBytes(total)}`;
+}
+
 // uninstallCommand points the node at this panel. The browser is already
 // talking to the right origin, so there is nothing to configure.
 function uninstallCommand(): string {
@@ -46,13 +109,52 @@ export function Nodes() {
   const [probe, setProbe] = useState<{ node: string; result: ProbeResult } | null>(null);
   const [enrolling, setEnrolling] = useState(false);
   const [removed, setRemoved] = useState<string | null>(null);
+  const [metrics, setMetrics] = useState<Record<string, NodeMetrics>>({});
+  const [view, setView] = useState<NodeView>(storedNodeView);
+
+  function chooseView(next: NodeView) {
+    setView(next);
+    localStorage.setItem(NODE_VIEW_KEY, next);
+  }
 
   const fail = (err: unknown) =>
     setError(err instanceof ApiError ? err.message : "请求失败");
 
+  const viaName = (n: Node) =>
+    n.via_node_id ? nodes.find((x) => x.id === n.via_node_id)?.name ?? n.via_node_id : "直连";
+
+  function nodeActions(n: Node) {
+    const busy = busyId === n.id;
+    return (
+      <div className="row nowrap">
+        <button className="btn sm" disabled={busy} onClick={() => void runProbe(n)}>
+          {busy ? "探测中…" : "探测"}
+        </button>
+        {n.arch !== "" && !n.realm_version && (
+          <button
+            className="btn sm"
+            disabled={busy}
+            title="转发内核会在第一次下发链路时自动安装，这里可以提前装好"
+            onClick={() => void installRealm(n)}
+          >
+            装内核
+          </button>
+        )}
+        <button className="btn sm" onClick={() => setEditing(n)}>
+          编辑
+        </button>
+        <button className="btn sm danger" disabled={busy} onClick={() => void remove(n)}>
+          删除
+        </button>
+      </div>
+    );
+  }
+
   async function load() {
     try {
-      setNodes((await api.listNodes()) ?? []);
+      const [list, snapshot] = await Promise.all([api.listNodes(), api.metrics()]);
+      setNodes(list ?? []);
+      setMetrics(snapshot ?? {});
     } catch (err) {
       fail(err);
     }
@@ -60,6 +162,18 @@ export function Nodes() {
 
   useEffect(() => {
     void load();
+  }, []);
+
+  // 指标随 5 分钟巡检更新，页面每分钟取一次即可跟上。取失败不弹横幅：
+  // 一次轮询失败会把用户正在做的事盖掉，而屏幕上的旧数字仍然是对的。
+  useEffect(() => {
+    const timer = setInterval(() => {
+      api
+        .metrics()
+        .then((snapshot) => setMetrics(snapshot ?? {}))
+        .catch(() => {});
+    }, 60000);
+    return () => clearInterval(timer);
   }, []);
 
   async function runProbe(node: Node) {
@@ -128,6 +242,24 @@ export function Nodes() {
         desc="转发链路的组成机器。内网节点需指定跳板，NAT 机器需按实际映射填写端口池。"
         actions={
           <>
+            {nodes.length > 0 && (
+              <div className="segmented" role="group" aria-label="视图">
+                {NODE_VIEW_OPTIONS.map((option) => {
+                  const Icon = option.icon;
+                  return (
+                    <button
+                      key={option.id}
+                      className={view === option.id ? "active" : ""}
+                      title={option.label}
+                      aria-pressed={view === option.id}
+                      onClick={() => chooseView(option.id)}
+                    >
+                      <Icon size={15} />
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             <button className="btn" onClick={() => setCreating(true)}>
               手动添加
             </button>
@@ -142,8 +274,8 @@ export function Nodes() {
       {error && <Banner kind="err">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
 
-      <Card className="flush">
-        {nodes.length === 0 ? (
+      {nodes.length === 0 ? (
+        <Card>
           <EmptyState
             icon={<Server size={22} />}
             title="还没有节点"
@@ -155,107 +287,172 @@ export function Nodes() {
               </button>
             }
           />
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>名称</th>
-                <th>地址</th>
-                <th>状态</th>
-                <th>系统</th>
-                <th>端口池</th>
-                <th>UDP</th>
-                <th>跳板</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {nodes.map((n) => (
-                <tr key={n.id}>
-                  <td>
-                    <strong>{n.name}</strong>
-                  </td>
-                  <td className="mono nowrap">
-                    {n.ssh_user}@{n.host}:{n.ssh_port}
-                  </td>
-                  <td>
-                    <span
-                      className={`tag ${
-                        n.status === "online" ? "ok" : n.status === "offline" ? "err" : ""
-                      }`}
-                    >
-                      {n.status === "online" ? "在线" : n.status === "offline" ? "离线" : "未知"}
-                    </span>
-                  </td>
-                  <td className="nowrap">
-                    {n.arch ? (
-                      <span className="muted">
-                        {n.os_id}/{n.arch}
-                        <br />
-                        {n.init_system} · realm {n.realm_version || "未装"}
-                      </span>
-                    ) : (
-                      <span className="tag warn">未探测</span>
-                    )}
-                  </td>
-                  <td className="mono nowrap">
-                    {n.port_start}-{n.port_end}
-                  </td>
-                  <td>
-                    {n.skip_udp_probe ? (
-                      <span className="tag">已跳过</span>
-                    ) : n.udp_capable === null ? (
-                      <span className="tag" title="尚未测出结果，不等于不通">
-                        未知
-                      </span>
-                    ) : n.udp_capable ? (
-                      <span className="tag ok">通</span>
-                    ) : (
-                      <span className="tag err">不通</span>
-                    )}
-                  </td>
-                  <td className="muted">
-                    {n.via_node_id
-                      ? nodes.find((x) => x.id === n.via_node_id)?.name ?? n.via_node_id
-                      : "直连"}
-                  </td>
-                  <td>
-                    <div className="row nowrap">
-                      <button
-                        className="btn sm"
-                        disabled={busyId === n.id}
-                        onClick={() => void runProbe(n)}
-                      >
-                        {busyId === n.id ? "探测中…" : "探测"}
-                      </button>
-                      {n.arch !== "" && !n.realm_version && (
-                        <button
-                          className="btn sm"
-                          disabled={busyId === n.id}
-                          title="转发内核会在第一次下发链路时自动安装，这里可以提前装好"
-                          onClick={() => void installRealm(n)}
-                        >
-                          装内核
-                        </button>
-                      )}
-                      <button className="btn sm" onClick={() => setEditing(n)}>
-                        编辑
-                      </button>
-                      <button
-                        className="btn sm danger"
-                        disabled={busyId === n.id}
-                        onClick={() => void remove(n)}
-                      >
-                        删除
-                      </button>
-                    </div>
-                  </td>
+        </Card>
+      ) : view === "list" ? (
+        <Card className="flush">
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>地址</th>
+                  <th>状态</th>
+                  <th>CPU</th>
+                  <th>内存</th>
+                  <th>磁盘</th>
+                  <th>系统</th>
+                  <th>端口池</th>
+                  <th>UDP</th>
+                  <th>跳板</th>
+                  <th></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Card>
+              </thead>
+              <tbody>
+                {nodes.map((n) => {
+                  const m = metrics[n.id];
+                  return (
+                    <tr key={n.id}>
+                      <td>
+                        <strong>{n.name}</strong>
+                        {m?.container && (
+                          <div className="muted" style={{ fontSize: 11 }}>{m.container}</div>
+                        )}
+                      </td>
+                      <td className="mono nowrap">
+                        {n.ssh_user}@{n.host}:{n.ssh_port}
+                      </td>
+                      <td>{statusTag(n)}</td>
+                      <td className="nowrap">{pctText(m?.cpu_percent ?? null)}</td>
+                      <td className="nowrap" title={memCaveat(m)}>
+                        {ratioText(m?.mem_used ?? null, m?.mem_total ?? null)}
+                      </td>
+                      <td className="nowrap">
+                        {ratioText(m?.disk_used ?? null, m?.disk_total ?? null)}
+                      </td>
+                      <td className="nowrap">{systemCell(n)}</td>
+                      <td className="mono nowrap">
+                        {n.port_start}-{n.port_end}
+                      </td>
+                      <td>{udpTag(n)}</td>
+                      <td className="muted nowrap">{viaName(n)}</td>
+                      <td>{nodeActions(n)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      ) : (
+        <div className={`node-grid${view === "compact" ? " dense" : ""}`}>
+          {nodes.map((n, cardIndex) => {
+            const m = metrics[n.id];
+            const caveat = memCaveat(m);
+            return (
+              <Card index={cardIndex} key={n.id}>
+                <div className="spread" style={{ marginBottom: 8 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <h2 style={{ marginBottom: 2 }}>{n.name}</h2>
+                    <div className="mono muted" style={{ fontSize: 12 }}>
+                      {n.ssh_user}@{n.host}:{n.ssh_port}
+                    </div>
+                  </div>
+                  <div className="row" style={{ gap: 4, justifyContent: "flex-end" }}>
+                    {statusTag(n)}
+                    {m?.container && (
+                      <span className="tag" title={caveat ?? "运行在容器里"}>
+                        {m.container}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <MetricBar
+                  label="CPU"
+                  percent={m?.cpu_percent ?? null}
+                  detail={m?.cores ? `${m.cores} 核` : undefined}
+                  caveat={caveat}
+                />
+                <MetricBar
+                  label="内存"
+                  percent={percentOf(m?.mem_used ?? null, m?.mem_total ?? null)}
+                  detail={ratioText(m?.mem_used ?? null, m?.mem_total ?? null)}
+                  caveat={caveat}
+                />
+                <MetricBar
+                  label="磁盘"
+                  percent={percentOf(m?.disk_used ?? null, m?.disk_total ?? null)}
+                  detail={ratioText(m?.disk_used ?? null, m?.disk_total ?? null)}
+                />
+                {m?.swap_total ? (
+                  <MetricBar
+                    label="交换"
+                    percent={percentOf(m.swap_used, m.swap_total)}
+                    detail={ratioText(m.swap_used, m.swap_total)}
+                  />
+                ) : null}
+
+                <dl className="node-facts">
+                  <dt>负载</dt>
+                  <dd>
+                    {m?.load1 !== null && m?.load1 !== undefined
+                      ? `${m.load1.toFixed(2)} / ${m.load5?.toFixed(2) ?? "—"} / ${
+                          m.load15?.toFixed(2) ?? "—"
+                        }`
+                      : "—"}
+                  </dd>
+                  <dt>开机</dt>
+                  <dd>{m?.uptime_sec ? formatUptime(m.uptime_sec) : "—"}</dd>
+                  <dt>网速</dt>
+                  <dd>
+                    {m?.net_rx_rate !== null && m?.net_rx_rate !== undefined ? (
+                      <>
+                        <ArrowDown size={11} /> {formatRate(m.net_rx_rate)}
+                        {"  "}
+                        <ArrowUp size={11} /> {formatRate(m.net_tx_rate ?? 0)}
+                      </>
+                    ) : (
+                      "—"
+                    )}
+                  </dd>
+                  <dt>累计</dt>
+                  <dd>
+                    {m?.net_rx_bytes !== null && m?.net_rx_bytes !== undefined
+                      ? `↓ ${formatBytes(m.net_rx_bytes)} ／ ↑ ${formatBytes(m.net_tx_bytes ?? 0)}`
+                      : "—"}
+                  </dd>
+                  <dt>系统</dt>
+                  <dd>{systemCell(n)}</dd>
+                  {m?.kernel && (
+                    <>
+                      <dt>内核</dt>
+                      <dd className="mono" style={{ fontSize: 11 }}>
+                        {m.kernel}
+                      </dd>
+                    </>
+                  )}
+                  {m?.cpu_model && (
+                    <>
+                      <dt>处理器</dt>
+                      <dd style={{ fontSize: 11 }}>{m.cpu_model}</dd>
+                    </>
+                  )}
+                  <dt>端口池</dt>
+                  <dd className="mono">
+                    {n.port_start}-{n.port_end}
+                  </dd>
+                  <dt>UDP</dt>
+                  <dd>{udpTag(n)}</dd>
+                  <dt>跳板</dt>
+                  <dd className="muted">{viaName(n)}</dd>
+                </dl>
+
+                <div style={{ marginTop: 14 }}>{nodeActions(n)}</div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
 
       {removed && (
         <Modal title={`节点 ${removed} 已从面板删除`} onClose={() => setRemoved(null)}>

@@ -31,6 +31,39 @@ export interface Node {
   last_seen: string | null;
 }
 
+/**
+ * 一台机器的资源快照。
+ *
+ * 每个测量字段都可能是 null —— busybox 缺文件、容器藏计数器都会这样。
+ * null 一律显示为「—」，绝不画成 0：闲置的 CPU 和没问到的 CPU 不是一回事。
+ */
+export interface NodeMetrics {
+  node_id: number;
+  cpu_percent: number | null;
+  cores: number | null;
+  cpu_model: string;
+  mem_total: number | null;
+  mem_used: number | null;
+  swap_total: number | null;
+  swap_used: number | null;
+  disk_total: number | null;
+  disk_used: number | null;
+  load1: number | null;
+  load5: number | null;
+  load15: number | null;
+  uptime_sec: number | null;
+  kernel: string;
+  net_rx_bytes: number | null;
+  net_tx_bytes: number | null;
+  net_rx_rate: number | null;
+  net_tx_rate: number | null;
+  /** host 表示读数来自宿主机 /proc，在容器里意味着它描述的不是这台容器。 */
+  mem_source: "host" | "cgroup";
+  /** 非空表示检测到容器化，值是检测到的类型。 */
+  container: string;
+  collected_at: string;
+}
+
 export interface RouteHop {
   route_id: number;
   hop_order: number;
@@ -274,6 +307,7 @@ export const api = {
 
   status: () => request<RouteStatus[] | null>("/status"),
   traffic: () => request<Record<string, Traffic> | null>("/traffic"),
+  metrics: () => request<Record<string, NodeMetrics> | null>("/metrics"),
   quotas: () => request<QuotaState[] | null>("/quotas"),
   audit: (limit = 100) => request<AuditEntry[] | null>(`/audit?limit=${limit}`),
 };

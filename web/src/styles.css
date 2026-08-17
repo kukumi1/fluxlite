@@ -883,6 +883,67 @@ tbody tr:last-child td {
   color: var(--muted-foreground);
 }
 
+/* ===== 节点资源 ===== */
+
+.node-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.node-grid.dense {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.node-grid .card {
+  margin-bottom: 0;
+}
+
+.node-grid.dense .card {
+  padding: 14px;
+}
+
+.metric {
+  margin-bottom: 9px;
+}
+
+.metric-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.metric-label {
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+
+.metric-detail {
+  font-variant-numeric: tabular-nums;
+}
+
+.node-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.node-facts dt {
+  color: var(--muted-foreground);
+}
+
+.node-facts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ===== 额度进度条 ===== */
 
 .progress {

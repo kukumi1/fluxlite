@@ -34,3 +34,23 @@ export function describeAge(ms: number): string {
   if (ms < 3600000) return `${Math.round(ms / 60000)} 分钟前`;
   return `${Math.round(ms / 3600000)} 小时前`;
 }
+
+export function formatUptime(seconds: number): string {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days} 天 ${hours} 小时`;
+  if (hours > 0) return `${hours} 小时 ${minutes} 分`;
+  return `${minutes} 分钟`;
+}
+
+export function formatRate(bytesPerSecond: number): string {
+  return `${formatBytes(bytesPerSecond)}/s`;
+}
+
+// percentOf returns null rather than 0 when either side is missing, so an
+// unread counter cannot be drawn as an idle machine.
+export function percentOf(used: number | null, total: number | null): number | null {
+  if (used === null || total === null || total <= 0) return null;
+  return Math.min(100, (used / total) * 100);
+}

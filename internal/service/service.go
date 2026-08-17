@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"time"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/kukumi1/fluxlite/internal/applier"
 	"github.com/kukumi1/fluxlite/internal/cryptox"
 	"github.com/kukumi1/fluxlite/internal/model"
@@ -217,7 +219,32 @@ func (s *Service) ProbeNode(ctx context.Context, id int64) (*ProbeResult, error)
 	if err := s.store.UpdateNode(ctx, node); err != nil {
 		return nil, err
 	}
+
+	s.collectMetrics(ctx, node, client.Client)
 	return &ProbeResult{Facts: facts, UDP: udp}, nil
+}
+
+// collectMetrics rides along on the probe's session rather than opening one of
+// its own, so watching eight machines costs no extra logins.
+//
+// A failure here is deliberately not returned. Resource figures are a
+// convenience; the probe exists to establish that a node is reachable and what
+// it is, and losing a memory reading is no reason to report the node as down.
+func (s *Service) collectMetrics(ctx context.Context, node *model.Node, client *ssh.Client) {
+	metrics, err := prober.Metrics(ctx, client)
+	if err != nil {
+		s.log.Warn("could not collect node metrics", "node", node.Name, "error", err)
+		return
+	}
+	metrics.NodeID = node.ID
+	if err := s.store.UpsertNodeMetrics(ctx, metrics); err != nil {
+		s.log.Warn("could not store node metrics", "node", node.Name, "error", err)
+	}
+}
+
+// NodeMetrics returns the latest snapshot for every node that has one.
+func (s *Service) NodeMetrics(ctx context.Context) (map[int64]*model.NodeMetrics, error) {
+	return s.store.ListNodeMetrics(ctx)
 }
 
 // probeUDP tests whether UDP survives the path to the node.

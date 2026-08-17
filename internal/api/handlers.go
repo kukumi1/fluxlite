@@ -476,6 +476,19 @@ func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, traffic)
 }
 
+// handleMetrics reports each node's latest resource snapshot, keyed by node id.
+//
+// Nodes absent from the response have never been collected, and individual
+// fields may be null on nodes that could not produce them. Neither is a zero.
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	metrics, err := s.svc.NodeMetrics(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, metrics)
+}
+
 // handleQuotas reports period usage for every capped route.
 func (s *Server) handleQuotas(w http.ResponseWriter, r *http.Request) {
 	states, err := s.svc.QuotaStates(r.Context())

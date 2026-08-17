@@ -384,3 +384,62 @@ type DailyTraffic struct {
 	BytesIn  int64  `json:"bytes_in"`
 	BytesOut int64  `json:"bytes_out"`
 }
+
+// MemSource says whose memory and CPU figures a sample describes.
+//
+// An unprivileged container shares the host's /proc, so a naive read reports
+// the host's 64 GB as if it belonged to a 512 MB container. Where the cgroup
+// limits are readable the sample describes the container and this says so;
+// where they are not, the numbers are the host's and must be labelled as such
+// rather than drawn as a reassuring progress bar about the wrong machine.
+type MemSource string
+
+const (
+	MemSourceHost   MemSource = "host"
+	MemSourceCgroup MemSource = "cgroup"
+)
+
+// NodeMetrics is one snapshot of a node's resource usage.
+//
+// Every measured field is a pointer. A node that could not be read, a busybox
+// without the file, or a container that hides a counter all produce nil — and
+// nil is rendered as "—", never as zero. A CPU sitting at 0% and a CPU nobody
+// managed to ask are not the same claim.
+type NodeMetrics struct {
+	NodeID int64 `json:"node_id"`
+
+	CPUPercent *float64 `json:"cpu_percent"`
+	Cores      *int     `json:"cores"`
+	CPUModel   string   `json:"cpu_model"`
+
+	MemTotal  *int64 `json:"mem_total"`
+	MemUsed   *int64 `json:"mem_used"`
+	SwapTotal *int64 `json:"swap_total"`
+	SwapUsed  *int64 `json:"swap_used"`
+
+	DiskTotal *int64 `json:"disk_total"`
+	DiskUsed  *int64 `json:"disk_used"`
+
+	Load1  *float64 `json:"load1"`
+	Load5  *float64 `json:"load5"`
+	Load15 *float64 `json:"load15"`
+
+	UptimeSec *int64 `json:"uptime_sec"`
+	Kernel    string `json:"kernel"`
+
+	// NetRx/TxBytes are the interfaces' lifetime totals excluding loopback, and
+	// the rates are derived from the two samples taken within one session. They
+	// describe the whole machine, not any one route.
+	NetRxBytes *int64 `json:"net_rx_bytes"`
+	NetTxBytes *int64 `json:"net_tx_bytes"`
+	NetRxRate  *int64 `json:"net_rx_rate"`
+	NetTxRate  *int64 `json:"net_tx_rate"`
+
+	MemSource MemSource `json:"mem_source"`
+
+	// Container names the containerisation detected, empty when the node looks
+	// like a real machine.
+	Container string `json:"container"`
+
+	CollectedAt time.Time `json:"collected_at"`
+}

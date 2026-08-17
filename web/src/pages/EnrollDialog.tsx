@@ -9,6 +9,7 @@ import {
   type Node,
 } from "../api";
 import { CopyButton } from "../components/CopyButton";
+import { NumberField } from "../components/NumberField";
 import { Banner, Modal } from "../components/Modal";
 
 interface Props {
@@ -122,10 +123,9 @@ export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
           </label>
           <label>
             SSH 端口
-            <input
-              type="number"
+            <NumberField
               value={form.ssh_port}
-              onChange={(e) => set("ssh_port", Number(e.target.value))}
+              onChange={(v) => set("ssh_port", v)}
               required
             />
           </label>
@@ -143,19 +143,17 @@ export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
         <div className="grid2">
           <label>
             端口池起始
-            <input
-              type="number"
+            <NumberField
               value={form.port_start}
-              onChange={(e) => set("port_start", Number(e.target.value))}
+              onChange={(v) => set("port_start", v)}
               required
             />
           </label>
           <label>
             端口池结束
-            <input
-              type="number"
+            <NumberField
               value={form.port_end}
-              onChange={(e) => set("port_end", Number(e.target.value))}
+              onChange={(v) => set("port_end", v)}
               required
             />
           </label>

@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
+import { ScrollText } from "lucide-react";
 import { api, ApiError, type AuditEntry } from "../api";
 import { Banner } from "../components/Modal";
+import { Card } from "../components/Card";
+import { EmptyState } from "../components/EmptyState";
+import { PageHeader } from "../components/PageHeader";
 
 export function Audit() {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
@@ -15,14 +19,13 @@ export function Audit() {
 
   return (
     <div>
-      <h1>审计日志</h1>
-      <p className="page-desc">登录、节点变更、链路下发等操作的完整记录。</p>
+      <PageHeader title="审计日志" desc="登录、节点变更、链路下发等操作的完整记录。" />
 
       {error && <Banner kind="err">{error}</Banner>}
 
-      <div className="card" style={{ padding: 0 }}>
+      <Card className="flush">
         {entries.length === 0 ? (
-          <div className="empty">暂无记录。</div>
+          <EmptyState icon={<ScrollText size={22} />} title="暂无记录" />
         ) : (
           <table>
             <thead>
@@ -53,7 +56,7 @@ export function Audit() {
             </tbody>
           </table>
         )}
-      </div>
+      </Card>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type Account as AccountInfo, type Enrollment } from "../api";
 import { Banner } from "../components/Modal";
+import { PageHeader } from "../components/PageHeader";
 
 interface Props {
   onUsernameChanged: (name: string) => void;
@@ -37,7 +38,7 @@ export function Account({ onUsernameChanged, onSignedOut }: Props) {
   if (!me) {
     return (
       <>
-        <h1>个人中心</h1>
+        <PageHeader title="个人中心" />
         {error && <Banner kind="err">{error}</Banner>}
         {!error && <p className="muted">加载中…</p>}
       </>
@@ -46,8 +47,7 @@ export function Account({ onUsernameChanged, onSignedOut }: Props) {
 
   return (
     <>
-      <h1>个人中心</h1>
-      <p className="muted">账号、密码与登录保护。</p>
+      <PageHeader title="个人中心" desc="账号、密码与登录保护。" />
 
       {error && <Banner kind="err">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}

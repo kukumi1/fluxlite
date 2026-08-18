@@ -100,6 +100,8 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/account/totp/enable", s.handleEnableTOTP)
 			r.Post("/account/totp/disable", s.handleDisableTOTP)
 			r.Post("/account/sessions/revoke", s.handleRevokeSessions)
+			r.Post("/account/avatar", s.handleSetAvatar)
+			r.Delete("/account/avatar", s.handleClearAvatar)
 
 			r.Post("/enroll/ticket", s.handleEnrollTicket)
 

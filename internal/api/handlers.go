@@ -98,12 +98,18 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.log.Error("count sessions", "error", err)
 	}
+	// 头像单独取：它不在 userColumns 里，那条查询每个请求都要跑。
+	avatar, err := s.svc.Store().UserAvatar(r.Context(), u.ID)
+	if err != nil {
+		s.log.Error("read avatar", "error", err)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"username":      u.Username,
 		"totp_enrolled": u.TOTPEnrolled,
 		"created_at":    u.CreatedAt,
 		"updated_at":    u.UpdatedAt,
 		"sessions":      sessions,
+		"avatar":        avatarDataURL(avatar),
 	})
 }
 

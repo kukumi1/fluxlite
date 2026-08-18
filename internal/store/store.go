@@ -265,6 +265,10 @@ var migrations = []string{
 	// console at the same time.
 	`ALTER TABLE sessions ADD COLUMN console_unlocked_at DATETIME`,
 
+	// Deliberately not part of userColumns: that query runs on every
+	// authenticated request, and an avatar is read once for the profile page.
+	`ALTER TABLE users ADD COLUMN avatar BLOB`,
+
 	`CREATE TABLE IF NOT EXISTS console_commands (
 		id         INTEGER PRIMARY KEY AUTOINCREMENT,
 		name       TEXT NOT NULL,

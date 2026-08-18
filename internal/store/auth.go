@@ -283,3 +283,39 @@ func (s *Store) CountUserSessions(ctx context.Context, userID int64) (int, error
 	}
 	return n, nil
 }
+
+// SetUserAvatar stores a profile picture. The bytes are validated by the
+// caller; the store only persists them.
+func (s *Store) SetUserAvatar(ctx context.Context, id int64, png []byte) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET avatar = ?, updated_at = ? WHERE id = ?`,
+		png, time.Now().UTC(), id)
+	if err != nil {
+		return fmt.Errorf("set avatar: %w", err)
+	}
+	return nil
+}
+
+// ClearUserAvatar drops the picture, returning the account to its initial.
+func (s *Store) ClearUserAvatar(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET avatar = NULL, updated_at = ? WHERE id = ?`,
+		time.Now().UTC(), id)
+	if err != nil {
+		return fmt.Errorf("clear avatar: %w", err)
+	}
+	return nil
+}
+
+// UserAvatar returns the stored picture, or nil when none is set.
+func (s *Store) UserAvatar(ctx context.Context, id int64) ([]byte, error) {
+	var avatar []byte
+	err := s.db.QueryRowContext(ctx, `SELECT avatar FROM users WHERE id = ?`, id).Scan(&avatar)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read avatar: %w", err)
+	}
+	return avatar, nil
+}

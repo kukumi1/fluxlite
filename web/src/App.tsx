@@ -46,6 +46,7 @@ export function App() {
 function Shell() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [username, setUsername] = useState("");
+  const [avatar, setAvatar] = useState("");
   const [tab, setTab] = useState<Tab>("dashboard");
   const [consoleNode, setConsoleNode] = useState<number | null>(null);
   const { theme, toggle } = useTheme();
@@ -59,6 +60,7 @@ function Shell() {
     try {
       const me = await api.me();
       setUsername(me.username);
+      setAvatar(me.avatar);
       setAuthState("in");
     } catch {
       setAuthState("out");
@@ -130,7 +132,11 @@ function Shell() {
               onClick={() => setTab("account")}
               title="个人中心"
             >
-              <span className="avatar">{username.slice(0, 1).toUpperCase()}</span>
+              {avatar ? (
+                <img className="avatar" src={avatar} alt="" />
+              ) : (
+                <span className="avatar">{username.slice(0, 1).toUpperCase()}</span>
+              )}
               <span className="account-meta">
                 <span className="account-name">{username}</span>
                 <span className="account-role">管理员</span>
@@ -155,7 +161,11 @@ function Shell() {
           )}
           {tab === "audit" && <Audit />}
           {tab === "account" && (
-            <Account onUsernameChanged={setUsername} onSignedOut={() => setAuthState("out")} />
+            <Account
+              onUsernameChanged={setUsername}
+              onAvatarChanged={setAvatar}
+              onSignedOut={() => setAuthState("out")}
+            />
           )}
         </div>
       </main>

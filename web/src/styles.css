@@ -283,6 +283,32 @@ a {
   font-weight: 600;
 }
 
+/* 上传的头像是方形 PNG，靠 object-fit 裁进圆形，不做拉伸。 */
+.account-link img.avatar {
+  object-fit: cover;
+  background: var(--muted);
+}
+
+.avatar-preview {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  flex: 0 0 72px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--muted);
+}
+
+.avatar-fallback {
+  border-color: transparent;
+  background: linear-gradient(140deg, var(--tint-3), var(--tint-1));
+  color: white;
+  font-size: 28px;
+  font-weight: 600;
+}
+
 .account-meta {
   min-width: 0;
 }

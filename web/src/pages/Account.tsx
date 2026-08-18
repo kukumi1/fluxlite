@@ -1,14 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type Account as AccountInfo, type Enrollment } from "../api";
 import { Banner } from "../components/Modal";
 import { PageHeader } from "../components/PageHeader";
+import { Upload } from "lucide-react";
+import { AVATAR_SIZE, toAvatarPNG } from "../lib/avatar";
 
 interface Props {
   onUsernameChanged: (name: string) => void;
+  onAvatarChanged: (avatar: string) => void;
   onSignedOut: () => void;
 }
 
-export function Account({ onUsernameChanged, onSignedOut }: Props) {
+export function Account({ onUsernameChanged, onAvatarChanged, onSignedOut }: Props) {
   const [me, setMe] = useState<AccountInfo | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -18,6 +21,7 @@ export function Account({ onUsernameChanged, onSignedOut }: Props) {
       const account = await api.me();
       setMe(account);
       onUsernameChanged(account.username);
+      onAvatarChanged(account.avatar);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "读取账号信息失败");
     }
@@ -51,6 +55,16 @@ export function Account({ onUsernameChanged, onSignedOut }: Props) {
 
       {error && <Banner kind="err">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
+
+      <AvatarCard
+        username={me.username}
+        avatar={me.avatar}
+        onDone={async (msg) => {
+          announce(msg);
+          await load();
+        }}
+        onError={report}
+      />
 
       <div className="card">
         <h2 style={{ marginTop: 0 }}>账号</h2>
@@ -416,6 +430,96 @@ function TwoFactorCard({
           </button>
         </form>
       )}
+    </div>
+  );
+}
+
+function AvatarCard({
+  username,
+  avatar,
+  onDone,
+  onError,
+}: {
+  username: string;
+  avatar: string;
+  onDone: (msg: string) => void | Promise<void>;
+  onError: (err: unknown) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+
+  async function pick(file: File | undefined) {
+    if (!file) return;
+    setBusy(true);
+    try {
+      await api.setAvatar(await toAvatarPNG(file));
+      await onDone("头像已更新");
+    } catch (err) {
+      // 「不是图片」「canvas 不可用」这类失败来自浏览器而非接口，一样要说出来，
+      // 否则点了没反应会被当成卡住。
+      onError(err instanceof Error && !(err instanceof ApiError) ? err.message : err);
+    } finally {
+      setBusy(false);
+      if (input.current) input.current.value = "";
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2 style={{ marginTop: 0 }}>头像</h2>
+      <div className="row" style={{ gap: 16 }}>
+        {avatar ? (
+          <img className="avatar-preview" src={avatar} alt="当前头像" />
+        ) : (
+          <span className="avatar-preview avatar-fallback">
+            {username.slice(0, 1).toUpperCase()}
+          </span>
+        )}
+        <div>
+          <div className="row" style={{ gap: 8 }}>
+            <button
+              className="btn"
+              disabled={busy}
+              onClick={() => input.current?.click()}
+            >
+              <Upload size={14} />
+              {busy ? "处理中…" : avatar ? "更换图片" : "上传图片"}
+            </button>
+            {avatar && (
+              <button
+                className="btn danger"
+                disabled={busy}
+                onClick={() => {
+                  void (async () => {
+                    setBusy(true);
+                    try {
+                      await api.clearAvatar();
+                      await onDone("头像已移除，恢复为首字母");
+                    } catch (err) {
+                      onError(err);
+                    } finally {
+                      setBusy(false);
+                    }
+                  })();
+                }}
+              >
+                移除
+              </button>
+            )}
+          </div>
+          <p className="hint" style={{ marginBottom: 0 }}>
+            会在浏览器里居中裁成方形并缩到 {AVATAR_SIZE}px 再上传，所以多大的原图都行。
+            重新编码顺带去掉了原文件里的 EXIF（可能含拍摄地点）。
+          </p>
+        </div>
+      </div>
+      <input
+        ref={input}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={(e) => void pick(e.target.files?.[0])}
+      />
     </div>
   );
 }

@@ -218,6 +218,8 @@ export interface Account {
   created_at: string;
   updated_at: string;
   sessions: number;
+  /** PNG 的 data URL；空串表示没设头像，回落到首字母。 */
+  avatar: string;
 }
 
 export interface EnrollRequest {
@@ -291,6 +293,8 @@ export const api = {
   disableTOTP: (password: string, code: string) =>
     post<{ enrolled: boolean }>("/account/totp/disable", { password, code }),
   revokeSessions: () => post<{ ok: boolean }>("/account/sessions/revoke"),
+  setAvatar: (data: string) => post<{ avatar: string }>("/account/avatar", { data }),
+  clearAvatar: () => request<{ avatar: string }>("/account/avatar", { method: "DELETE" }),
 
   enrollTicket: (input: EnrollRequest) => post<EnrollTicket>("/enroll/ticket", input),
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 
 export type Theme = "light" | "dark";
 
@@ -26,7 +26,21 @@ export function applyStoredTheme() {
   paint(stored() ?? preferred());
 }
 
-export function useTheme() {
+export interface ThemeState {
+  theme: Theme;
+  toggle: () => void;
+}
+
+/**
+ * 主题只有一份，放在 context 里。
+ *
+ * 早先每个组件各自 useState 持有一份，读初值时它们碰巧一致，所以看不出问题；
+ * 但切换只会更新点击方那一份，别的组件永远停在旧值。终端就是这么变成
+ * 「面板已经暗了，它还是白的」——组件各持一份「当前主题」，本身就是错的。
+ */
+const ThemeContext = createContext<ThemeState | null>(null);
+
+export function useThemeState(): ThemeState {
   const [theme, setTheme] = useState<Theme>(() => stored() ?? preferred());
 
   useEffect(() => {
@@ -38,4 +52,14 @@ export function useTheme() {
     theme,
     toggle: () => setTheme((current) => (current === "dark" ? "light" : "dark")),
   };
+}
+
+export const ThemeProvider = ThemeContext.Provider;
+
+export function useTheme(): ThemeState {
+  const state = useContext(ThemeContext);
+  if (!state) {
+    throw new Error("useTheme 必须在 ThemeProvider 内使用");
+  }
+  return state;
 }

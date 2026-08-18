@@ -20,18 +20,58 @@ interface Props {
   onStateChange(state: ConnectionState): void;
 }
 
+// 只设背景和前景会让 ANSI 十六色停留在 xterm 的默认值 —— 那套是给纯黑底调
+// 的原色，放在这里刺眼且对比失衡。两套配色都按各自底色重新配过。
 const DARK = {
   background: "#0f1216",
-  foreground: "#dfe5ec",
-  cursor: "#dfe5ec",
-  selectionBackground: "#2f3a47",
+  foreground: "#d6deeb",
+  cursor: "#c792ea",
+  cursorAccent: "#0f1216",
+  selectionBackground: "#2a3a4d",
+
+  black: "#3b4453",
+  red: "#ef6b73",
+  green: "#7ee787",
+  yellow: "#ffd479",
+  blue: "#79b8ff",
+  magenta: "#c792ea",
+  cyan: "#56d4dd",
+  white: "#c8d1dc",
+
+  brightBlack: "#5f6b7a",
+  brightRed: "#ff8f96",
+  brightGreen: "#a2f5b0",
+  brightYellow: "#ffe3a6",
+  brightBlue: "#a5d1ff",
+  brightMagenta: "#e0c2ff",
+  brightCyan: "#8ce8ef",
+  brightWhite: "#ffffff",
 };
 
 const LIGHT = {
   background: "#ffffff",
   foreground: "#1b1f24",
-  cursor: "#1b1f24",
+  cursor: "#8250df",
+  cursorAccent: "#ffffff",
   selectionBackground: "#d7e3f4",
+
+  black: "#24292f",
+  red: "#cf222e",
+  green: "#116329",
+  yellow: "#7d4e00",
+  blue: "#0969da",
+  magenta: "#8250df",
+  cyan: "#1b7c83",
+  white: "#6e7781",
+
+  brightBlack: "#57606a",
+  brightRed: "#a40e26",
+  brightGreen: "#1a7f37",
+  brightYellow: "#9a6700",
+  brightBlue: "#218bff",
+  brightMagenta: "#a475f9",
+  brightCyan: "#3192aa",
+  brightWhite: "#1b1f24",
 };
 
 export const TerminalPane = forwardRef<TerminalHandle, Props>(function TerminalPane(

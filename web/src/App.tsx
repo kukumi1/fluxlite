@@ -11,7 +11,7 @@ import {
   Zap,
 } from "lucide-react";
 import { api } from "./api";
-import { useTheme } from "./theme";
+import { ThemeProvider, useTheme, useThemeState } from "./theme";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { Nodes } from "./pages/Nodes";
@@ -35,6 +35,15 @@ const MAIN_NAV = [
 const ADMIN_NAV = [{ id: "audit", label: "审计日志", icon: ScrollText }] as const;
 
 export function App() {
+  const theme = useThemeState();
+  return (
+    <ThemeProvider value={theme}>
+      <Shell />
+    </ThemeProvider>
+  );
+}
+
+function Shell() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [username, setUsername] = useState("");
   const [tab, setTab] = useState<Tab>("dashboard");

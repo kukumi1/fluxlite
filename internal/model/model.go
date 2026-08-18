@@ -443,3 +443,13 @@ type NodeMetrics struct {
 
 	CollectedAt time.Time `json:"collected_at"`
 }
+
+// ConsoleCommand is a saved shell snippet the operator can fire into an open
+// terminal. Commands live on the server rather than in the browser so they
+// survive a new machine and travel with the panel's backups.
+type ConsoleCommand struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Command   string    `json:"command"`
+	CreatedAt time.Time `json:"created_at"`
+}

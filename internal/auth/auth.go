@@ -333,3 +333,41 @@ func validateCredentialStrength(username, password string) error {
 	}
 	return nil
 }
+
+// VerifyPasswordAndCode re-proves an already-authenticated account's identity.
+//
+// It exists for actions that are a step beyond browsing the panel — opening a
+// root shell on a managed node — where a stolen session cookie alone should
+// not be enough. The checks and the lockout accounting are the same as login's,
+// so an attacker cannot use this endpoint as an unthrottled password oracle.
+func (s *Service) VerifyPasswordAndCode(ctx context.Context, userID int64, password, code string) error {
+	now := time.Now().UTC()
+
+	user, err := s.store.UserByID(ctx, userID)
+	if err != nil {
+		return ErrInvalidCredentials
+	}
+	if user.Locked(now) {
+		return ErrAccountLocked
+	}
+
+	passwordOK, err := cryptox.VerifyPassword(password, user.PasswordHash)
+	if err != nil {
+		return fmt.Errorf("verify password: %w", err)
+	}
+	codeOK := true
+	if user.TOTPEnrolled {
+		codeOK = validateTOTP(code, user.TOTPSecret, now)
+	}
+
+	if !passwordOK || !codeOK {
+		if ferr := s.store.RecordLoginFailure(ctx, user.ID, LockThreshold, LockDuration); ferr != nil {
+			return fmt.Errorf("record failure: %w", ferr)
+		}
+		return ErrInvalidCredentials
+	}
+	if err := s.store.ResetLoginFailures(ctx, user.ID); err != nil {
+		return fmt.Errorf("reset failures: %w", err)
+	}
+	return nil
+}

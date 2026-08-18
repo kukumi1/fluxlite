@@ -396,6 +396,18 @@ func (p *Pool) Get(ctx context.Context, node *model.Node) (*Client, error) {
 	return client, nil
 }
 
+// Dedicated dials a connection that the pool does not cache or share.
+//
+// An interactive terminal must not ride on the pooled client. The pool hands
+// the same connection to reconciliation and sampling, and evicts it the moment
+// a keepalive fails — which would drop a shell someone is typing into. It also
+// works the other way: a shell left open for an hour has no business keeping a
+// connection alive on behalf of background work. The caller owns this one and
+// must close it.
+func (p *Pool) Dedicated(ctx context.Context, node *model.Node) (*Client, error) {
+	return p.dialer.Dial(ctx, node)
+}
+
 // alive reports whether a cached connection still answers. A keepalive request
 // costs one round trip, far less than the handshake a false negative would
 // force, and unlike opening a session it leaves no state behind on the node.

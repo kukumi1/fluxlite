@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import {
   LayoutDashboard,
   LogOut,
@@ -6,6 +6,7 @@ import {
   ScrollText,
   Server,
   Sun,
+  TerminalSquare,
   Waypoints,
   Zap,
 } from "lucide-react";
@@ -18,13 +19,17 @@ import { Routes } from "./pages/Routes";
 import { Audit } from "./pages/Audit";
 import { Account } from "./pages/Account";
 
-type Tab = "dashboard" | "routes" | "nodes" | "audit" | "account";
+// 终端页连同 xterm 一起单独打包：不开终端的人不该为它下载一份终端模拟器。
+const Console = lazy(() => import("./pages/Console").then((m) => ({ default: m.Console })));
+
+type Tab = "dashboard" | "routes" | "nodes" | "console" | "audit" | "account";
 type AuthState = "checking" | "in" | "out";
 
 const MAIN_NAV = [
   { id: "dashboard", label: "仪表盘", icon: LayoutDashboard },
   { id: "routes", label: "链路", icon: Waypoints },
   { id: "nodes", label: "节点", icon: Server },
+  { id: "console", label: "终端", icon: TerminalSquare },
 ] as const;
 
 const ADMIN_NAV = [{ id: "audit", label: "审计日志", icon: ScrollText }] as const;
@@ -33,7 +38,13 @@ export function App() {
   const [authState, setAuthState] = useState<AuthState>("checking");
   const [username, setUsername] = useState("");
   const [tab, setTab] = useState<Tab>("dashboard");
+  const [consoleNode, setConsoleNode] = useState<number | null>(null);
   const { theme, toggle } = useTheme();
+
+  function openConsole(nodeID: number) {
+    setConsoleNode(nodeID);
+    setTab("console");
+  }
 
   async function checkSession() {
     try {
@@ -127,7 +138,12 @@ export function App() {
         <div className="main-inner">
           {tab === "dashboard" && <Dashboard onNavigate={setTab} />}
           {tab === "routes" && <Routes />}
-          {tab === "nodes" && <Nodes />}
+          {tab === "nodes" && <Nodes onOpenConsole={openConsole} />}
+          {tab === "console" && (
+            <Suspense fallback={<p className="muted">正在载入终端…</p>}>
+              <Console initialNode={consoleNode} />
+            </Suspense>
+          )}
           {tab === "audit" && <Audit />}
           {tab === "account" && (
             <Account onUsernameChanged={setUsername} onSignedOut={() => setAuthState("out")} />

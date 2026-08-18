@@ -127,6 +127,20 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/quotas", s.handleQuotas)
 			r.Get("/metrics", s.handleMetrics)
 			r.Get("/audit", s.handleAudit)
+
+			// Unlocking is reachable from an ordinary session; everything it
+			// unlocks is not.
+			r.Get("/console/status", s.handleConsoleStatus)
+			r.With(s.rateLimit).Post("/console/unlock", s.handleConsoleUnlock)
+
+			r.Group(func(r chi.Router) {
+				r.Use(s.requireConsoleUnlocked)
+
+				r.Get("/nodes/{id}/console", s.handleConsole)
+				r.Get("/console/commands", s.handleListConsoleCommands)
+				r.Post("/console/commands", s.handleCreateConsoleCommand)
+				r.Delete("/console/commands/{id}", s.handleDeleteConsoleCommand)
+			})
 		})
 	})
 

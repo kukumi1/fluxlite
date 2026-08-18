@@ -3,6 +3,7 @@ module github.com/kukumi1/fluxlite
 go 1.25.5
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/pquerna/otp v1.5.0
 	golang.org/x/crypto v0.54.0

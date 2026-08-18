@@ -257,6 +257,20 @@ var migrations = []string{
 		container    TEXT NOT NULL DEFAULT '',
 		collected_at DATETIME NOT NULL
 	)`,
+
+	// Opening a root shell is a bigger step than reading a dashboard, so it is
+	// gated on re-proving the password behind an already-valid session. The
+	// mark lives on the session row and therefore expires with it — there is
+	// no separate lifetime to reason about, and revoking sessions disarms the
+	// console at the same time.
+	`ALTER TABLE sessions ADD COLUMN console_unlocked_at DATETIME`,
+
+	`CREATE TABLE IF NOT EXISTS console_commands (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		name       TEXT NOT NULL,
+		command    TEXT NOT NULL,
+		created_at DATETIME NOT NULL
+	)`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

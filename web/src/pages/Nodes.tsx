@@ -9,7 +9,16 @@ import {
   type NodeMetrics,
   type ProbeResult,
 } from "../api";
-import { ArrowDown, ArrowUp, LayoutGrid, List, Plus, Rows3, Server } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  LayoutGrid,
+  List,
+  Plus,
+  Rows3,
+  Server,
+  TerminalSquare,
+} from "lucide-react";
 import { CopyButton } from "../components/CopyButton";
 import { MetricBar } from "../components/MetricBar";
 import { formatBytes, formatRate, formatUptime, percentOf } from "../lib/format";
@@ -100,7 +109,7 @@ function uninstallCommand(): string {
   return `curl -fsSL ${window.location.origin}/uninstall.sh | sh`;
 }
 
-export function Nodes() {
+export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => void }) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -129,6 +138,10 @@ export function Nodes() {
     const busy = busyId === n.id;
     return (
       <div className="row nowrap">
+        <button className="btn sm" title="在浏览器里打开这台机器的 SSH" onClick={() => onOpenConsole(n.id)}>
+          <TerminalSquare size={13} />
+          终端
+        </button>
         <button className="btn sm" disabled={busy} onClick={() => void runProbe(n)}>
           {busy ? "探测中…" : "探测"}
         </button>

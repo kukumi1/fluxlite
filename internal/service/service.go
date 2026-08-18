@@ -693,3 +693,18 @@ func (s *Service) RouteStatuses(ctx context.Context) ([]RouteStatus, error) {
 
 // Store exposes the underlying store for read-only handlers.
 func (s *Service) Store() *store.Store { return s.store }
+
+// DialConsole opens a connection reserved for an interactive terminal. The
+// caller owns it and must close it; see sshx.Pool.Dedicated for why it is not
+// the pooled one.
+func (s *Service) DialConsole(ctx context.Context, nodeID int64) (*sshx.Client, *model.Node, error) {
+	node, err := s.store.NodeByID(ctx, nodeID)
+	if err != nil {
+		return nil, nil, err
+	}
+	client, err := s.pool.Dedicated(ctx, node)
+	if err != nil {
+		return nil, nil, fmt.Errorf("connect to %s: %w", node.Name, err)
+	}
+	return client, node, nil
+}

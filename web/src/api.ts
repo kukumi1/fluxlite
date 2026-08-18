@@ -64,6 +64,14 @@ export interface NodeMetrics {
   collected_at: string;
 }
 
+/** 保存在服务端的快捷命令，换浏览器仍在，也会进面板备份。 */
+export interface ConsoleCommand {
+  id: number;
+  name: string;
+  command: string;
+  created_at: string;
+}
+
 export interface RouteHop {
   route_id: number;
   hop_order: number;
@@ -310,7 +318,27 @@ export const api = {
   metrics: () => request<Record<string, NodeMetrics> | null>("/metrics"),
   quotas: () => request<QuotaState[] | null>("/quotas"),
   audit: (limit = 100) => request<AuditEntry[] | null>(`/audit?limit=${limit}`),
+
+  consoleStatus: () => request<{ unlocked: boolean }>("/console/status"),
+  consoleUnlock: (password: string, code: string) =>
+    post<{ unlocked: boolean }>("/console/unlock", { password, code }),
+  consoleCommands: () => request<ConsoleCommand[] | null>("/console/commands"),
+  createConsoleCommand: (name: string, command: string) =>
+    post<ConsoleCommand>("/console/commands", { name, command }),
+  deleteConsoleCommand: (id: number) =>
+    request<{ ok: boolean }>(`/console/commands/${id}`, { method: "DELETE" }),
 };
+
+/**
+ * 终端 WebSocket 的地址。
+ *
+ * 走当前页面的 origin，因为服务端会校验 Origin 必须与之相符 —— WebSocket 不受
+ * 同源策略保护，那道校验是防止别的网站借你的 cookie 开 root shell 的唯一屏障。
+ */
+export function consoleSocketURL(nodeID: number): string {
+  const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${scheme}//${window.location.host}/api/nodes/${nodeID}/console`;
+}
 
 export interface NodeInput {
   name: string;

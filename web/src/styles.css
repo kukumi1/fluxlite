@@ -998,6 +998,153 @@ tbody tr:last-child td {
   font-variant-numeric: tabular-nums;
 }
 
+/* ===== 终端 ===== */
+
+.console-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 16px;
+  align-items: start;
+}
+
+.console-main,
+.console-side {
+  margin-bottom: 0;
+}
+
+.console-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.console-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px 5px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 140ms var(--ease-out), color 140ms var(--ease-out);
+}
+
+.console-tab:hover {
+  background: color-mix(in oklch, var(--accent) 60%, transparent);
+  color: var(--foreground);
+}
+
+.console-tab.active {
+  background: var(--accent);
+  border-color: var(--border);
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.console-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+}
+
+.console-dot.open {
+  background: var(--ok);
+}
+
+.console-dot.connecting {
+  background: var(--warn);
+}
+
+.console-dot.closed {
+  background: var(--err);
+}
+
+.console-tab-close {
+  display: grid;
+  place-items: center;
+  padding: 2px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.console-tab-close:hover {
+  background: color-mix(in oklch, var(--foreground) 12%, transparent);
+  opacity: 1;
+}
+
+.console-status {
+  margin-left: auto;
+  padding-left: 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 终端自带深色背景，不跟着卡片的玻璃质感走 —— 终端里的可读性优先。 */
+.console-screen,
+.terminal-host {
+  height: 60vh;
+  min-height: 340px;
+}
+
+/* 这两个值必须与 TerminalPane 里 xterm 主题的 background 一致，否则内边距
+   会露出一圈跟终端本体不同的颜色。 */
+.terminal-host {
+  padding: 8px 10px;
+  background: #ffffff;
+}
+
+.dark .terminal-host {
+  background: #0f1216;
+}
+
+.command-list {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0 12px;
+}
+
+.command-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in oklch, var(--muted) 40%, transparent);
+}
+
+.command-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.command-body {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+@media (max-width: 1100px) {
+  .console-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ===== 额度进度条 ===== */
 
 .progress {

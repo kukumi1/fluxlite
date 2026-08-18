@@ -275,6 +275,16 @@ var migrations = []string{
 		command    TEXT NOT NULL,
 		created_at DATETIME NOT NULL
 	)`,
+
+	// Repair: the avatar column above was inserted into the middle of this
+	// list rather than appended. Progress is tracked as a count, so on a
+	// database that had already applied everything the loop started past that
+	// index and skipped it — new databases got the column, existing ones
+	// silently did not. The shipped entry stays where it is because editing a
+	// migration that has shipped is what caused this; this appended copy is
+	// what existing databases run. alreadyApplied skips it wherever the column
+	// is already present, so both paths converge.
+	`ALTER TABLE users ADD COLUMN avatar BLOB`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

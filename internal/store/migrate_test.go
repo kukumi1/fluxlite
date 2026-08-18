@@ -135,3 +135,57 @@ func TestMigrateIsIdempotentAcrossReopen(t *testing.T) {
 		t.Errorf("schema_version = %d, want %d", version, len(migrations))
 	}
 }
+
+// 迁移进度是按「已应用条数」记的，所以往列表中间插一条，会让所有已经迁移完
+// 的库从下一条开始跑 —— 插进去的那条被整条跳过。新库看不出任何问题，老库
+// 静默缺列，正是 avatar 那次的情形。
+//
+// 这里模拟的就是那种库：版本号已经数满，列却不存在。
+func TestMigrateRepairsColumnSkippedByMidListInsert(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "fluxlite.db")
+
+	st, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx, `ALTER TABLE users DROP COLUMN avatar`); err != nil {
+		t.Fatalf("模拟缺列失败: %v", err)
+	}
+	// 版本停在「倒数第二条已应用」，即那条修补迁移还没跑过。
+	if _, err := st.db.ExecContext(ctx,
+		`UPDATE schema_version SET version = ?`, len(migrations)-1); err != nil {
+		t.Fatalf("回退版本号失败: %v", err)
+	}
+	st.Close()
+
+	again, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("重新打开（本该自动补上缺列）: %v", err)
+	}
+	defer again.Close()
+
+	has, err := again.hasColumn(ctx, "users", "avatar")
+	if err != nil {
+		t.Fatalf("检查列: %v", err)
+	}
+	if !has {
+		t.Fatal("重新打开之后 users.avatar 仍然不存在，老库永远用不了头像")
+	}
+
+	// 补上之后要能正常读写，而不只是列存在。
+	u := &User{Username: "someone", PasswordHash: "x"}
+	if err := again.CreateUser(ctx, u); err != nil {
+		t.Fatalf("建用户: %v", err)
+	}
+	if err := again.SetUserAvatar(ctx, u.ID, []byte("not-a-real-png")); err != nil {
+		t.Fatalf("写头像: %v", err)
+	}
+	got, err := again.UserAvatar(ctx, u.ID)
+	if err != nil {
+		t.Fatalf("读头像: %v", err)
+	}
+	if string(got) != "not-a-real-png" {
+		t.Fatalf("读回来的头像不对: %q", got)
+	}
+}

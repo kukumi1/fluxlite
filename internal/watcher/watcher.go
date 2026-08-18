@@ -113,11 +113,24 @@ func (w *Watcher) loop(ctx context.Context, every time.Duration, fn func(context
 	}
 }
 
+// sampleConcurrency bounds how many routes are sampled at once. The work is
+// almost entirely waiting on the network, so a handful of routes in flight
+// costs nothing locally; the cap exists to keep a node that carries many
+// routes from being asked everything simultaneously.
+const sampleConcurrency = 4
+
 // sampleRoutes refreshes the liveness and timings shown on the route list.
 //
-// A round that outlives its interval is dropped rather than queued: the next
-// tick produces fresher facts than a backlog ever could, and letting rounds
-// pile up would multiply the load on the very nodes that are already slow.
+// Each route gets its own budget, and routes are sampled concurrently. Sharing
+// one budget across a serial pass meant a route that timed out spent it on
+// behalf of everyone behind it: a single dead landing address costs eight
+// seconds per probe, two of them exhausted a thirty-second round, and since
+// routes are listed by name the same tail was starved every single round. The
+// panel then showed those routes as unsampled — which is honest, but the cause
+// was the panel's own scheduling rather than anything wrong with them.
+//
+// Rounds cannot overlap because the ticker calls this synchronously, so a slow
+// round delays the next one instead of stacking on top of it.
 func (w *Watcher) sampleRoutes(ctx context.Context) {
 	routes, err := w.store.ListRoutes(ctx)
 	if err != nil {
@@ -125,25 +138,55 @@ func (w *Watcher) sampleRoutes(ctx context.Context) {
 		return
 	}
 
-	deadline, cancel := context.WithTimeout(ctx, w.sample)
-	defer cancel()
-
+	enabled := routes[:0:0]
 	for _, route := range routes {
-		if !route.Enabled {
-			continue
-		}
-		select {
-		case <-deadline.Done():
-			return
-		default:
-		}
-		if err := w.svc.SampleRoute(deadline, route.ID); err != nil {
-			// An unreachable node is ordinary here and already visible as the
-			// node's status, so this stays at debug rather than crying wolf
-			// every half minute.
-			w.log.Debug("route sample failed", "route", route.Name, "error", err)
+		if route.Enabled {
+			enabled = append(enabled, route)
 		}
 	}
+
+	forEachConcurrently(ctx, enabled, sampleConcurrency, w.sample,
+		func(ctx context.Context, route *model.Route) {
+			if err := w.svc.SampleRoute(ctx, route.ID); err != nil {
+				// An unreachable node is ordinary here and already visible as
+				// the node's status, so this stays at debug rather than crying
+				// wolf every half minute.
+				w.log.Debug("route sample failed", "route", route.Name, "error", err)
+			}
+		})
+}
+
+// forEachConcurrently runs fn over routes, at most limit at a time, handing
+// each call its own budget so that one slow route cannot spend another's.
+func forEachConcurrently(
+	ctx context.Context,
+	routes []*model.Route,
+	limit int,
+	budget time.Duration,
+	fn func(context.Context, *model.Route),
+) {
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, limit)
+
+	for _, route := range routes {
+		select {
+		case <-ctx.Done():
+			wg.Wait()
+			return
+		case slots <- struct{}{}:
+		}
+
+		wg.Add(1)
+		go func(route *model.Route) {
+			defer wg.Done()
+			defer func() { <-slots }()
+
+			deadline, cancel := context.WithTimeout(ctx, budget)
+			defer cancel()
+			fn(deadline, route)
+		}(route)
+	}
+	wg.Wait()
 }
 
 // trafficLoop collects byte counters and enforces quotas, looking more often

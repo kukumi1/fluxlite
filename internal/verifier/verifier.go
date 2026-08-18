@@ -172,23 +172,32 @@ func (v *Verifier) checkReachable(ctx context.Context, from *model.Node, host st
 // probe falls back through several implementations. Output is always
 // "ok|fail <milliseconds>", with "-" when no timer of useful resolution is
 // available (busybox date has no %N).
+// probeTimeoutSeconds bounds a single reachability probe.
+//
+// The probe dials the next hop or the landing address, both of which answer in
+// tens of milliseconds when they answer at all — realm accepts locally, and a
+// live landing is one intercontinental round trip away at worst. The timeout
+// only ever elapses in full against something that is down, so a long one buys
+// nothing and costs the whole sampling round its time.
+const probeTimeoutSeconds = 3
+
 func tcpProbeCommand(host string, port int) string {
 	return fmt.Sprintf(`
 if command -v python3 >/dev/null 2>&1; then
   python3 -c 'import socket,time,sys
 t=time.time()
 try:
-    socket.create_connection(("%s",%d),8).close()
+    socket.create_connection(("%s",%d),%d).close()
     print("ok %%d"%%((time.time()-t)*1000))
 except Exception:
     print("fail %%d"%%((time.time()-t)*1000))'
 elif command -v bash >/dev/null 2>&1; then
   bash -c 'exec 3<>/dev/tcp/%s/%d' 2>/dev/null && echo "ok -" || echo "fail -"
 elif command -v nc >/dev/null 2>&1; then
-  nc -z -w 8 %s %d >/dev/null 2>&1 && echo "ok -" || echo "fail -"
+  nc -z -w %d %s %d >/dev/null 2>&1 && echo "ok -" || echo "fail -"
 else
   echo "none -"
-fi`, host, port, host, port, host, port)
+fi`, host, port, probeTimeoutSeconds, host, port, probeTimeoutSeconds, host, port)
 }
 
 // tcpInjectCommand opens a connection and writes a marker, holding it open

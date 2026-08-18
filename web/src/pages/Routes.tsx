@@ -15,6 +15,7 @@ import {
 } from "../api";
 import { ArrowDown, ArrowUp, LayoutGrid, List, Plus, Rows3, Waypoints } from "lucide-react";
 import { Banner, Modal } from "../components/Modal";
+import { useConfirm } from "../components/ConfirmDialog";
 import { Card } from "../components/Card";
 import { CopyIconButton } from "../components/CopyButton";
 import { EmptyState } from "../components/EmptyState";
@@ -200,6 +201,7 @@ export function Routes() {
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
   const [verifyReport, setVerifyReport] = useState<VerifyReport | null>(null);
   const [view, setView] = useState<ViewMode>(storedView);
+  const [confirm, confirmDialog] = useConfirm();
 
   function chooseView(next: ViewMode) {
     setView(next);
@@ -395,21 +397,29 @@ export function Routes() {
           className="btn sm danger"
           disabled={busy}
           onClick={() => {
-            if (!confirm(`确认删除链路 ${route.name}？会尽量清理各节点上的配置。`)) return;
-            void act(route.id, async () => {
-              const res = await api.deleteRoute(route.id);
-              const left = res.leftovers ?? [];
-              if (left.length === 0) {
-                setNotice(`链路 ${route.name} 已删除，各节点上的转发已清理`);
-                return;
-              }
-              // 记录没了但转发还在，是需要人去机器上收尾的状态，不能只报成功
-              setWarning(
-                `链路 ${route.name} 已删除，但以下节点上的转发未能清理，` +
-                  `机器恢复后需在其上执行卸载脚本：` +
-                  left.map((l) => `${l.node_name}（${l.reason}）`).join("；"),
-              );
-            });
+            void (async () => {
+              const ok = await confirm({
+                title: `删除链路 ${route.name}？`,
+                body: "面板会尽量清理各节点上的转发配置。连不上的节点会在删除后单独列出，需要你到那台机器上收尾。",
+                confirmLabel: "删除链路",
+                danger: true,
+              });
+              if (!ok) return;
+              await act(route.id, async () => {
+                const res = await api.deleteRoute(route.id);
+                const left = res.leftovers ?? [];
+                if (left.length === 0) {
+                  setNotice(`链路 ${route.name} 已删除，各节点上的转发已清理`);
+                  return;
+                }
+                // 记录没了但转发还在，是需要人去机器上收尾的状态，不能只报成功
+                setWarning(
+                  `链路 ${route.name} 已删除，但以下节点上的转发未能清理，` +
+                    `机器恢复后需在其上执行卸载脚本：` +
+                    left.map((l) => `${l.node_name}（${l.reason}）`).join("；"),
+                );
+              });
+            })();
           }}
         >
           删除
@@ -708,6 +718,8 @@ export function Routes() {
           </ul>
         </Modal>
       )}
+
+      {confirmDialog}
     </div>
   );
 }

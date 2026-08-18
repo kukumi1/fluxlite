@@ -15,6 +15,7 @@ import { MetricBar } from "../components/MetricBar";
 import { formatBytes, formatRate, formatUptime, percentOf } from "../lib/format";
 import { NumberField } from "../components/NumberField";
 import { Banner, Modal } from "../components/Modal";
+import { useConfirm } from "../components/ConfirmDialog";
 import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
@@ -111,6 +112,7 @@ export function Nodes() {
   const [removed, setRemoved] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<Record<string, NodeMetrics>>({});
   const [view, setView] = useState<NodeView>(storedNodeView);
+  const [confirm, confirmDialog] = useConfirm();
 
   function chooseView(next: NodeView) {
     setView(next);
@@ -207,16 +209,13 @@ export function Nodes() {
   }
 
   async function remove(node: Node) {
-    if (
-      !confirm(
-        `确认删除节点 ${node.name}？
-
-` +
-          "面板只删除自己这边的记录，机器上的 realm、服务和面板公钥不会被清理。" +
-          "删除后会给出卸载命令。",
-      )
-    )
-      return;
+    const ok = await confirm({
+      title: `删除节点 ${node.name}？`,
+      body: "面板只删除自己这边的记录。机器上的 realm、转发服务和面板的登录公钥不会被清理，删除后会给出卸载命令。",
+      confirmLabel: "删除节点",
+      danger: true,
+    });
+    if (!ok) return;
     setBusyId(node.id);
     setError("");
     try {
@@ -542,6 +541,8 @@ export function Nodes() {
           )}
         </Modal>
       )}
+
+      {confirmDialog}
     </div>
   );
 }

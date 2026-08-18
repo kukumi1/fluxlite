@@ -510,6 +510,20 @@ button {
   border-color: transparent;
 }
 
+/* 破坏性操作的确认按钮。列表里的「删除」是文字红即可，但确认弹窗里它是唯一
+   的主操作，得和「取消」拉开明确的分量差。 */
+.btn.destructive {
+  background: var(--err);
+  border-color: var(--err);
+  color: white;
+  font-weight: 600;
+}
+
+.btn.destructive:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--err) 88%, black);
+  border-color: color-mix(in oklch, var(--err) 88%, black);
+}
+
 .btn.danger {
   color: var(--err);
 }
@@ -1120,6 +1134,23 @@ tbody tr:last-child td {
 
 .modal.wide {
   max-width: 680px;
+}
+
+.modal.confirm {
+  max-width: 440px;
+}
+
+.modal-body {
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
 }
 
 /* ===== 登录 ===== */

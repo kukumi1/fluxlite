@@ -92,6 +92,43 @@ body {
   background-attachment: fixed;
 }
 
+/* Windows 上的原生滚动条又宽又带箭头按钮，暗色主题下还是一条亮白的杠，跟
+   面板其余部分完全脱节。
+   标准属性在 Chromium 121+ 与 Firefox 上都支持，而且一旦声明就会让
+   ::-webkit-scrollbar 整套失效，所以两者不能并存 —— webkit 那套只留给不认
+   标准属性的旧引擎。 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--foreground) 24%, transparent) transparent;
+}
+
+@supports not (scrollbar-width: thin) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-color: color-mix(in oklch, var(--foreground) 24%, transparent);
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in oklch, var(--foreground) 40%, transparent);
+  }
+
+  ::-webkit-scrollbar-button {
+    display: none;
+  }
+}
+
 code,
 .mono {
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
@@ -742,12 +779,13 @@ tbody tr:last-child td {
   font-size: 14px;
 }
 
-/* 紧凑模式把入口与落地压到一行。地址是这张卡上最常被复制的东西，
-   挤没了就失去意义，所以宁可让它横向滚动也不截断。 */
+/* 紧凑模式把入口与落地压到一行。放不下时换行，不横向滚动 —— 一张卡片里嵌一
+   条滚动条，既挡住下面的内容，也逼着人为了看全一个地址去拖它。 */
 .route-line {
   display: flex;
   align-items: center;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 4px 6px;
   margin: 8px 0;
   padding: 6px 8px;
   border: 1px solid var(--border);
@@ -755,8 +793,10 @@ tbody tr:last-child td {
   background: color-mix(in oklch, var(--muted) 45%, transparent);
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 12px;
-  overflow-x: auto;
-  white-space: nowrap;
+}
+
+.route-line > span {
+  word-break: break-all;
 }
 
 .route-line .sep {

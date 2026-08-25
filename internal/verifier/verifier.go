@@ -166,12 +166,6 @@ func (v *Verifier) checkReachable(ctx context.Context, from *model.Node, host st
 	}
 }
 
-// tcpProbeCommand builds a portable connectivity check.
-//
-// bash's /dev/tcp is unavailable on dash and on Alpine's busybox shell, so the
-// probe falls back through several implementations. Output is always
-// "ok|fail <milliseconds>", with "-" when no timer of useful resolution is
-// available (busybox date has no %N).
 // probeTimeoutSeconds bounds a single reachability probe.
 //
 // The probe dials the next hop or the landing address, both of which answer in
@@ -181,16 +175,47 @@ func (v *Verifier) checkReachable(ctx context.Context, from *model.Node, host st
 // nothing and costs the whole sampling round its time.
 const probeTimeoutSeconds = 3
 
+// tcpProbeCommand builds a portable connectivity check.
+//
+// bash's /dev/tcp is unavailable on dash and on Alpine's busybox shell, so the
+// probe falls back through several implementations. Output is always
+// "ok|fail <milliseconds>", with "-" when no timer of useful resolution is
+// available (busybox date has no %N).
+//
+// Resolution happens before the clock starts. Timing it together with the
+// connect reported a landing that answers in 26ms as 250ms, because the target
+// was a DDNS name whose short TTL made almost every probe pay a full 243ms
+// lookup — which read as a bad route rather than as a cold cache. Callers
+// compare this number against ping, so it has to mean the same thing.
+//
+// The resolved addresses are tried in order rather than only the first: a node
+// that advertises IPv6 it cannot actually route must still fall back to A,
+// which is what create_connection was doing for us before.
 func tcpProbeCommand(host string, port int) string {
 	return fmt.Sprintf(`
 if command -v python3 >/dev/null 2>&1; then
-  python3 -c 'import socket,time,sys
-t=time.time()
+  python3 -c 'import socket,time
 try:
-    socket.create_connection(("%s",%d),%d).close()
-    print("ok %%d"%%((time.time()-t)*1000))
+    infos=socket.getaddrinfo("%s",%d,type=socket.SOCK_STREAM)
 except Exception:
-    print("fail %%d"%%((time.time()-t)*1000))'
+    infos=[]
+if not infos:
+    print("fail -")
+else:
+    t=time.time()
+    ok=False
+    for fam,typ,proto,_,sa in infos:
+        s=socket.socket(fam,typ,proto)
+        s.settimeout(%d)
+        try:
+            s.connect(sa)
+            ok=True
+        except Exception:
+            pass
+        s.close()
+        if ok:
+            break
+    print(("ok %%d" if ok else "fail %%d")%%((time.time()-t)*1000))'
 elif command -v bash >/dev/null 2>&1; then
   bash -c 'exec 3<>/dev/tcp/%s/%d' 2>/dev/null && echo "ok -" || echo "fail -"
 elif command -v nc >/dev/null 2>&1; then

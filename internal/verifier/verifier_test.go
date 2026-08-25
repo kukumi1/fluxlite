@@ -1,0 +1,87 @@
+package verifier
+
+import (
+	"net"
+	"os/exec"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+// runProbe executes the generated script the way a node's shell would, so the
+// test covers the quoting and the embedded python rather than just the Go
+// string that produces them.
+func runProbe(t *testing.T, host string, port int) []string {
+	t.Helper()
+	for _, bin := range []string{"sh", "python3"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("这台机器上没有 %s，跳过", bin)
+		}
+	}
+	out, err := exec.Command("sh", "-c", tcpProbeCommand(host, port)).Output()
+	if err != nil {
+		t.Fatalf("跑探测脚本失败: %v (输出 %q)", err, out)
+	}
+	fields := strings.Fields(strings.TrimSpace(string(out)))
+	if len(fields) != 2 {
+		t.Fatalf("探测输出必须是两段 %q，实际拿到 %q", "ok|fail <毫秒>", out)
+	}
+	return fields
+}
+
+func TestTCPProbeReportsMillisecondsWhenTargetAccepts(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+
+	fields := runProbe(t, "127.0.0.1", ln.Addr().(*net.TCPAddr).Port)
+	if fields[0] != "ok" {
+		t.Fatalf("目标在监听，判定应为 ok，实际 %q", fields[0])
+	}
+	// The number matters as much as the verdict: an unparseable one is how a
+	// hop silently loses its latency for good.
+	if _, err := strconv.Atoi(fields[1]); err != nil {
+		t.Fatalf("毫秒数必须能解析成整数，实际 %q", fields[1])
+	}
+}
+
+func TestTCPProbeReportsFailWhenNothingListens(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	if fields := runProbe(t, "127.0.0.1", port); fields[0] != "fail" {
+		t.Fatalf("端口没人监听，判定应为 fail，实际 %q", fields[0])
+	}
+}
+
+// TestTCPProbeStartsClockAfterResolution guards the reason this probe was
+// rewritten: with the timer started before name resolution, a DDNS landing
+// answering in 26ms was reported as 250ms, because the lookup itself cost
+// 243ms and was being counted as link latency.
+func TestTCPProbeStartsClockAfterResolution(t *testing.T) {
+	script := tcpProbeCommand("example.invalid", 443)
+
+	resolve := strings.Index(script, "getaddrinfo")
+	clock := strings.Index(script, "t=time.time()")
+	if resolve < 0 || clock < 0 {
+		t.Fatalf("探测脚本里应当同时有 getaddrinfo 与计时起点，实际:\n%s", script)
+	}
+	if resolve > clock {
+		t.Fatal("计时起点跑到了域名解析前面，DNS 又会被算进链路延迟")
+	}
+}

@@ -179,8 +179,19 @@ const probeTimeoutSeconds = 3
 //
 // bash's /dev/tcp is unavailable on dash and on Alpine's busybox shell, so the
 // probe falls back through several implementations. Output is always
-// "ok|fail <milliseconds>", with "-" when no timer of useful resolution is
-// available (busybox date has no %N).
+// "ok|fail <milliseconds>", with "-" only when nothing on the node can time the
+// connect at all.
+//
+// The bash fallback times itself with $EPOCHREALTIME rather than reporting "-".
+// Minimal cloud images ship neither python3 nor nc — two of them turned up in a
+// fleet of nine — and a node that cannot produce a number leaves its hop blank
+// forever, since an untimed leg also suppresses the chain total. Installing
+// python3 to fix that costs ~60MB, which on a 1.5GB image with 291MB free is
+// not a reasonable price for a stopwatch.
+//
+// $EPOCHREALTIME needs bash 5, and its decimal separator follows the locale, so
+// the digits are extracted by pattern rather than by splitting on ".". An empty
+// reading (bash 4) degrades to "-" instead of computing nonsense.
 //
 // Resolution happens before the clock starts. Timing it together with the
 // connect reported a landing that answers in 26ms as 250ms, because the target
@@ -217,12 +228,22 @@ else:
             break
     print(("ok %%d" if ok else "fail %%d")%%((time.time()-t)*1000))'
 elif command -v bash >/dev/null 2>&1; then
-  bash -c 'exec 3<>/dev/tcp/%s/%d' 2>/dev/null && echo "ok -" || echo "fail -"
+  RUN=""
+  command -v timeout >/dev/null 2>&1 && RUN="timeout %d"
+  OUT="$($RUN bash -c 'a=${EPOCHREALTIME//[^0-9]/}
+if exec 3<>/dev/tcp/%s/%d; then
+  b=${EPOCHREALTIME//[^0-9]/}
+  exec 3<&-
+  if [ -n "$a" ] && [ -n "$b" ]; then echo "ok $(( (b-a)/1000 ))"; else echo "ok -"; fi
+fi' 2>/dev/null)"
+  if [ -n "$OUT" ]; then echo "$OUT"; else echo "fail -"; fi
 elif command -v nc >/dev/null 2>&1; then
   nc -z -w %d %s %d >/dev/null 2>&1 && echo "ok -" || echo "fail -"
 else
   echo "none -"
-fi`, host, port, probeTimeoutSeconds, host, port, probeTimeoutSeconds, host, port)
+fi`, host, port, probeTimeoutSeconds,
+		probeTimeoutSeconds, host, port,
+		probeTimeoutSeconds, host, port)
 }
 
 // tcpInjectCommand opens a connection and writes a marker, holding it open

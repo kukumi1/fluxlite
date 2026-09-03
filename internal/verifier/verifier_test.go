@@ -2,7 +2,9 @@ package verifier
 
 import (
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -83,5 +85,94 @@ func TestTCPProbeStartsClockAfterResolution(t *testing.T) {
 	}
 	if resolve > clock {
 		t.Fatal("计时起点跑到了域名解析前面，DNS 又会被算进链路延迟")
+	}
+}
+
+// runProbeWithoutPython3 exercises the bash fallback by running the script with
+// a PATH that cannot reach python3. That branch is the one minimal cloud images
+// actually take, and it is the branch a Go-string assertion cannot check: the
+// timing lives inside two levels of nested quoting.
+func runProbeWithoutPython3(t *testing.T, host string, port int) []string {
+	t.Helper()
+
+	bashPath, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("这台机器上没有 bash，跳过")
+	}
+	shPath, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("这台机器上没有 sh，跳过")
+	}
+
+	env := []string{"PATH=" + filepath.Dir(bashPath)}
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(strings.ToUpper(kv), "PATH=") {
+			env = append(env, kv)
+		}
+	}
+
+	// If python3 is reachable anyway the script takes the first branch and this
+	// test would silently assert nothing, so say so rather than pass falsely.
+	probe := exec.Command(shPath, "-c", "command -v python3")
+	probe.Env = env
+	if out, _ := probe.Output(); len(strings.TrimSpace(string(out))) > 0 {
+		t.Skipf("裁剪后的 PATH 里仍能找到 python3 (%s)，走不到 bash 分支，跳过",
+			strings.TrimSpace(string(out)))
+	}
+
+	cmd := exec.Command(shPath, "-c", tcpProbeCommand(host, port))
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("跑探测脚本失败: %v (输出 %q)", err, out)
+	}
+	fields := strings.Fields(strings.TrimSpace(string(out)))
+	if len(fields) != 2 {
+		t.Fatalf("探测输出必须是两段 %q，实际拿到 %q", "ok|fail <毫秒>", out)
+	}
+	return fields
+}
+
+func TestTCPProbeBashBranchTimesTheConnect(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+
+	fields := runProbeWithoutPython3(t, "127.0.0.1", ln.Addr().(*net.TCPAddr).Port)
+	if fields[0] != "ok" {
+		t.Fatalf("目标在监听，判定应为 ok，实际 %q", fields[0])
+	}
+	// "-" is what this branch used to return unconditionally, and it is what
+	// left hops permanently blank. A number is the whole point of the change.
+	if _, err := strconv.Atoi(fields[1]); err != nil {
+		t.Fatalf("bash 分支必须给出毫秒数而不是 %q", fields[1])
+	}
+}
+
+// TestTCPProbeBashBranchNeverReportsOkOnRefusal guards the failure mode that
+// would be worst here: bash's behaviour on a failed exec redirection differs
+// between posix and default mode, and a version that fell through to the echo
+// would report an unreachable landing as a healthy one.
+func TestTCPProbeBashBranchNeverReportsOkOnRefusal(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	if fields := runProbeWithoutPython3(t, "127.0.0.1", port); fields[0] != "fail" {
+		t.Fatalf("端口没人监听，判定必须是 fail，实际 %q", fields)
 	}
 }

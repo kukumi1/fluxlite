@@ -193,15 +193,23 @@ const probeTimeoutSeconds = 3
 // the digits are extracted by pattern rather than by splitting on ".". An empty
 // reading (bash 4) degrades to "-" instead of computing nonsense.
 //
-// Resolution happens before the clock starts. Timing it together with the
-// connect reported a landing that answers in 26ms as 250ms, because the target
-// was a DDNS name whose short TTL made almost every probe pay a full 243ms
-// lookup — which read as a bad route rather than as a cold cache. Callers
-// compare this number against ping, so it has to mean the same thing.
+// Both branches resolve before the clock starts, and both had to learn it
+// separately. Timing the lookup together with the connect reported a landing
+// that answers in 26ms as 250ms, because that target was a DDNS name whose
+// short TTL made almost every probe pay a full 243ms lookup — which read as a
+// bad route rather than as a cold cache. The bash branch was then written with
+// the same flaw and overstated a 27ms link as 30-38ms. Callers compare this
+// number against ping, so it has to mean the same thing.
 //
-// The resolved addresses are tried in order rather than only the first: a node
-// that advertises IPv6 it cannot actually route must still fall back to A,
-// which is what create_connection was doing for us before.
+// bash cannot resolve without help, so getent does it first and /dev/tcp is
+// handed a literal address. A node without getent keeps the old behaviour
+// rather than losing its reading: an inflated number beats a blank hop.
+//
+// In the python branch the resolved addresses are tried in order rather than
+// only the first: a node that advertises IPv6 it cannot actually route must
+// still fall back to A, which is what create_connection was doing for us
+// before. bash gets the same protection more cheaply by asking for A records
+// first and only widening to any family when there are none.
 func tcpProbeCommand(host string, port int) string {
 	return fmt.Sprintf(`
 if command -v python3 >/dev/null 2>&1; then
@@ -228,21 +236,28 @@ else:
             break
     print(("ok %%d" if ok else "fail %%d")%%((time.time()-t)*1000))'
 elif command -v bash >/dev/null 2>&1; then
+  H='%s'
+  IP=""
+  if command -v getent >/dev/null 2>&1; then
+    IP="$(getent ahostsv4 "$H" 2>/dev/null | awk '{print $1; exit}')"
+    [ -n "$IP" ] || IP="$(getent ahosts "$H" 2>/dev/null | awk '{print $1; exit}')"
+  fi
+  [ -n "$IP" ] || IP="$H"
   RUN=""
   command -v timeout >/dev/null 2>&1 && RUN="timeout %d"
   OUT="$($RUN bash -c 'a=${EPOCHREALTIME//[^0-9]/}
-if exec 3<>/dev/tcp/%s/%d; then
+if exec 3<>/dev/tcp/$1/$2; then
   b=${EPOCHREALTIME//[^0-9]/}
   exec 3<&-
   if [ -n "$a" ] && [ -n "$b" ]; then echo "ok $(( (b-a)/1000 ))"; else echo "ok -"; fi
-fi' 2>/dev/null)"
+fi' _ "$IP" %d 2>/dev/null)"
   if [ -n "$OUT" ]; then echo "$OUT"; else echo "fail -"; fi
 elif command -v nc >/dev/null 2>&1; then
   nc -z -w %d %s %d >/dev/null 2>&1 && echo "ok -" || echo "fail -"
 else
   echo "none -"
 fi`, host, port, probeTimeoutSeconds,
-		probeTimeoutSeconds, host, port,
+		host, probeTimeoutSeconds, port,
 		probeTimeoutSeconds, host, port)
 }
 

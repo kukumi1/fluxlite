@@ -75,16 +75,32 @@ func TestTCPProbeReportsFailWhenNothingListens(t *testing.T) {
 // rewritten: with the timer started before name resolution, a DDNS landing
 // answering in 26ms was reported as 250ms, because the lookup itself cost
 // 243ms and was being counted as link latency.
+//
+// Every branch is checked, not just the first. An earlier version of this test
+// only covered python, and the bash branch was subsequently written with the
+// very flaw the test existed to prevent — it overstated a 27ms link as 30-38ms
+// until a hand measurement caught it.
 func TestTCPProbeStartsClockAfterResolution(t *testing.T) {
 	script := tcpProbeCommand("example.invalid", 443)
 
-	resolve := strings.Index(script, "getaddrinfo")
-	clock := strings.Index(script, "t=time.time()")
-	if resolve < 0 || clock < 0 {
-		t.Fatalf("探测脚本里应当同时有 getaddrinfo 与计时起点，实际:\n%s", script)
-	}
-	if resolve > clock {
-		t.Fatal("计时起点跑到了域名解析前面，DNS 又会被算进链路延迟")
+	for _, tc := range []struct {
+		branch  string
+		resolve string
+		clock   string
+	}{
+		{"python3", "getaddrinfo", "t=time.time()"},
+		{"bash", "getent", "a=${EPOCHREALTIME"},
+	} {
+		resolve := strings.Index(script, tc.resolve)
+		clock := strings.Index(script, tc.clock)
+		if resolve < 0 || clock < 0 {
+			t.Fatalf("%s 分支里应当同时有 %q 与计时起点 %q，实际:\n%s",
+				tc.branch, tc.resolve, tc.clock, script)
+		}
+		if resolve > clock {
+			t.Errorf("%s 分支的计时起点跑到了域名解析前面，DNS 又会被算进链路延迟",
+				tc.branch)
+		}
 	}
 }
 

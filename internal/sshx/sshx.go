@@ -365,7 +365,7 @@ func (p *Pool) Get(ctx context.Context, node *model.Node) (*Client, error) {
 	p.mu.Lock()
 	if c, ok := p.clients[node.ID]; ok {
 		p.mu.Unlock()
-		if alive(c) {
+		if alive(ctx, c) {
 			return c, nil
 		}
 		// The node rebooted or the link dropped. Handing the dead client back
@@ -408,12 +408,45 @@ func (p *Pool) Dedicated(ctx context.Context, node *model.Node) (*Client, error)
 	return p.dialer.Dial(ctx, node)
 }
 
+// aliveTimeout bounds the keepalive round trip.
+//
+// One round trip to the far side of the world costs a few hundred milliseconds,
+// so this is generous. It exists for the case where there is no far side left:
+// when a node's address stops answering — an operator moving the machine to a
+// new IP is the usual cause — the cached connection is half-open. Datagrams
+// vanish and nothing is refused, so a reply that will never come is waited for
+// until the kernel gives up retransmitting, on the order of fifteen minutes.
+const aliveTimeout = 5 * time.Second
+
 // alive reports whether a cached connection still answers. A keepalive request
 // costs one round trip, far less than the handshake a false negative would
 // force, and unlike opening a session it leaves no state behind on the node.
-func alive(c *Client) bool {
-	_, _, err := c.Client.SendRequest("keepalive@openssh.com", true, nil)
-	return err == nil
+//
+// SendRequest has no deadline of its own, and every caller of Get queues behind
+// this check. Left unbounded it stalls the poller, which then never marks the
+// vanished node offline and leaves the panel reporting it as online, and it
+// stalls enrollment, which blocks until the proxy in front of the panel gives
+// up on the request.
+func alive(ctx context.Context, c *Client) bool {
+	// Buffered so the goroutine can finish and exit once the connection is
+	// eventually closed or errors, rather than parking forever on the send.
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := c.Client.SendRequest("keepalive@openssh.com", true, nil)
+		done <- err
+	}()
+
+	timer := time.NewTimer(aliveTimeout)
+	defer timer.Stop()
+
+	select {
+	case err := <-done:
+		return err == nil
+	case <-timer.C:
+		return false
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // Close tears down every cached client.

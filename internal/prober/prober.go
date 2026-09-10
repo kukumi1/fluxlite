@@ -163,6 +163,36 @@ except Exception:
 	},
 }
 
+// killListenerCmd stops a listener left behind by an earlier probe.
+//
+// The bracket around the hyphen is load-bearing, not decoration. pkill -f
+// matches against the full command line of every process, and one of those
+// processes is the shell sshd spawned to run this very command — whose command
+// line contains the pattern being searched for. Written plainly, the pattern
+// matches the command carrying it and the shell kills itself. As a character
+// class the pattern still matches "fluxlite-udp-probe" in the listener while
+// its own text does not.
+const killListenerCmd = `pkill -f 'fluxlite[-]udp-probe' 2>/dev/null`
+
+// resetProbeState kills any listener left over from an earlier run and removes
+// the log it wrote.
+//
+// The two halves are deliberately separate commands. Combined, the removal's
+// own argument puts the literal log path on the command line that pkill is
+// scanning, so the shell matches its own pattern and dies before reaching the
+// removal — silently, because a signalled remote command surfaces as an exit
+// code rather than an error. That is how the log came to survive every probe
+// and answer for runs it was never part of.
+func resetProbeState(ctx context.Context, target *ssh.Client, logPath string) error {
+	if _, err := sshx.Run(ctx, target, killListenerCmd); err != nil {
+		return err
+	}
+	if _, err := sshx.Run(ctx, target, fmt.Sprintf("rm -f %s", logPath)); err != nil {
+		return err
+	}
+	return nil
+}
+
 // ProbeUDP determines whether UDP datagrams sent from source reach target at
 // ingressAddr on the given port.
 //
@@ -200,13 +230,15 @@ func ProbeUDP(ctx context.Context, target, source *ssh.Client, ingressAddr strin
 		}, nil
 	}
 
-	cleanup := fmt.Sprintf("pkill -f 'fluxlite-udp-probe' 2>/dev/null; rm -f %s", logPath)
 	defer func() {
 		// Best effort: a leftover listener exits on its own timeout.
-		_, _ = sshx.Run(context.WithoutCancel(ctx), target, cleanup)
+		_ = resetProbeState(context.WithoutCancel(ctx), target, logPath)
 	}()
 
-	if _, err := sshx.Run(ctx, target, cleanup); err != nil {
+	// The log must be gone before the listener starts. Every verdict below is
+	// a grep over this file, so a surviving one from an earlier run answers
+	// for this one.
+	if err := resetProbeState(ctx, target, logPath); err != nil {
 		return nil, fmt.Errorf("probe udp: cleanup: %w", err)
 	}
 	if _, err := sshx.Run(ctx, target, startCmd); err != nil {

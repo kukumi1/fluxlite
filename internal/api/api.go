@@ -24,6 +24,9 @@ import (
 
 const sessionCookie = "fluxlite_session"
 
+// auditWriteTimeout bounds an audit write that has outlived its request.
+const auditWriteTimeout = 5 * time.Second
+
 type contextKey string
 
 const userContextKey contextKey = "user"
@@ -299,7 +302,16 @@ func (s *Server) audit(r *http.Request, action, target, detail string) {
 		Detail: detail,
 		IP:     clientIP(r),
 	}
-	if err := s.svc.Store().AppendAudit(r.Context(), entry); err != nil {
+
+	// Audit is called after the action has taken effect, so tying the write to
+	// the request context gets the ordering exactly backwards: the client
+	// disconnecting erases the record of something that already happened, and
+	// the slow requests most likely to be abandoned are the ones worth
+	// recording. Detach, but keep a deadline so a stuck write cannot pile up.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), auditWriteTimeout)
+	defer cancel()
+
+	if err := s.svc.Store().AppendAudit(ctx, entry); err != nil {
 		s.log.Error("append audit log", "action", action, "error", err)
 	}
 }

@@ -14,6 +14,19 @@ import (
 // EnrollTTL bounds how long a generated command stays usable.
 const EnrollTTL = 60 * time.Minute
 
+// enrollProbeTimeout bounds the reachability check run at the end of an
+// enrollment.
+//
+// The number is chosen against the reverse proxy in front of the panel rather
+// than against the probe: proxies commonly abandon an origin request somewhere
+// between sixty and a hundred seconds, and Cloudflare's limit is a hundred. The
+// enrollment is already committed by the time the probe starts, so a proxy
+// timing the request out costs the operator the verdict and tells them, quite
+// wrongly, that nothing was registered. A successful probe takes about ten
+// seconds; this leaves room for one failed dial and still answers well inside
+// any of those limits.
+const enrollProbeTimeout = 45 * time.Second
+
 var (
 	ErrEnrollTokenInvalid = errors.New("enrollment token is invalid, expired or already used")
 	ErrEnrollNameTaken    = errors.New("a node with this name already exists")
@@ -207,7 +220,14 @@ func (s *Service) CompleteEnroll(ctx context.Context, report EnrollReport) (*Enr
 	// Registering a node the panel cannot dial is worse than useless: it looks
 	// healthy in the list and fails at the worst moment. Probe now and report
 	// the verdict while the operator is still at the terminal.
-	probeCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	//
+	// The probe is detached from the caller's cancellation on purpose. Every
+	// write above has already landed and the token is spent, so from here on
+	// the only question is whether the panel's record of the node ends up
+	// matching reality. Inheriting the request context means an operator who
+	// hits Ctrl-C — or a proxy that gives up on the request — also cancels the
+	// status write, leaving the node recorded as whatever it was before.
+	probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), enrollProbeTimeout)
 	defer cancel()
 
 	result, err := s.ProbeNode(probeCtx, node.ID)

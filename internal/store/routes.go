@@ -152,9 +152,18 @@ func (s *Store) ListRoutes(ctx context.Context) ([]*model.Route, error) {
 }
 
 // RoutesOnNode returns routes that traverse the given node.
+//
+// The column list has to match scanRoute exactly. It did not when the quota
+// columns were added: this query kept its original eight while scanRoute grew
+// to eleven, so it failed with a Scan arity error the moment a node actually
+// had a route — which is precisely when DeleteNode calls it to refuse the
+// delete. The refusal still happened, but as an incomprehensible SQL error
+// instead of "node in use by 2 route(s)".
 func (s *Store) RoutesOnNode(ctx context.Context, nodeID int64) ([]*model.Route, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT r.id, r.name, r.slug, r.target, r.protocol, r.enabled, r.created_at, r.updated_at
+		SELECT r.id, r.name, r.slug, r.target, r.protocol, r.enabled,
+			r.quota_bytes, r.quota_reset_day, r.quota_paused_at,
+			r.created_at, r.updated_at
 		FROM routes r
 		JOIN route_hops h ON h.route_id = r.id
 		WHERE h.node_id = ?

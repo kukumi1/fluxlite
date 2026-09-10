@@ -232,16 +232,31 @@ PAYLOAD="$(printf '{"token":"%s","arch":"%s","os_id":"%s","init_system":"%s","re
 RESP="$(http_post "$PANEL/api/enroll/report" "$PAYLOAD")" || die "上报失败，请检查网络与令牌有效期"
 
 say ""
+REINSTALL=0
+printf '%s' "$RESP" | grep -q '"reinstalled":true' && REINSTALL=1
+
 if printf '%s' "$RESP" | grep -q '"verified":true'; then
     NODE_NAME="$(printf '%s' "$RESP" | sed -n 's/.*"name":"\([^"]*\)".*/\1/p')"
     UDP="$(printf '%s' "$RESP" | sed -n 's/.*"udp_status":"\([^"]*\)".*/\1/p')"
-    printf '\033[32m注册成功\033[0m — 节点 %s 已就绪\n' "$NODE_NAME"
-    say "面板已成功回连本机，UDP 穿透: ${UDP:-未知}"
-    say ""
-    say "现在可以在面板的「链路」页把这台机器加入转发链了。"
+    if [ "$REINSTALL" = 1 ]; then
+        printf '\033[32m重装完成\033[0m — 节点 %s 已恢复\n' "$NODE_NAME"
+        say "面板已重新回连本机，UDP 穿透: ${UDP:-未知}"
+        say ""
+        say "原有链路会在下一轮巡检（最多 5 分钟）自动重新下发，不必手工重建。"
+        say "想立刻恢复，可在面板「链路」页对相关链路点「下发」。"
+    else
+        printf '\033[32m注册成功\033[0m — 节点 %s 已就绪\n' "$NODE_NAME"
+        say "面板已成功回连本机，UDP 穿透: ${UDP:-未知}"
+        say ""
+        say "现在可以在面板的「链路」页把这台机器加入转发链了。"
+    fi
 else
     DETAIL="$(printf '%s' "$RESP" | sed -n 's/.*"detail":"\([^"]*\)".*/\1/p')"
-    printf '\033[33m节点已登记，但面板回连失败\033[0m\n'
+    if [ "$REINSTALL" = 1 ]; then
+        printf '\033[33m凭据已更新，但面板回连失败\033[0m\n'
+    else
+        printf '\033[33m节点已登记，但面板回连失败\033[0m\n'
+    fi
     say "原因: ${DETAIL:-未知}"
     say ""
     say "常见原因:"

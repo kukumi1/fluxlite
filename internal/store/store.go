@@ -285,6 +285,13 @@ var migrations = []string{
 	// what existing databases run. alreadyApplied skips it wherever the column
 	// is already present, so both paths converge.
 	`ALTER TABLE users ADD COLUMN avatar BLOB`,
+
+	// A ticket that names a target node replaces that node's credentials
+	// instead of creating a second one, which is what a reinstalled machine
+	// needs: same node id, so every route still points at it. No foreign key,
+	// because a token outlives nothing — it expires in an hour, and completion
+	// re-reads the node anyway.
+	`ALTER TABLE enroll_tokens ADD COLUMN target_node_id INTEGER`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

@@ -760,6 +760,13 @@ tbody tr:last-child td {
   border-radius: var(--radius);
 }
 
+/* min-width:0 lets a long line wrap inside the flex item instead of forcing
+   the banner wider than its dialog. */
+.banner-body {
+  flex: 1;
+  min-width: 0;
+}
+
 .banner.err {
   background: color-mix(in oklch, var(--err) 10%, transparent);
   border-color: color-mix(in oklch, var(--err) 38%, transparent);

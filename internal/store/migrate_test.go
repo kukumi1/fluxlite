@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -152,9 +153,20 @@ func TestMigrateRepairsColumnSkippedByMidListInsert(t *testing.T) {
 	if _, err := st.db.ExecContext(ctx, `ALTER TABLE users DROP COLUMN avatar`); err != nil {
 		t.Fatalf("模拟缺列失败: %v", err)
 	}
-	// 版本停在「倒数第二条已应用」，即那条修补迁移还没跑过。
+	// 版本要停在「那条修补迁移之前」。不能写 len(migrations)-1 —— 之后每追加
+	// 一条迁移，这个假设就失效一次（追加 enroll_tokens.target_node_id 时就是
+	// 这么挂的）。这里按内容定位，列表怎么长都不影响。
+	repair := -1
+	for i, m := range migrations {
+		if strings.Contains(m, "ALTER TABLE users ADD COLUMN avatar") {
+			repair = i // 取最后一次出现的那条，也就是修补用的那条
+		}
+	}
+	if repair < 0 {
+		t.Fatal("迁移列表里找不到 avatar 修补条目，测试已与实现脱节")
+	}
 	if _, err := st.db.ExecContext(ctx,
-		`UPDATE schema_version SET version = ?`, len(migrations)-1); err != nil {
+		`UPDATE schema_version SET version = ?`, repair); err != nil {
 		t.Fatalf("回退版本号失败: %v", err)
 	}
 	st.Close()
@@ -187,5 +199,88 @@ func TestMigrateRepairsColumnSkippedByMidListInsert(t *testing.T) {
 	}
 	if string(got) != "not-a-real-png" {
 		t.Fatalf("读回来的头像不对: %q", got)
+	}
+}
+
+// 追加列的迁移在老库上必须真的跑到。avatar 那次就是因为插在列表中间，
+// 已迁移完的库整条跳过、线上静默缺列，所以每加一列都值得守一次。
+func TestMigrateAddsEnrollTargetNodeColumnToExistingDatabase(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "fluxlite.db")
+
+	st, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx,
+		`ALTER TABLE enroll_tokens DROP COLUMN target_node_id`); err != nil {
+		t.Fatalf("模拟老库缺列失败: %v", err)
+	}
+	if _, err := st.db.ExecContext(ctx,
+		`UPDATE schema_version SET version = ?`, len(migrations)-1); err != nil {
+		t.Fatalf("回退版本号失败: %v", err)
+	}
+	st.Close()
+
+	again, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("重新打开（本该补上缺列）: %v", err)
+	}
+	defer again.Close()
+
+	has, err := again.hasColumn(ctx, "enroll_tokens", "target_node_id")
+	if err != nil {
+		t.Fatalf("检查列: %v", err)
+	}
+	if !has {
+		t.Fatal("老库没补上 enroll_tokens.target_node_id，重装功能在老库上会直接报错")
+	}
+}
+
+// 券里带了目标节点就必须能存能取。这个字段错了不会报错，只会让重装悄悄
+// 变成「新建了第二个节点」，而原节点连同链路仍然是坏的。
+func TestEnrollTokenRoundTripsTargetNode(t *testing.T) {
+	ctx := context.Background()
+	st := openTemp(t)
+
+	target := int64(7)
+	tok := &EnrollToken{
+		Token:         "reinstall-1",
+		Name:          "香港中转",
+		Host:          "203.0.113.9",
+		SSHPort:       22,
+		SSHUser:       "root",
+		PortStart:     10000,
+		PortEnd:       20000,
+		PrivateKey:    []byte("sealed"),
+		AuthorizedKey: "ssh-ed25519 AAAA fluxlite",
+		ExpiresAt:     time.Now().UTC().Add(time.Hour),
+		TargetNodeID:  &target,
+	}
+	if err := st.CreateEnrollToken(ctx, tok); err != nil {
+		t.Fatalf("建券: %v", err)
+	}
+
+	got, err := st.EnrollTokenByValue(ctx, "reinstall-1")
+	if err != nil {
+		t.Fatalf("读券: %v", err)
+	}
+	if got.TargetNodeID == nil || *got.TargetNodeID != target {
+		t.Fatalf("目标节点没有存下来: %v", got.TargetNodeID)
+	}
+
+	// 普通注册的券必须仍然是 nil，否则会误伤已有节点。
+	plain := *tok
+	plain.Token = "fresh-1"
+	plain.TargetNodeID = nil
+	if err := st.CreateEnrollToken(ctx, &plain); err != nil {
+		t.Fatalf("建普通券: %v", err)
+	}
+	back, err := st.EnrollTokenByValue(ctx, "fresh-1")
+	if err != nil {
+		t.Fatalf("读普通券: %v", err)
+	}
+	if back.TargetNodeID != nil {
+		t.Fatalf("普通注册的券不该带目标节点，实际 %v", *back.TargetNodeID)
 	}
 }

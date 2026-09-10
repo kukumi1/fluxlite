@@ -46,6 +46,44 @@ type EnrollTicket struct {
 // CreateEnrollTicket generates a key pair and a one-shot token, returning the
 // command to paste onto the new machine.
 func (s *Service) CreateEnrollTicket(ctx context.Context, baseURL string, req EnrollRequest) (*EnrollTicket, error) {
+	if _, err := s.store.NodeByName(ctx, req.Name); err == nil {
+		return nil, ErrEnrollNameTaken
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return nil, err
+	}
+	return s.issueEnrollTicket(ctx, baseURL, req, nil)
+}
+
+// CreateReenrollTicket issues a ticket that re-credentials an existing node.
+//
+// A reinstalled machine presents a new host key and has never heard of the
+// panel's key, so the panel cannot dial it and cannot fix that over SSH — the
+// operator has to run the installer again. Deleting and re-adding the node
+// would do it, except DeleteNode refuses while any route references the node,
+// so the real cost is tearing down every route and rebuilding it by hand.
+//
+// The target is taken from the node record rather than from the caller. Nothing
+// about the machine's identity is re-entered, so nothing about it can be
+// mistyped, and the normal enrolment path keeps no way to aim at an existing
+// node.
+func (s *Service) CreateReenrollTicket(ctx context.Context, baseURL string, nodeID int64) (*EnrollTicket, error) {
+	node, err := s.store.NodeByID(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	return s.issueEnrollTicket(ctx, baseURL, EnrollRequest{
+		Name:      node.Name,
+		Host:      node.Host,
+		SSHPort:   node.SSHPort,
+		SSHUser:   node.SSHUser,
+		PortStart: node.PortStart,
+		PortEnd:   node.PortEnd,
+		ViaNodeID: node.ViaNodeID,
+		SkipUDP:   node.SkipUDPProbe,
+	}, &node.ID)
+}
+
+func (s *Service) issueEnrollTicket(ctx context.Context, baseURL string, req EnrollRequest, target *int64) (*EnrollTicket, error) {
 	if err := model.ValidateDisplayName(req.Name); err != nil {
 		return nil, err
 	}
@@ -60,11 +98,6 @@ func (s *Service) CreateEnrollTicket(ctx context.Context, baseURL string, req En
 	}
 	if req.PortStart < 1 || req.PortEnd > 65535 || req.PortStart > req.PortEnd {
 		return nil, model.ErrNodePortRange
-	}
-	if _, err := s.store.NodeByName(ctx, req.Name); err == nil {
-		return nil, ErrEnrollNameTaken
-	} else if !errors.Is(err, store.ErrNotFound) {
-		return nil, err
 	}
 
 	pair, err := cryptox.GenerateSSHKeyPair("fluxlite-" + req.Name)
@@ -94,6 +127,7 @@ func (s *Service) CreateEnrollTicket(ctx context.Context, baseURL string, req En
 		PrivateKey:    sealed,
 		AuthorizedKey: pair.AuthorizedKey,
 		ExpiresAt:     time.Now().UTC().Add(EnrollTTL),
+		TargetNodeID:  target,
 	}
 	if err := s.store.CreateEnrollToken(ctx, ticket); err != nil {
 		return nil, err
@@ -124,6 +158,11 @@ type EnrollOutcome struct {
 	Verified  bool   `json:"verified"`
 	Detail    string `json:"detail"`
 	UDPStatus string `json:"udp_status"`
+
+	// Reinstalled distinguishes a node that was re-credentialled in place from
+	// a newly created one, so the terminal can say which happened and the audit
+	// trail can record that a host key pin was reset.
+	Reinstalled bool `json:"reinstalled"`
 }
 
 // AuthorizedKeyForToken returns the public key a pending enrollment should
@@ -155,6 +194,84 @@ func (s *Service) CompleteEnroll(ctx context.Context, report EnrollReport) (*Enr
 		return nil, fmt.Errorf("unsupported init system %q reported by the node", report.InitSystem)
 	}
 
+	node, reinstalled, err := s.applyEnrollment(ctx, t, report, init)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.store.MarkEnrollTokenUsed(ctx, report.Token, node.ID); err != nil {
+		return nil, err
+	}
+
+	outcome := &EnrollOutcome{NodeID: node.ID, Name: node.Name, Reinstalled: reinstalled}
+
+	// Registering a node the panel cannot dial is worse than useless: it looks
+	// healthy in the list and fails at the worst moment. Probe now and report
+	// the verdict while the operator is still at the terminal.
+	probeCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+
+	result, err := s.ProbeNode(probeCtx, node.ID)
+	if err != nil {
+		lead := "节点已登记，但面板拨号失败："
+		if reinstalled {
+			lead = "节点凭据已更新，但面板拨号失败："
+		}
+		outcome.Detail = lead + err.Error()
+		return outcome, nil
+	}
+
+	outcome.Verified = true
+	outcome.Detail = fmt.Sprintf("面板已成功连接：%s/%s %s，realm %s",
+		result.Facts.OSID, result.Facts.Arch, result.Facts.InitSystem,
+		orNone(result.Facts.RealmVersion))
+
+	switch {
+	case result.UDP == nil || result.UDP.Supported == nil:
+		outcome.UDPStatus = "未知"
+	case *result.UDP.Supported:
+		outcome.UDPStatus = "通"
+	default:
+		outcome.UDPStatus = "不通"
+	}
+	return outcome, nil
+}
+
+// applyEnrollment either creates the node the ticket describes or, when the
+// ticket names one, re-credentials that node in place.
+//
+// Re-credentialling keeps the node's id, and with it every route hop, port
+// allocation and jump-host reference pointing at it. Only what the reinstall
+// actually invalidated is replaced.
+//
+// Clearing HostKey is the one dangerous line here. That pin is what stops a
+// machine on the path from impersonating a node and collecting the panel's
+// root session, so it is never dropped on a whim — only when an operator has
+// explicitly said this machine was rebuilt. The caller audits it.
+func (s *Service) applyEnrollment(ctx context.Context, t *store.EnrollToken,
+	report EnrollReport, init model.InitSystem) (*model.Node, bool, error) {
+
+	if t.TargetNodeID != nil {
+		node, err := s.store.NodeByID(ctx, *t.TargetNodeID)
+		if err != nil {
+			return nil, false, fmt.Errorf("reinstall target: %w", err)
+		}
+		node.AuthType = model.AuthKey
+		node.AuthSecret = t.PrivateKey
+		node.HostKey = ""
+		node.Arch = report.Arch
+		node.OSID = report.OSID
+		node.InitSystem = init
+		node.RealmVersion = report.RealmVersion
+		node.Status = model.StatusUnknown
+		// A rebuilt machine may well answer differently, and the old verdict
+		// would otherwise stand unchallenged until something re-probed.
+		node.UDPCapable = nil
+		if err := s.store.UpdateNode(ctx, node); err != nil {
+			return nil, false, err
+		}
+		return node, true, nil
+	}
+
 	node := &model.Node{
 		Name:         t.Name,
 		Host:         t.Host,
@@ -173,40 +290,9 @@ func (s *Service) CompleteEnroll(ctx context.Context, report EnrollReport) (*Enr
 		Status:       model.StatusUnknown,
 	}
 	if err := s.store.CreateNode(ctx, node); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	if err := s.store.MarkEnrollTokenUsed(ctx, report.Token, node.ID); err != nil {
-		return nil, err
-	}
-
-	outcome := &EnrollOutcome{NodeID: node.ID, Name: node.Name}
-
-	// Registering a node the panel cannot dial is worse than useless: it looks
-	// healthy in the list and fails at the worst moment. Probe now and report
-	// the verdict while the operator is still at the terminal.
-	probeCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
-	defer cancel()
-
-	result, err := s.ProbeNode(probeCtx, node.ID)
-	if err != nil {
-		outcome.Detail = "节点已登记，但面板拨号失败：" + err.Error()
-		return outcome, nil
-	}
-
-	outcome.Verified = true
-	outcome.Detail = fmt.Sprintf("面板已成功连接：%s/%s %s，realm %s",
-		result.Facts.OSID, result.Facts.Arch, result.Facts.InitSystem,
-		orNone(result.Facts.RealmVersion))
-
-	switch {
-	case result.UDP == nil || result.UDP.Supported == nil:
-		outcome.UDPStatus = "未知"
-	case *result.UDP.Supported:
-		outcome.UDPStatus = "通"
-	default:
-		outcome.UDPStatus = "不通"
-	}
-	return outcome, nil
+	return node, false, nil
 }
 
 func orNone(s string) string {

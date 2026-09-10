@@ -38,6 +38,14 @@ export function Modal({ title, onClose, children }: ModalProps) {
   );
 }
 
+// Banner keeps its content in one flex item on purpose. The stripe itself is a
+// flex row, so passing children straight through turned every inline tag into
+// its own column — a sentence with two <b> in it came out as five narrow
+// columns of text instead of a paragraph.
 export function Banner({ kind, children }: { kind: "err" | "ok" | "warn"; children: ReactNode }) {
-  return <div className={`banner ${kind}`}>{children}</div>;
+  return (
+    <div className={`banner ${kind}`}>
+      <div className="banner-body">{children}</div>
+    </div>
+  );
 }

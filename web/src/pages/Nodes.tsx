@@ -29,6 +29,7 @@ import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { EnrollDialog } from "./EnrollDialog";
+import { ReinstallDialog } from "./ReinstallDialog";
 
 const emptyInput: NodeInput = {
   name: "",
@@ -118,6 +119,7 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
   const [busyId, setBusyId] = useState<number | null>(null);
   const [probe, setProbe] = useState<{ node: string; result: ProbeResult } | null>(null);
   const [enrolling, setEnrolling] = useState(false);
+  const [reinstalling, setReinstalling] = useState<Node | null>(null);
   const [removed, setRemoved] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<Record<string, NodeMetrics>>({});
   const [view, setView] = useState<NodeView>(storedNodeView);
@@ -157,6 +159,13 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
         )}
         <button className="btn sm" onClick={() => setEditing(n)}>
           编辑
+        </button>
+        <button
+          className="btn sm"
+          title="机器重装过系统？在这里拿一条命令重新接管，链路不用重建"
+          onClick={() => setReinstalling(n)}
+        >
+          重装
         </button>
         <button className="btn sm danger" disabled={busy} onClick={() => void remove(n)}>
           删除
@@ -484,6 +493,14 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
             转发内核 realm 如果还被别的服务引用会被保留，加 <code>--purge-realm</code> 可强制删除。
           </p>
         </Modal>
+      )}
+
+      {reinstalling && (
+        <ReinstallDialog
+          node={reinstalling}
+          onClose={() => setReinstalling(null)}
+          onDone={() => void load()}
+        />
       )}
 
       {enrolling && (

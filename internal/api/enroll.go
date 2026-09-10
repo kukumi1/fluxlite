@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/kukumi1/fluxlite/internal/service"
@@ -42,6 +43,23 @@ func (s *Server) handleEnrollTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "enroll.ticket", req.Name, req.Host)
+	writeJSON(w, http.StatusCreated, ticket)
+}
+
+// handleReenrollTicket issues an installer command for a machine that has been
+// rebuilt, aimed at the node record it already has.
+func (s *Server) handleReenrollTicket(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	ticket, err := s.svc.CreateReenrollTicket(r.Context(), externalBaseURL(r), id)
+	if err != nil {
+		writeError(w, statusForError(err), err.Error())
+		return
+	}
+	s.audit(r, "enroll.reinstall_ticket", strconv.FormatInt(id, 10),
+		"重装命令已生成；完成后该节点的主机指纹将被重置")
 	writeJSON(w, http.StatusCreated, ticket)
 }
 
@@ -92,7 +110,13 @@ func (s *Server) handleEnrollReport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, statusForError(err), err.Error())
 		return
 	}
-	s.audit(r, "enroll.complete", outcome.Name, outcome.Detail)
+	action := "enroll.complete"
+	if outcome.Reinstalled {
+		// Worth its own action: this path replaced a node's credentials and
+		// dropped its pinned host key, which enroll.complete never does.
+		action = "enroll.reinstall_complete"
+	}
+	s.audit(r, action, outcome.Name, outcome.Detail)
 	writeJSON(w, http.StatusOK, outcome)
 }
 

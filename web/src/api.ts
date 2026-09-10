@@ -297,6 +297,9 @@ export const api = {
   clearAvatar: () => request<{ avatar: string }>("/account/avatar", { method: "DELETE" }),
 
   enrollTicket: (input: EnrollRequest) => post<EnrollTicket>("/enroll/ticket", input),
+  // Reinstall reuses the node's own record, so nothing about the machine is
+  // re-entered and the node id — and every route hanging off it — survives.
+  reenrollTicket: (id: number) => post<EnrollTicket>(`/nodes/${id}/reenroll`),
 
   listNodes: () => request<Node[] | null>("/nodes"),
   createNode: (input: NodeInput) => post<Node>("/nodes", input),

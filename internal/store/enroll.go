@@ -25,6 +25,12 @@ type EnrollToken struct {
 	UsedAt        *time.Time
 	NodeID        *int64
 	CreatedAt     time.Time
+
+	// TargetNodeID names an existing node this ticket re-credentials rather
+	// than a new one it creates. Reinstalling a machine changes its host key
+	// and wipes the panel's key, and re-adding it by hand would orphan every
+	// route that references it.
+	TargetNodeID *int64
 }
 
 // Usable reports whether the token can still enroll a node.
@@ -38,11 +44,11 @@ func (s *Store) CreateEnrollToken(ctx context.Context, t *EnrollToken) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO enroll_tokens (token, name, host, ssh_port, ssh_user,
 			port_start, port_end, via_node_id, skip_udp_probe, private_key,
-			authorized_key, expires_at, created_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			authorized_key, expires_at, created_at, target_node_id)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		t.Token, t.Name, t.Host, t.SSHPort, t.SSHUser, t.PortStart, t.PortEnd,
 		nullInt64(t.ViaNodeID), t.SkipUDPProbe, t.PrivateKey, t.AuthorizedKey,
-		t.ExpiresAt.UTC(), t.CreatedAt)
+		t.ExpiresAt.UTC(), t.CreatedAt, nullInt64(t.TargetNodeID))
 	if err != nil {
 		return fmt.Errorf("create enroll token: %w", err)
 	}
@@ -54,15 +60,15 @@ func (s *Store) EnrollTokenByValue(ctx context.Context, token string) (*EnrollTo
 	row := s.db.QueryRowContext(ctx, `
 		SELECT token, name, host, ssh_port, ssh_user, port_start, port_end,
 			via_node_id, skip_udp_probe, private_key, authorized_key, expires_at,
-			used_at, node_id, created_at
+			used_at, node_id, created_at, target_node_id
 		FROM enroll_tokens WHERE token = ?`, token)
 
 	var t EnrollToken
-	var via, nodeID sql.NullInt64
+	var via, nodeID, target sql.NullInt64
 	var used sql.NullTime
 	err := row.Scan(&t.Token, &t.Name, &t.Host, &t.SSHPort, &t.SSHUser,
 		&t.PortStart, &t.PortEnd, &via, &t.SkipUDPProbe, &t.PrivateKey,
-		&t.AuthorizedKey, &t.ExpiresAt, &used, &nodeID, &t.CreatedAt)
+		&t.AuthorizedKey, &t.ExpiresAt, &used, &nodeID, &t.CreatedAt, &target)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -74,6 +80,9 @@ func (s *Store) EnrollTokenByValue(ctx context.Context, token string) (*EnrollTo
 	}
 	if nodeID.Valid {
 		t.NodeID = &nodeID.Int64
+	}
+	if target.Valid {
+		t.TargetNodeID = &target.Int64
 	}
 	if used.Valid {
 		t.UsedAt = &used.Time
@@ -106,7 +115,7 @@ func (s *Store) ListPendingEnrollTokens(ctx context.Context) ([]*EnrollToken, er
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT token, name, host, ssh_port, ssh_user, port_start, port_end,
 			via_node_id, skip_udp_probe, private_key, authorized_key, expires_at,
-			used_at, node_id, created_at
+			used_at, node_id, created_at, target_node_id
 		FROM enroll_tokens
 		WHERE used_at IS NULL AND expires_at > ?
 		ORDER BY created_at DESC`, time.Now().UTC())
@@ -118,15 +127,19 @@ func (s *Store) ListPendingEnrollTokens(ctx context.Context) ([]*EnrollToken, er
 	var out []*EnrollToken
 	for rows.Next() {
 		var t EnrollToken
-		var via, nodeID sql.NullInt64
+		var via, nodeID, target sql.NullInt64
 		var used sql.NullTime
 		if err := rows.Scan(&t.Token, &t.Name, &t.Host, &t.SSHPort, &t.SSHUser,
 			&t.PortStart, &t.PortEnd, &via, &t.SkipUDPProbe, &t.PrivateKey,
-			&t.AuthorizedKey, &t.ExpiresAt, &used, &nodeID, &t.CreatedAt); err != nil {
+			&t.AuthorizedKey, &t.ExpiresAt, &used, &nodeID, &t.CreatedAt,
+			&target); err != nil {
 			return nil, fmt.Errorf("scan enroll token: %w", err)
 		}
 		if via.Valid {
 			t.ViaNodeID = &via.Int64
+		}
+		if target.Valid {
+			t.TargetNodeID = &target.Int64
 		}
 		out = append(out, &t)
 	}

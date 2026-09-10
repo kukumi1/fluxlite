@@ -558,6 +558,15 @@ func (s *Service) SampleRoute(ctx context.Context, id int64) error {
 	return firstErr
 }
 
+// routeCleanupTimeout bounds one hop's teardown while a route is being deleted.
+//
+// Deleting a route must not depend on the machine still being there. Tearing
+// down a live relay is a handful of short commands and finishes in a couple of
+// seconds; anything past this budget is a machine that is not going to answer,
+// and waiting longer cannot change the outcome — the relay stays behind either
+// way, and the leftover reported to the operator says so.
+const routeCleanupTimeout = 10 * time.Second
+
 // RouteLeftover names a node whose relay outlived the route's deletion.
 type RouteLeftover struct {
 	NodeID   int64  `json:"node_id"`
@@ -597,9 +606,28 @@ func (s *Service) DeleteRoute(ctx context.Context, id int64) ([]RouteLeftover, e
 			})
 			continue
 		}
-		if rerr := s.applier.Remove(ctx, node, route.Slug); rerr != nil {
+
+		// Every other node gets a short budget rather than a status check.
+		// "Not offline" is not the same as "answering": a node still marked
+		// online may have died a second ago, and one marked unknown may be
+		// perfectly reachable — skipping it on the label would strand a relay
+		// that could have been removed. Bounding the attempt keeps the fast
+		// path fast and stops an unreachable machine from holding the delete
+		// open for the whole SSH timeout, which is what turned a delete into a
+		// spinner that ends in a failed request.
+		cleanupCtx, cancel := context.WithTimeout(ctx, routeCleanupTimeout)
+		rerr := s.applier.Remove(cleanupCtx, node, route.Slug)
+		timedOut := errors.Is(cleanupCtx.Err(), context.DeadlineExceeded)
+		cancel()
+
+		if rerr != nil {
+			reason := rerr.Error()
+			if timedOut {
+				reason = fmt.Sprintf("node did not answer within %s, cleanup was not completed",
+					routeCleanupTimeout)
+			}
 			leftovers = append(leftovers, RouteLeftover{
-				NodeID: node.ID, NodeName: node.Name, Reason: rerr.Error(),
+				NodeID: node.ID, NodeName: node.Name, Reason: reason,
 			})
 		}
 	}

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"path/filepath"
 	"testing"
 	"time"
@@ -17,9 +18,11 @@ func newReinstallService(t *testing.T) *Service {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
-	// applyEnrollment only touches the store; leaving the ssh/applier
-	// collaborators nil keeps the test on the decision it is actually about.
-	return &Service{store: st}
+	// The applier is deliberately left nil: these tests assert on paths that
+	// must never dial a machine, so touching it is a panic rather than a
+	// silently-passing test. The logger is real because DeleteRoute reports
+	// leftovers through it.
+	return &Service{store: st, log: slog.Default()}
 }
 
 func seedReinstallNode(t *testing.T, s *Service) *model.Node {
@@ -183,5 +186,47 @@ func TestApplyEnrollmentFailsWhenTargetNodeIsGone(t *testing.T) {
 	}
 	if len(nodes) != 0 {
 		t.Fatalf("失败路径不该留下节点，实际 %d 个", len(nodes))
+	}
+}
+
+// 删除链路时对着一台已知离线的机器拨号，等满 SSH 超时也改变不了结果，只会把
+// 删除请求拖成「处理中」然后失败 —— 这正是 CDT-HK 换 IP 之后删不掉的原因。
+//
+// 这里把 applier 留成 nil：只要还去拨号就会 panic，所以这条测试守的是「一次
+// 都不许碰 applier」，而不只是返回值对不对。
+func TestDeleteRouteSkipsDialForOfflineNodeAndStillDeletes(t *testing.T) {
+	ctx := context.Background()
+	s := newReinstallService(t)
+
+	node := seedReinstallNode(t, s)
+	node.Status = model.StatusOffline
+	if err := s.store.UpdateNode(ctx, node); err != nil {
+		t.Fatalf("置为离线: %v", err)
+	}
+
+	route := &model.Route{
+		Name: "要删掉的链路", Slug: "to-delete", Target: "203.0.113.9:443",
+		Protocol: model.ProtocolTCP, Enabled: true, EntryPort: 10001,
+		Hops: []model.RouteHop{{NodeID: node.ID, HopOrder: 0, RelayPort: 10001}},
+	}
+	if err := s.store.CreateRoute(ctx, route); err != nil {
+		t.Fatalf("建链路: %v", err)
+	}
+
+	leftovers, err := s.DeleteRoute(ctx, route.ID)
+	if err != nil {
+		t.Fatalf("删除应当成功（机器没了也要删得掉）: %v", err)
+	}
+
+	// 删除必须真的发生，而不是因为清理失败就把链路留下。
+	if _, err := s.store.RouteByID(ctx, route.ID); err == nil {
+		t.Fatal("链路还在，删除没生效")
+	}
+	// 机器上的 realm 没被清掉这件事必须如实报出来，不能默默吞掉。
+	if len(leftovers) != 1 {
+		t.Fatalf("应当报出 1 条未清理项，实际 %d 条", len(leftovers))
+	}
+	if leftovers[0].NodeName != node.Name {
+		t.Errorf("未清理项指向的节点不对: %q", leftovers[0].NodeName)
 	}
 }

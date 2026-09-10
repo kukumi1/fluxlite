@@ -62,3 +62,50 @@ func TestKillPatternMatchesEveryListener(t *testing.T) {
 		})
 	}
 }
+
+// Minimal Debian and Ubuntu images ship none of python3, socat or nc, so the
+// probe used to give up on them and report "unknown" forever. perl-base is
+// Essential on those systems and cannot be missing.
+func TestPerlListenerIsAvailableAsFallback(t *testing.T) {
+	var names []string
+	for _, b := range listenerBackends {
+		names = append(names, b.name)
+	}
+
+	if names[len(names)-1] != "perl" {
+		t.Errorf("perl should be tried last, after the purpose-built tools; order is %v", names)
+	}
+
+	var perl *struct {
+		name  string
+		check string
+		start func(port int, logPath string) string
+	}
+	for i := range listenerBackends {
+		if listenerBackends[i].name == "perl" {
+			perl = &listenerBackends[i]
+		}
+	}
+	if perl == nil {
+		t.Fatal("no perl backend, so minimal Debian nodes still cannot report UDP")
+	}
+
+	cmd := perl.start(44736, listenerCmdline)
+	for _, want := range []string{
+		"sockaddr_in(44736,INADDR_ANY)", // binds the port it was asked to
+		listenerCmdline,                 // writes where the greps will look
+		"alarm 40",                      // gives up rather than lingering
+		"&",                             // backgrounded, or the probe blocks
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("perl listener is missing %q:\n%s", want, cmd)
+		}
+	}
+
+	// The whole script sits inside a single-quoted shell argument, so a single
+	// quote anywhere in it would end the argument and hand the rest to the
+	// shell as commands.
+	if inner := strings.TrimSuffix(strings.TrimPrefix(cmd, "perl -e '"), "' >/dev/null 2>&1 &"); strings.Contains(inner, "'") {
+		t.Error("perl script contains a single quote, which would terminate the shell argument early")
+	}
+}

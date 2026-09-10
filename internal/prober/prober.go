@@ -161,6 +161,27 @@ except Exception:
 			return fmt.Sprintf(`nc -u -l -p %d > %s 2>/dev/null &`, port, logPath)
 		},
 	},
+	// Last because the three above are better tools where they exist, and
+	// first-class because on a minimal Debian or Ubuntu image none of them do.
+	// perl-base is Essential there — the package manager itself depends on it,
+	// so it cannot be absent — and Socket is one of its core modules. That
+	// matters most on the machines least able to fix it: a container with a
+	// full disk cannot install a listener, but it already has this one.
+	{
+		name:  "perl",
+		check: "command -v perl",
+		start: func(port int, logPath string) string {
+			return fmt.Sprintf(`perl -e 'use Socket;
+socket(S,PF_INET,SOCK_DGRAM,getprotobyname("udp")) or exit 1;
+setsockopt(S,SOL_SOCKET,SO_REUSEADDR,1);
+bind(S,sockaddr_in(%d,INADDR_ANY)) or exit 1;
+open(F,">>","%s") or exit 1;
+select((select(F),$|=1)[0]);
+$SIG{ALRM}=sub{exit 0};
+alarm 40;
+while(defined(recv(S,my $d,2048,0))){$d=~s/\s+\z//;print F "$d\n";}' >/dev/null 2>&1 &`, port, logPath)
+		},
+	},
 }
 
 // killListenerCmd stops a listener left behind by an earlier probe.
@@ -226,7 +247,7 @@ func ProbeUDP(ctx context.Context, target, source *ssh.Client, ingressAddr strin
 	}
 	if backend == "" {
 		return &UDPResult{
-			Detail: "no usable UDP listener on the node (need python3, socat or nc)",
+			Detail: "no usable UDP listener on the node (need python3, socat, nc or perl)",
 		}, nil
 	}
 

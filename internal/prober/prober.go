@@ -6,6 +6,7 @@ package prober
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -22,6 +23,15 @@ type Facts struct {
 	InitSystem   model.InitSystem
 	RealmVersion string
 	Hostname     string
+
+	// DualStack reports that a listener bound to [::] here will also serve
+	// IPv4. Both halves are required: a global IPv6 address, and
+	// net.ipv6.bindv6only left at 0.
+	DualStack bool
+
+	// IPv6Address is the node's first global IPv6 address, empty when it has
+	// none. It is what an operator must actually dial to reach a v6 entry.
+	IPv6Address string
 }
 
 // Probe collects basic facts over an established SSH connection.
@@ -40,6 +50,24 @@ else cat /proc/1/comm 2>/dev/null || echo unknown
 fi
 (command -v realm >/dev/null && realm --version 2>/dev/null | head -1) || echo ""
 hostname 2>/dev/null || echo ""
+# Read from /proc rather than ip(8) and sysctl(8): the machines most likely to
+# be minimal are exactly the ones being asked about, and /proc needs no tools.
+# Scope 00 in if_inet6 is global — link-local (20) and loopback (10) would both
+# be useless to a client dialling in from outside.
+if [ "$(cat /proc/sys/net/ipv6/bindv6only 2>/dev/null)" = "0" ] &&
+   awk '$4 == "00" { found = 1 } END { exit !found }' /proc/net/if_inet6 2>/dev/null; then
+  echo dual
+else
+  echo v4only
+fi
+# if_inet6 stores the address as 32 undelimited hex digits. Grouping them is all
+# that happens here; canonical compression is left to net.ParseIP, which does it
+# correctly and without a shell reimplementation of RFC 5952.
+awk '$4 == "00" {
+  print substr($1,1,4)":"substr($1,5,4)":"substr($1,9,4)":"substr($1,13,4)":" \
+        substr($1,17,4)":"substr($1,21,4)":"substr($1,25,4)":"substr($1,29,4)
+  exit
+}' /proc/net/if_inet6 2>/dev/null || echo ""
 `
 	out, err := sshx.RunCheck(ctx, client, script)
 	if err != nil {
@@ -60,6 +88,8 @@ hostname 2>/dev/null || echo ""
 		InitSystem:   detectInit(get(2)),
 		RealmVersion: parseRealmVersion(get(3)),
 		Hostname:     get(4),
+		DualStack:    get(5) == "dual",
+		IPv6Address:  canonicalIPv6(get(6)),
 	}
 	if facts.Arch == "" {
 		return nil, fmt.Errorf("probe node: could not determine architecture")
@@ -68,6 +98,17 @@ hostname 2>/dev/null || echo ""
 		return nil, fmt.Errorf("probe node: unsupported init system %q", get(2))
 	}
 	return facts, nil
+}
+
+// canonicalIPv6 reduces a grouped address to its canonical short form, and
+// discards anything that is not a usable IPv6 address rather than storing a
+// string the operator would paste and wonder about.
+func canonicalIPv6(s string) string {
+	ip := net.ParseIP(strings.TrimSpace(s))
+	if ip == nil || ip.To4() != nil {
+		return ""
+	}
+	return ip.String()
 }
 
 // normaliseArch maps uname output onto Go's architecture names, which is what

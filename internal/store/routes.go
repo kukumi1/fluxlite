@@ -22,10 +22,10 @@ func (s *Store) CreateRoute(ctx context.Context, r *model.Route) error {
 
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `
-			INSERT INTO routes (name, slug, target, protocol, enabled,
+			INSERT INTO routes (name, slug, target, protocol, enabled, listen_ipv6,
 				quota_bytes, quota_reset_day, created_at, updated_at)
-			VALUES (?,?,?,?,?,?,?,?,?)`,
-			r.Name, r.Slug, r.Target, r.Protocol, r.Enabled,
+			VALUES (?,?,?,?,?,?,?,?,?,?)`,
+			r.Name, r.Slug, r.Target, r.Protocol, r.Enabled, r.ListenIPv6,
 			r.QuotaBytes, r.QuotaResetDay, r.CreatedAt, r.UpdatedAt)
 		if err != nil {
 			if isUniqueViolation(err) {
@@ -64,7 +64,7 @@ func insertHops(ctx context.Context, tx *sql.Tx, hops []model.RouteHop) error {
 // RouteByID returns a route with its hops loaded in order.
 func (s *Store) RouteByID(ctx context.Context, id int64) (*model.Route, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, slug, target, protocol, enabled,
+		SELECT id, name, slug, target, protocol, enabled, listen_ipv6,
 			quota_bytes, quota_reset_day, quota_paused_at, created_at, updated_at
 		FROM routes WHERE id = ?`, id)
 
@@ -84,7 +84,7 @@ func (s *Store) RouteByID(ctx context.Context, id int64) (*model.Route, error) {
 // RouteByName returns a route by its unique name.
 func (s *Store) RouteByName(ctx context.Context, name string) (*model.Route, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, slug, target, protocol, enabled,
+		SELECT id, name, slug, target, protocol, enabled, listen_ipv6,
 			quota_bytes, quota_reset_day, quota_paused_at, created_at, updated_at
 		FROM routes WHERE name = ?`, name)
 
@@ -104,7 +104,7 @@ func (s *Store) RouteByName(ctx context.Context, name string) (*model.Route, err
 // RouteBySlug returns a route by its internal identifier.
 func (s *Store) RouteBySlug(ctx context.Context, slug string) (*model.Route, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, slug, target, protocol, enabled,
+		SELECT id, name, slug, target, protocol, enabled, listen_ipv6,
 			quota_bytes, quota_reset_day, quota_paused_at, created_at, updated_at
 		FROM routes WHERE slug = ?`, slug)
 
@@ -124,7 +124,7 @@ func (s *Store) RouteBySlug(ctx context.Context, slug string) (*model.Route, err
 // ListRoutes returns every route with hops loaded.
 func (s *Store) ListRoutes(ctx context.Context) ([]*model.Route, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, slug, target, protocol, enabled,
+		SELECT id, name, slug, target, protocol, enabled, listen_ipv6,
 			quota_bytes, quota_reset_day, quota_paused_at, created_at, updated_at
 		FROM routes ORDER BY name`)
 	if err != nil {
@@ -161,7 +161,7 @@ func (s *Store) ListRoutes(ctx context.Context) ([]*model.Route, error) {
 // instead of "node in use by 2 route(s)".
 func (s *Store) RoutesOnNode(ctx context.Context, nodeID int64) ([]*model.Route, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT r.id, r.name, r.slug, r.target, r.protocol, r.enabled,
+		SELECT r.id, r.name, r.slug, r.target, r.protocol, r.enabled, r.listen_ipv6,
 			r.quota_bytes, r.quota_reset_day, r.quota_paused_at,
 			r.created_at, r.updated_at
 		FROM routes r
@@ -213,10 +213,10 @@ func (s *Store) UpdateRoute(ctx context.Context, r *model.Route) error {
 		}
 
 		res, err := tx.ExecContext(ctx, `
-			UPDATE routes SET name=?, target=?, protocol=?, enabled=?,
+			UPDATE routes SET name=?, target=?, protocol=?, enabled=?, listen_ipv6=?,
 				quota_bytes=?, quota_reset_day=?, updated_at=?
 			WHERE id=?`,
-			r.Name, r.Target, r.Protocol, r.Enabled,
+			r.Name, r.Target, r.Protocol, r.Enabled, r.ListenIPv6,
 			r.QuotaBytes, r.QuotaResetDay, r.UpdatedAt, r.ID)
 		if err != nil {
 			if isUniqueViolation(err) {
@@ -320,7 +320,8 @@ func (s *Store) DeleteRoute(ctx context.Context, id int64) error {
 func scanRoute(row interface{ Scan(...any) error }) (*model.Route, error) {
 	var r model.Route
 	if err := row.Scan(&r.ID, &r.Name, &r.Slug, &r.Target, &r.Protocol, &r.Enabled,
-		&r.QuotaBytes, &r.QuotaResetDay, &r.QuotaPausedAt, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		&r.ListenIPv6, &r.QuotaBytes, &r.QuotaResetDay, &r.QuotaPausedAt,
+		&r.CreatedAt, &r.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &r, nil

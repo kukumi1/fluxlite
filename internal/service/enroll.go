@@ -284,8 +284,12 @@ func (s *Service) applyEnrollment(ctx context.Context, t *store.EnrollToken,
 		node.RealmVersion = report.RealmVersion
 		node.Status = model.StatusUnknown
 		// A rebuilt machine may well answer differently, and the old verdict
-		// would otherwise stand unchallenged until something re-probed.
+		// would otherwise stand unchallenged until something re-probed. The
+		// operator's ListenIPv6 choice is left alone: it states an intent about
+		// the route, not a fact about the machine, and the next probe re-decides
+		// whether the machine can still honour it.
 		node.UDPCapable = nil
+		node.IPv6Capable = nil
 		if err := s.store.UpdateNode(ctx, node); err != nil {
 			return nil, false, err
 		}

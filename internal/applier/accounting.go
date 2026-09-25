@@ -42,10 +42,27 @@ const (
 // at roughly zero. Rules are only replaced when they no longer describe the
 // port the hop actually listens on, and the caller is told when that happened
 // so it can drop the now meaningless baseline.
-func (a *Applier) ensureAccounting(ctx context.Context, client *ssh.Client, slug string, listen int) (AcctState, error) {
-	res, err := sshx.Run(ctx, client, ensureAcctCommand(slug, listen))
+// ipv6 selects which family's counters to install, following the hop's listen
+// address. A hop binds exactly one family — 0.0.0.0 or [::] with ipv6_only —
+// so counting the other one would add a chain that can only ever report zero
+// and invite the reader to believe that family was measured.
+//
+// Rules already present in the other family are left alone rather than swept.
+// They stop growing on their own once nothing can reach them, and the bytes
+// they hold really did cross this hop back when it listened differently;
+// deleting them would rewrite history and reset a baseline for no gain.
+func (a *Applier) ensureAccounting(ctx context.Context, client *ssh.Client, slug string, listen int, ipv6 bool) (AcctState, error) {
+	bin := acctBin4
+	if ipv6 {
+		bin = acctBin6
+	}
+	return a.ensureAcctFamily(ctx, client, slug, listen, bin)
+}
+
+func (a *Applier) ensureAcctFamily(ctx context.Context, client *ssh.Client, slug string, listen int, bin string) (AcctState, error) {
+	res, err := sshx.Run(ctx, client, ensureAcctCommand(slug, listen, bin))
 	if err != nil {
-		return AcctUnavailable, fmt.Errorf("install byte counters: %w", err)
+		return AcctUnavailable, fmt.Errorf("install %s byte counters: %w", bin, err)
 	}
 
 	// Only the last line is the verdict. Some iptables builds echo the rule
@@ -58,11 +75,11 @@ func (a *Applier) ensureAccounting(ctx context.Context, client *ssh.Client, slug
 	case verdict == "ok-rebuilt":
 		return AcctRebuilt, nil
 	case verdict == "no-iptables":
-		return AcctUnavailable, fmt.Errorf("iptables is not installed on this node")
+		return AcctUnavailable, fmt.Errorf("%s is not installed on this node", bin)
 	case strings.HasPrefix(verdict, "failed:"):
-		return AcctUnavailable, fmt.Errorf("%s", strings.TrimPrefix(verdict, "failed:"))
+		return AcctUnavailable, fmt.Errorf("%s: %s", bin, strings.TrimPrefix(verdict, "failed:"))
 	default:
-		return AcctUnavailable, fmt.Errorf("unexpected reply %q", verdict)
+		return AcctUnavailable, fmt.Errorf("%s: unexpected reply %q", bin, verdict)
 	}
 }
 
@@ -71,19 +88,37 @@ func lastLine(s string) string {
 	return strings.TrimSpace(lines[len(lines)-1])
 }
 
-// acctPrelude resolves the iptables binary.
+// Counting is per address family: iptables cannot see IPv6 packets and
+// ip6tables cannot see IPv4 ones. A hop listening on [::] carries both, so both
+// chains have to exist or its total is short by however much rode the family
+// nobody counted — silently, since a missing counter reads as zero.
+const (
+	acctBin4 = "iptables"
+	acctBin6 = "ip6tables"
+)
+
+// acctPrelude resolves the counting binary.
 //
 // A non-interactive SSH session does not always carry /usr/sbin in PATH, and
 // on the distributions that put iptables there `command -v` alone would report
 // a machine as having no firewall tooling when it has it installed.
-const acctPrelude = `
-if command -v iptables >/dev/null 2>&1; then IPT=iptables
-elif [ -x /usr/sbin/iptables ]; then IPT=/usr/sbin/iptables
-elif [ -x /sbin/iptables ]; then IPT=/sbin/iptables
+func acctPrelude(bin string) string {
+	return fmt.Sprintf(`
+if command -v %[1]s >/dev/null 2>&1; then IPT=%[1]s
+elif [ -x /usr/sbin/%[1]s ]; then IPT=/usr/sbin/%[1]s
+elif [ -x /sbin/%[1]s ]; then IPT=/sbin/%[1]s
 else echo no-iptables; exit 0; fi
-`
+`, bin)
+}
 
-func ensureAcctCommand(slug string, listen int) string {
+// acctPreludeTolerant is the same resolver for commands that have nothing to do
+// when the binary is absent. Removing counters from a family a node never had
+// is a success, not a failure.
+func acctPreludeTolerant(bin string) string {
+	return strings.Replace(acctPrelude(bin), "echo no-iptables; exit 0", "exit 0", 1)
+}
+
+func ensureAcctCommand(slug string, listen int, bin string) string {
 	return fmt.Sprintf(`%s
 CHAIN=%s
 TAG="fluxlite:%s:"
@@ -127,18 +162,25 @@ for p in tcp udp; do
     ipt -A "$CHAIN" -p $p --dport "$L" -m comment --comment "${TAG}in"  || { echo "failed:添加 $p 入向计数规则: $ipt_err"; exit 0; }
     ipt -A "$CHAIN" -p $p --sport "$L" -m comment --comment "${TAG}out" || { echo "failed:添加 $p 出向计数规则: $ipt_err"; exit 0; }
 done
-echo ok-rebuilt`, acctPrelude, acctChain, slug, listen)
+echo ok-rebuilt`, acctPrelude(bin), acctChain, slug, listen)
 }
 
 // removeAccounting drops one route's counters from a node.
+//
+// Both families are swept regardless of how the hop was listening. A hop that
+// once listened on [::] and was later moved back to IPv4 still has ip6tables
+// rules to its name, and leaving them behind would keep counting a port that
+// now belongs to somebody else.
 func removeAccounting(ctx context.Context, client *ssh.Client, slug string) error {
-	cmd := fmt.Sprintf(`%s
+	for _, bin := range []string{acctBin4, acctBin6} {
+		cmd := fmt.Sprintf(`%s
 $IPT -S %s 2>/dev/null | grep "fluxlite:%s:" | sed 's/^-A /-D /' | while read -r rule; do
     eval "$IPT $rule" >/dev/null 2>&1 || true
 done
-exit 0`, strings.Replace(acctPrelude, "echo no-iptables; exit 0", "exit 0", 1), acctChain, slug)
-	if _, err := sshx.Run(ctx, client, cmd); err != nil {
-		return fmt.Errorf("remove byte counters: %w", err)
+exit 0`, acctPreludeTolerant(bin), acctChain, slug)
+		if _, err := sshx.Run(ctx, client, cmd); err != nil {
+			return fmt.Errorf("remove %s byte counters: %w", bin, err)
+		}
 	}
 	return nil
 }
@@ -167,16 +209,24 @@ func (a *Applier) ReadCounters(ctx context.Context, node *model.Node) (map[strin
 		return nil, fmt.Errorf("connect to %s: %w", node.Name, err)
 	}
 
-	res, err := sshx.Run(ctx, client.Client,
-		fmt.Sprintf(`%s
+	// Both families are read and summed. A hop on [::] splits its bytes across
+	// the two chains by however the client connected, so reporting either one
+	// alone would under-count by an amount that varies with the client.
+	var listings strings.Builder
+	for _, bin := range []string{acctBin4, acctBin6} {
+		res, err := sshx.Run(ctx, client.Client,
+			fmt.Sprintf(`%s
 $IPT -nvxL %s 2>/dev/null || true`,
-			strings.Replace(acctPrelude, "echo no-iptables; exit 0", "exit 0", 1), acctChain))
-	if err != nil {
-		return nil, fmt.Errorf("read byte counters on %s: %w", node.Name, err)
+				acctPreludeTolerant(bin), acctChain))
+		if err != nil {
+			return nil, fmt.Errorf("read %s byte counters on %s: %w", bin, node.Name, err)
+		}
+		listings.WriteString(res.Stdout)
+		listings.WriteString("\n")
 	}
 
 	out := make(map[string]HopCounters)
-	for _, line := range strings.Split(res.Stdout, "\n") {
+	for _, line := range strings.Split(listings.String(), "\n") {
 		m := acctLine.FindStringSubmatch(line)
 		if m == nil {
 			continue

@@ -138,7 +138,7 @@ func (a *Applier) applyHop(ctx context.Context, hop *planner.HopPlan) (bool, str
 	// counter rules still relays traffic perfectly well, so this never fails
 	// the hop — it only leaves that hop's traffic reported as unknown.
 	acct := acctResult{state: AcctUnavailable}
-	if state, aerr := a.ensureAccounting(ctx, client.Client, hop.RouteSlug, hop.Listen); aerr != nil {
+	if state, aerr := a.ensureAccounting(ctx, client.Client, hop.RouteSlug, hop.Listen, hop.ListenIPv6); aerr != nil {
 		acct.detail = aerr.Error()
 	} else {
 		acct.state = state

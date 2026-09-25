@@ -21,8 +21,8 @@ func TestRenamingDoesNotChangeTheDeployedConfig(t *testing.T) {
 		Protocol: model.ProtocolTCP,
 	}
 
-	cfgBefore := renderConfig(before, 10072, "203.0.113.9:10072")
-	cfgAfter := renderConfig(after, 10072, "203.0.113.9:10072")
+	cfgBefore := renderConfig(before, "0.0.0.0:10072", false, "203.0.113.9:10072")
+	cfgAfter := renderConfig(after, "0.0.0.0:10072", false, "203.0.113.9:10072")
 
 	if cfgBefore != cfgAfter {
 		t.Errorf("renaming a route rewrote its config:\n--- before ---\n%s\n--- after ---\n%s",
@@ -42,19 +42,19 @@ func TestDeployableChangesRewriteTheConfig(t *testing.T) {
 		Name: "tw-b", Slug: "tw-b", Target: "vps.example.com:31002",
 		Protocol: model.ProtocolTCP,
 	}
-	reference := renderConfig(base, 10072, "203.0.113.9:10072")
+	reference := renderConfig(base, "0.0.0.0:10072", false, "203.0.113.9:10072")
 
 	udp := &model.Route{
 		Name: "tw-b", Slug: "tw-b", Target: "vps.example.com:31002",
 		Protocol: model.ProtocolTCPUDP,
 	}
-	if renderConfig(udp, 10072, "203.0.113.9:10072") == reference {
+	if renderConfig(udp, "0.0.0.0:10072", false, "203.0.113.9:10072") == reference {
 		t.Error("switching protocol left the config unchanged")
 	}
-	if renderConfig(base, 10099, "203.0.113.9:10072") == reference {
+	if renderConfig(base, "0.0.0.0:10099", false, "203.0.113.9:10072") == reference {
 		t.Error("changing the listen port left the config unchanged")
 	}
-	if renderConfig(base, 10072, "203.0.113.9:20000") == reference {
+	if renderConfig(base, "0.0.0.0:10072", false, "203.0.113.9:20000") == reference {
 		t.Error("changing the remote left the config unchanged")
 	}
 }

@@ -36,6 +36,9 @@ type HopPlan struct {
 
 	// Listen is the port this hop accepts traffic on.
 	Listen int
+	// ListenIPv6 reports that this hop bound the IPv6 wildcard, so its byte
+	// counters need an ip6tables chain as well as an iptables one.
+	ListenIPv6 bool
 	// Remote is where this hop forwards to: the next hop's address, or the
 	// landing target for the final hop.
 	Remote string
@@ -71,12 +74,12 @@ func LogPath(slug string) string {
 }
 
 var (
-	ErrNoHops          = fmt.Errorf("route has no hops")
-	ErrPortPoolEmpty   = fmt.Errorf("node has no free port in its pool")
-	ErrEntryPortTaken  = fmt.Errorf("entry port is already claimed on the node")
-	ErrEntryOutOfPool  = fmt.Errorf("entry port is outside the node's port pool")
-	ErrUDPUnsupported  = fmt.Errorf("hop cannot pass UDP but the route requires it")
-	ErrNodeNotProbed   = fmt.Errorf("node has not been probed yet")
+	ErrNoHops         = fmt.Errorf("route has no hops")
+	ErrPortPoolEmpty  = fmt.Errorf("node has no free port in its pool")
+	ErrEntryPortTaken = fmt.Errorf("entry port is already claimed on the node")
+	ErrEntryOutOfPool = fmt.Errorf("entry port is outside the node's port pool")
+	ErrUDPUnsupported = fmt.Errorf("hop cannot pass UDP but the route requires it")
+	ErrNodeNotProbed  = fmt.Errorf("node has not been probed yet")
 )
 
 // Allocate assigns a listen port to every hop of the route, honouring each
@@ -176,7 +179,9 @@ func Build(ctx context.Context, lookup NodeLookup, route *model.Route) (*Plan, e
 			remote = net.JoinHostPort(nodes[i+1].Host, strconv.Itoa(next.RelayPort))
 		}
 
-		cfg := renderConfig(route, h.RelayPort, remote)
+		listen := ListenAddress(route, h.HopOrder, h.RelayPort)
+		ipv6Only := strings.HasPrefix(listen, "[")
+		cfg := renderConfig(route, listen, ipv6Only, remote)
 		plan.Hops[i] = HopPlan{
 			RouteID:    route.ID,
 			RouteName:  route.Name,
@@ -184,6 +189,7 @@ func Build(ctx context.Context, lookup NodeLookup, route *model.Route) (*Plan, e
 			HopOrder:   h.HopOrder,
 			Node:       nodes[i],
 			Listen:     h.RelayPort,
+			ListenIPv6: ipv6Only,
 			Remote:     remote,
 			Config:     cfg,
 			ConfigPath: ConfigPath(route.Slug),
@@ -194,8 +200,26 @@ func Build(ctx context.Context, lookup NodeLookup, route *model.Route) (*Plan, e
 	return plan, nil
 }
 
+// ListenAddress is the wildcard this hop binds.
+//
+// 0.0.0.0 accepts IPv4 and nothing else, which is why a client on an IPv6-only
+// path cannot reach a relay however well the node is connected. [::] accepts
+// both families on one socket where net.ipv6.bindv6only is 0, which is what a
+// node's IPv6Capable flag records.
+//
+// Only hop 0 ever widens. Later hops are dialled by their predecessor at the
+// node's Host, which is IPv4, so an IPv6 listener there would receive nothing —
+// while still claiming the whole IPv6 wildcard for that port and colliding with
+// anything already bound to it.
+func ListenAddress(route *model.Route, hopOrder, port int) string {
+	if route.ListenIPv6 && hopOrder == 0 {
+		return net.JoinHostPort("::", strconv.Itoa(port))
+	}
+	return net.JoinHostPort("0.0.0.0", strconv.Itoa(port))
+}
+
 // renderConfig emits the realm TOML for one hop.
-func renderConfig(route *model.Route, listen int, remote string) string {
+func renderConfig(route *model.Route, listen string, ipv6Only bool, remote string) string {
 	var b strings.Builder
 	b.WriteString("# Managed by fluxlite. Manual edits are overwritten on apply.\n")
 	// The slug, never the display name. A display name is free to change at
@@ -210,10 +234,19 @@ func renderConfig(route *model.Route, listen int, remote string) string {
 
 	b.WriteString("[network]\n")
 	b.WriteString("no_tcp = false\n")
-	fmt.Fprintf(&b, "use_udp = %t\n\n", route.Protocol.NeedsUDP())
+	fmt.Fprintf(&b, "use_udp = %t\n", route.Protocol.NeedsUDP())
+	// Without this, [::] serves IPv4 as well wherever net.ipv6.bindv6only is 0.
+	// One listener would then carry both families through one set of counters,
+	// so the panel could not tell an operator whether their traffic actually
+	// took the IPv6 path — which is the only reason to ask for one. It also
+	// leaves the port's IPv4 half free for a separate route.
+	if ipv6Only {
+		b.WriteString("ipv6_only = true\n")
+	}
+	b.WriteString("\n")
 
 	b.WriteString("[[endpoints]]\n")
-	fmt.Fprintf(&b, "listen = \"0.0.0.0:%d\"\n", listen)
+	fmt.Fprintf(&b, "listen = %q\n", listen)
 	fmt.Fprintf(&b, "remote = %q\n", remote)
 	return b.String()
 }

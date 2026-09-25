@@ -60,6 +60,40 @@ type NodeInput struct {
 	SkipUDP   bool           `json:"skip_udp_probe"`
 }
 
+var (
+	// ErrIPv6Unprobed means the node's address families are not known yet.
+	// Enabling IPv6 entry on a guess would rewrite the listen address of every
+	// relay on the node, and realm cannot reload — so a wrong guess costs every
+	// live connection there.
+	ErrIPv6Unprobed = errors.New("请先探测该节点，面板还不知道它支不支持 IPv6")
+
+	// ErrIPv6Unavailable means binding [::] here would not serve both families:
+	// either the node has no global IPv6 address, or net.ipv6.bindv6only is 1,
+	// in which case the switch would take IPv4 entry away from every existing
+	// route on the node.
+	ErrIPv6Unavailable = errors.New("该节点无法用一个监听同时服务 IPv4 和 IPv6（没有全局 IPv6 地址，或 net.ipv6.bindv6only 不是 0）")
+)
+
+// allowListenIPv6 guards turning IPv6 entry on for a route.
+//
+// The node checked is the entry hop's, because that is the only hop that binds
+// the IPv6 wildcard. Only the transition is checked, never the steady state: a
+// node that loses its IPv6 later must not have every unrelated edit to the
+// route rejected because of a flag set months ago, and realm failing to bind is
+// visible on its own.
+func allowListenIPv6(entry *model.Node, was, want bool) error {
+	if !want || was {
+		return nil
+	}
+	if entry.IPv6Capable == nil {
+		return ErrIPv6Unprobed
+	}
+	if !*entry.IPv6Capable {
+		return ErrIPv6Unavailable
+	}
+	return nil
+}
+
 // CreateNode stores a node with its credential encrypted at rest.
 func (s *Service) CreateNode(ctx context.Context, in NodeInput) (*model.Node, error) {
 	if err := model.ValidateDisplayName(in.Name); err != nil {
@@ -207,6 +241,9 @@ func (s *Service) ProbeNode(ctx context.Context, id int64) (*ProbeResult, error)
 	node.OSID = facts.OSID
 	node.InitSystem = facts.InitSystem
 	node.RealmVersion = facts.RealmVersion
+	dualStack := facts.DualStack
+	node.IPv6Capable = &dualStack
+	node.IPv6Address = facts.IPv6Address
 	node.Status = model.StatusOnline
 	now := time.Now().UTC()
 	node.LastSeen = &now
@@ -313,11 +350,27 @@ type RouteInput struct {
 	EntryPort *int           `json:"entry_port"`
 	Enabled   bool           `json:"enabled"`
 
+	// ListenIPv6 makes the entry hop accept clients over IPv6 as well as IPv4.
+	ListenIPv6 bool `json:"listen_ipv6"`
+
 	// QuotaBytes is nil for an uncapped route. Zero is not a synonym: it would
 	// mean an allowance of nothing, which stops the route the moment it moves
 	// a byte.
 	QuotaBytes    *int64 `json:"quota_bytes"`
 	QuotaResetDay int    `json:"quota_reset_day"`
+}
+
+// checkEntryIPv6 applies allowListenIPv6 to whichever node ends up carrying the
+// entry hop, which is the only hop that binds the IPv6 wildcard.
+func (s *Service) checkEntryIPv6(ctx context.Context, hops []model.RouteHop, was, want bool) error {
+	if !want || was || len(hops) == 0 {
+		return nil
+	}
+	entry, err := s.store.NodeByID(ctx, hops[0].NodeID)
+	if err != nil {
+		return err
+	}
+	return allowListenIPv6(entry, was, want)
 }
 
 // resetDayOr falls back to the first of the month when the client sends
@@ -357,12 +410,17 @@ func (s *Service) CreateRoute(ctx context.Context, in RouteInput) (*model.Route,
 		return nil, err
 	}
 
+	if err := s.checkEntryIPv6(ctx, allocated, false, in.ListenIPv6); err != nil {
+		return nil, err
+	}
+
 	route := &model.Route{
 		Name:          in.Name,
 		Slug:          slug,
 		Target:        in.Target,
 		Protocol:      in.Protocol,
 		Enabled:       in.Enabled,
+		ListenIPv6:    in.ListenIPv6,
 		QuotaBytes:    in.QuotaBytes,
 		QuotaResetDay: in.resetDayOr(),
 		Hops:          allocated,
@@ -401,10 +459,15 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, in RouteInput) (*mo
 		return nil, err
 	}
 
+	if err := s.checkEntryIPv6(ctx, allocated, route.ListenIPv6, in.ListenIPv6); err != nil {
+		return nil, err
+	}
+
 	route.Name = in.Name
 	route.Target = in.Target
 	route.Protocol = in.Protocol
 	route.Enabled = in.Enabled
+	route.ListenIPv6 = in.ListenIPv6
 	route.QuotaBytes = in.QuotaBytes
 	route.QuotaResetDay = in.resetDayOr()
 	route.Hops = allocated

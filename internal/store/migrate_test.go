@@ -88,7 +88,10 @@ func TestMigrateToleratesPreexistingColumn(t *testing.T) {
 	}
 }
 
-func TestAlreadyAppliedOnlyMatchesAddColumn(t *testing.T) {
+// alreadyApplied 只对「加列」和「删列」判空操作，别的语句一律执行。判错方向的
+// 代价不对称：把没生效的当成已生效会静默缺列，把已生效的当成没生效会让 Open 直接
+// 失败、面板起不来。
+func TestAlreadyAppliedMatchesOnlyColumnChanges(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
 
@@ -100,6 +103,9 @@ func TestAlreadyAppliedOnlyMatchesAddColumn(t *testing.T) {
 		{`ALTER TABLE nodes ADD COLUMN nonexistent INTEGER`, false},
 		{`CREATE TABLE IF NOT EXISTS nodes (id INTEGER)`, false},
 		{`UPDATE routes SET slug = name WHERE slug = ''`, false},
+		// 删列：列还在 = 这条还没生效；列没了 = 已经生效，重放必须跳过。
+		{`ALTER TABLE nodes DROP COLUMN skip_udp_probe`, false},
+		{`ALTER TABLE nodes DROP COLUMN listen_ipv6`, true},
 	}
 	for _, c := range cases {
 		got, err := st.alreadyApplied(ctx, c.stmt)
@@ -202,6 +208,38 @@ func TestMigrateRepairsColumnSkippedByMidListInsert(t *testing.T) {
 	}
 }
 
+// indexOfMigration 返回给某张表加某一列的那条迁移的下标。
+//
+// 迁移是按条数记录进度的，所以「重放第 i 条」只能靠把版本号退到 i。用下标字面量
+// 去指代某条迁移，会在有人往列表里增删时静默指向另一条 —— 测试照样通过，守的却
+// 不再是原来那件事。
+func indexOfMigration(t *testing.T, table, column string) int {
+	t.Helper()
+
+	want := "ALTER TABLE " + table + " ADD COLUMN " + column
+	for i, m := range migrations {
+		if strings.Contains(m, want) {
+			return i
+		}
+	}
+	t.Fatalf("迁移列表里找不到给 %s 加 %s 的那条，测试要守的东西已经不存在了", table, column)
+	return -1
+}
+
+// indexOfDropMigration 是上面那个的 DROP 版本。
+func indexOfDropMigration(t *testing.T, table, column string) int {
+	t.Helper()
+
+	want := "ALTER TABLE " + table + " DROP COLUMN " + column
+	for i, m := range migrations {
+		if strings.Contains(m, want) {
+			return i
+		}
+	}
+	t.Fatalf("迁移列表里找不到从 %s 删掉 %s 的那条", table, column)
+	return -1
+}
+
 // 追加列的迁移在老库上必须真的跑到。avatar 那次就是因为插在列表中间，
 // 已迁移完的库整条跳过、线上静默缺列，所以每加一列都值得守一次。
 func TestMigrateAddsEnrollTargetNodeColumnToExistingDatabase(t *testing.T) {
@@ -216,8 +254,11 @@ func TestMigrateAddsEnrollTargetNodeColumnToExistingDatabase(t *testing.T) {
 		`ALTER TABLE enroll_tokens DROP COLUMN target_node_id`); err != nil {
 		t.Fatalf("模拟老库缺列失败: %v", err)
 	}
+	// 按内容定位，不用 len(migrations)-1。那种写法只在这条迁移恰好排最后时成立，
+	// 之后任何人往列表末尾追加一条，这个测试就会悄悄改成在考别的迁移。
+	target := indexOfMigration(t, "enroll_tokens", "target_node_id")
 	if _, err := st.db.ExecContext(ctx,
-		`UPDATE schema_version SET version = ?`, len(migrations)-1); err != nil {
+		`UPDATE schema_version SET version = ?`, target); err != nil {
 		t.Fatalf("回退版本号失败: %v", err)
 	}
 	st.Close()

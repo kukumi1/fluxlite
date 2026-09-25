@@ -130,6 +130,22 @@ type Node struct {
 	// path to this node, which disqualifies it from tcp+udp routes.
 	UDPCapable *bool `json:"udp_capable"`
 
+	// IPv6Capable is nil until probed. True means a hop here can bind [::] and
+	// still serve IPv4 on the same socket.
+	//
+	// Two facts are folded into one because neither is useful alone: the node
+	// holds a global IPv6 address, and net.ipv6.bindv6only is 0. Binding [::]
+	// where bindv6only is 1 serves IPv6 only, which would take IPv4 entry away
+	// from every route already running on the node.
+	IPv6Capable *bool `json:"ipv6_capable"`
+
+	// IPv6Address is the node's global IPv6 address, empty when it has none.
+	//
+	// Host is where the panel dials and stays IPv4, so without this the panel
+	// has no way to tell an operator which address a v6 entry actually answers
+	// on — it would keep printing the IPv4 one and look like nothing changed.
+	IPv6Address string `json:"ipv6_address"`
+
 	// SkipUDPProbe suppresses the UDP reachability check for this node. Most
 	// NAT hosts forward TCP only, so an operator who never intends to carry
 	// UDP can skip a probe that costs a dozen seconds on every refresh.
@@ -217,6 +233,20 @@ type Route struct {
 	// connect to. It mirrors Hops[0].RelayPort, which is the stored value, so
 	// that one uniqueness constraint covers entry and relay ports alike.
 	EntryPort int `json:"entry_port"`
+
+	// ListenIPv6 makes hop 0 accept clients over IPv6 as well as IPv4.
+	//
+	// Per route, not per node, and the distinction is not cosmetic: a node runs
+	// one relay per route, and widening one of them from 0.0.0.0 to [::] takes
+	// the whole IPv6 wildcard for that port. Anything already holding that port
+	// on a specific IPv6 address — another proxy on the same machine, say —
+	// then collides, and realm exits rather than binding. Scoping the switch to
+	// the route that needs it keeps every other relay on the node untouched.
+	//
+	// Only hop 0 is affected. Later hops are dialled by their predecessor at
+	// the node's Host, which is IPv4, so nothing would reach an IPv6 listener
+	// there.
+	ListenIPv6 bool `json:"listen_ipv6"`
 
 	Enabled bool `json:"enabled"`
 

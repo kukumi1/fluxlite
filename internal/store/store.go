@@ -292,6 +292,23 @@ var migrations = []string{
 	// because a token outlives nothing — it expires in an hour, and completion
 	// re-reads the node anyway.
 	`ALTER TABLE enroll_tokens ADD COLUMN target_node_id INTEGER`,
+
+	// Whether a hop here may bind [::]. Nullable because "not probed yet" and
+	// "no IPv6" lead to different decisions.
+	`ALTER TABLE nodes ADD COLUMN ipv6_capable INTEGER`,
+	`ALTER TABLE nodes ADD COLUMN listen_ipv6 INTEGER NOT NULL DEFAULT 0`,
+
+	// The IPv6 entry switch belongs to the route, not the node. On a node it
+	// widened every relay at once, and the first one whose port was already
+	// held on a specific IPv6 address by another program collided and stopped —
+	// taking down a route that had nothing to do with the request.
+	`ALTER TABLE routes ADD COLUMN listen_ipv6 INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE nodes DROP COLUMN listen_ipv6`,
+
+	// The address a v6 entry actually answers on. Host is the panel's dial
+	// target and stays IPv4, so without this the panel can only print the IPv4
+	// address and a working v6 entry looks like nothing happened.
+	`ALTER TABLE nodes ADD COLUMN ipv6_address TEXT NOT NULL DEFAULT ''`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -330,21 +347,25 @@ func (s *Store) migrate(ctx context.Context) error {
 }
 
 var addColumnPattern = regexp.MustCompile(`(?i)^\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)`)
+var dropColumnPattern = regexp.MustCompile(`(?i)^\s*ALTER\s+TABLE\s+(\w+)\s+DROP\s+COLUMN\s+(\w+)`)
 
 // alreadyApplied reports whether a migration's effect is present regardless of
 // what schema_version claims.
 //
-// Only ADD COLUMN can legitimately be a no-op. SQLite has no ADD COLUMN IF NOT
-// EXISTS, so a database created from a CREATE TABLE that already lists the
-// column would fail here on every start: its schema_version says the migration
-// is pending while its schema says it is done. Every other statement must
-// apply cleanly, so an unrecognised one is always executed.
+// Only adding or dropping a column can legitimately be a no-op. SQLite has no
+// IF NOT EXISTS for either, so a database created from a CREATE TABLE that
+// already lists the column would fail here on every start: its schema_version
+// says the migration is pending while its schema says it is done. Every other
+// statement must apply cleanly, so an unrecognised one is always executed.
 func (s *Store) alreadyApplied(ctx context.Context, stmt string) (bool, error) {
-	m := addColumnPattern.FindStringSubmatch(stmt)
-	if m == nil {
-		return false, nil
+	if m := addColumnPattern.FindStringSubmatch(stmt); m != nil {
+		return s.hasColumn(ctx, m[1], m[2])
 	}
-	return s.hasColumn(ctx, m[1], m[2])
+	if m := dropColumnPattern.FindStringSubmatch(stmt); m != nil {
+		has, err := s.hasColumn(ctx, m[1], m[2])
+		return !has, err
+	}
+	return false, nil
 }
 
 func (s *Store) hasColumn(ctx context.Context, table, column string) (bool, error) {

@@ -33,6 +33,19 @@ const VIEW_OPTIONS = [
   { id: "list", label: "横向列表", icon: List },
 ] as const;
 
+type Family = "v4" | "v6";
+
+const FAMILY_KEY = "fluxlite-routes-family";
+
+const FAMILY_OPTIONS = [
+  { id: "v4", label: "IPv4 转发" },
+  { id: "v6", label: "IPv6 转发" },
+] as const;
+
+function storedFamily(): Family {
+  return localStorage.getItem(FAMILY_KEY) === "v6" ? "v6" : "v4";
+}
+
 function storedView(): ViewMode {
   const saved = localStorage.getItem(VIEW_KEY);
   return saved === "card" || saved === "compact" || saved === "list" ? saved : "card";
@@ -43,8 +56,13 @@ function storedView(): ViewMode {
 // the mapped address the provider gave out, not anything the machine knows
 // about itself, which is why it comes from the node record rather than a probe.
 function entryAddress(route: Route, nodes: Node[]): string {
-  const host = nodes.find((n) => n.id === route.hops[0]?.node_id)?.host ?? "?";
-  return `${host}:${route.entry_port}`;
+  const entry = nodes.find((n) => n.id === route.hops[0]?.node_id);
+  // 开了 IPv6 入口就必须显示 v6 地址：host 永远是面板拨号用的 v4，照搬它会让
+  // 一个已经生效的 v6 入口看起来跟没开一样，用户照着填还是走 v4。
+  if (route.listen_ipv6 && entry?.ipv6_address) {
+    return `[${entry.ipv6_address}]:${route.entry_port}`;
+  }
+  return `${entry?.host ?? "?"}:${route.entry_port}`;
 }
 
 // onNodeIdentity spells out what a route is called on the machines. A display
@@ -201,11 +219,17 @@ export function Routes() {
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
   const [verifyReport, setVerifyReport] = useState<VerifyReport | null>(null);
   const [view, setView] = useState<ViewMode>(storedView);
+  const [family, setFamily] = useState<Family>(storedFamily);
   const [confirm, confirmDialog] = useConfirm();
 
   function chooseView(next: ViewMode) {
     setView(next);
     localStorage.setItem(VIEW_KEY, next);
+  }
+
+  function chooseFamily(next: Family) {
+    setFamily(next);
+    localStorage.setItem(FAMILY_KEY, next);
   }
 
   const fail = (err: unknown) => setError(err instanceof ApiError ? err.message : "请求失败");
@@ -428,7 +452,10 @@ export function Routes() {
     );
   }
 
-  const counted = Object.values(traffic);
+  // 汇总只统计当前这一族的链路。把两族加在一起，数字既不对应你正在看的列表，
+  // 也不对应任何一条真实账单。
+  const shown = routes.filter((r) => (family === "v6" ? r.listen_ipv6 : !r.listen_ipv6));
+  const counted = shown.map((r) => traffic[r.id]).filter((t): t is Traffic => !!t);
   const totalIn = counted.reduce((sum, t) => sum + t.bytes_in, 0);
   const totalOut = counted.reduce((sum, t) => sum + t.bytes_out, 0);
 
@@ -436,10 +463,28 @@ export function Routes() {
     <div>
       <PageHeader
         title="链路"
-        desc="多跳转发链。流量从入口节点进入，逐跳中继，最后一跳拨向落地地址。"
+        titleAside={
+          <div className="segmented labels" role="group" aria-label="协议族">
+            {FAMILY_OPTIONS.map((option) => (
+              <button
+                key={option.id}
+                className={family === option.id ? "active" : ""}
+                aria-pressed={family === option.id}
+                onClick={() => chooseFamily(option.id)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        }
+        desc={
+          family === "v6"
+            ? "入口只接受 IPv6 客户端的链路。与 IPv4 链路各走各的，流量分开统计，端口也不能互相复用。"
+            : "多跳转发链。流量从入口节点进入，逐跳中继，最后一跳拨向落地地址。"
+        }
         actions={
           <>
-            {routes.length > 0 && (
+            {shown.length > 0 && (
               <div className="segmented" role="group" aria-label="视图">
                 {VIEW_OPTIONS.map((option) => {
                   const Icon = option.icon;
@@ -469,7 +514,7 @@ export function Routes() {
       {warning && <Banner kind="warn">{warning}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
 
-      {routes.length > 0 && (
+      {shown.length > 0 && (
         <div className="stat-grid">
           <StatCard
             index={0}
@@ -489,20 +534,26 @@ export function Routes() {
           <StatCard
             index={2}
             label="链路"
-            value={String(routes.length)}
-            sub={`${routes.filter((r) => r.enabled).length} 条已启用`}
+            value={String(shown.length)}
+            sub={`${shown.filter((r) => r.enabled).length} 条已启用`}
             icon={<Waypoints size={17} />}
             tone="cool"
           />
         </div>
       )}
 
-      {routes.length === 0 ? (
+      {shown.length === 0 ? (
         <Card>
           <EmptyState
             icon={<Waypoints size={22} />}
-            title="还没有链路"
-            desc="先在节点页添加并探测节点，再来建第一条转发链路。"
+            title={routes.length === 0 ? "还没有链路" : family === "v6" ? "还没有 IPv6 链路" : "还没有 IPv4 链路"}
+            desc={
+              routes.length === 0
+                ? "先在节点页添加并探测节点，再来建第一条转发链路。"
+                : family === "v6"
+                  ? "新建链路时勾选「入口监听 IPv6」，或编辑已有链路打开它。首跳节点需要有全局 IPv6 地址。"
+                  : "现有链路都开了 IPv6 入口。"
+            }
             action={
               <button className="btn primary" onClick={() => setCreating(true)}>
                 <Plus size={15} />
@@ -527,7 +578,7 @@ export function Routes() {
                   </tr>
                 </thead>
                 <tbody>
-                  {routes.map((route) => (
+                  {shown.map((route) => (
                     <tr key={route.id}>
                       <td>
                         <div className="row" style={{ gap: 6 }}>
@@ -566,7 +617,7 @@ export function Routes() {
           </Card>
         ) : (
           <div className={`route-grid${view === "compact" ? " dense" : ""}`}>
-            {routes.map((route, cardIndex) => (
+            {shown.map((route, cardIndex) => (
               <Card index={cardIndex} key={route.id}>
                 <h2 style={{ marginBottom: 8 }}>
                   {/* The slug is only ever needed while logged into a node, so
@@ -629,6 +680,7 @@ export function Routes() {
         <RouteForm
           nodes={nodes}
           route={editing}
+          family={family}
           onClose={() => {
             setCreating(false);
             setEditing(null);
@@ -792,12 +844,15 @@ function TrafficDialog({ route, onClose }: { route: Route; onClose: () => void }
 interface RouteFormProps {
   nodes: Node[];
   route: Route | null;
+  /** 当前所在的标签页。它决定这张表单是在建 IPv4 还是 IPv6 链路 —— IPv4 页面下
+   *  整块 IPv6 选项都不出现，免得为一个此刻用不上的选择分心。 */
+  family: Family;
   onClose: () => void;
   onSaved: (message: string) => Promise<void>;
   onError: (err: unknown) => void;
 }
 
-function RouteForm({ nodes, route, onClose, onSaved, onError }: RouteFormProps) {
+function RouteForm({ nodes, route, family, onClose, onSaved, onError }: RouteFormProps) {
   const [name, setName] = useState(route?.name ?? "");
   const [target, setTarget] = useState(route?.target ?? "");
   const [protocol, setProtocol] = useState<RouteInput["protocol"]>(route?.protocol ?? "tcp");
@@ -808,9 +863,26 @@ function RouteForm({ nodes, route, onClose, onSaved, onError }: RouteFormProps) 
     route?.quota_bytes ? String(route.quota_bytes / 1024 ** 3) : "",
   );
   const [resetDay, setResetDay] = useState<number>(route?.quota_reset_day ?? 1);
+  // 新建时跟随标签页：在 IPv6 页面建的就是 IPv6 链路。编辑时以链路自己的值为准。
+  const [listenIPv6, setListenIPv6] = useState(route?.listen_ipv6 ?? family === "v6");
   const [busy, setBusy] = useState(false);
 
   const usable = nodes.filter((n) => n.arch !== "");
+  // 只有首跳会绑 [::]：后面的跳点是被上一跳按节点的 v4 地址拨过去的。
+  const entryNode = nodes.find((n) => n.id === hops[0]);
+  // 只在 IPv6 页面露出这一整块。第二个条件是保险：若从别处打开一条已经是 IPv6 的
+  // 链路，开关必须可见 —— 藏起来会让它在保存时被悄无声息地降级成 IPv4。
+  const showIPv6 = family === "v6" || route?.listen_ipv6 === true;
+
+  // 只有首跳会绑 IPv6，所以只有它需要筛。后续跳是被上一跳按节点的 IPv4 地址拨
+  // 过去的，按 IPv6 去筛会把一批完全可用的机器无故排除掉。
+  const hopOptions = (index: number) =>
+    listenIPv6 && index === 0 ? usable.filter((n) => n.ipv6_capable) : usable;
+
+  // 选了 IPv6 入口，列表里就该显示那条链路真正会用到的地址，而不是面板拨号用的
+  // IPv4 —— 后者在这里只会让人照着填错。
+  const hopAddress = (n: Node, index: number) =>
+    listenIPv6 && index === 0 && n.ipv6_address ? n.ipv6_address : n.host;
   const udpBlockers =
     protocol === "tcp+udp"
       ? hops
@@ -828,6 +900,7 @@ function RouteForm({ nodes, route, onClose, onSaved, onError }: RouteFormProps) 
       node_ids: hops,
       entry_port: entryPort ? Number(entryPort) : null,
       enabled: true,
+      listen_ipv6: listenIPv6,
       quota_bytes: quotaGB.trim() === "" ? null : Math.round(Number(quotaGB) * 1024 ** 3),
       quota_reset_day: resetDay,
     };
@@ -840,6 +913,7 @@ function RouteForm({ nodes, route, onClose, onSaved, onError }: RouteFormProps) 
           target !== route.target ||
           protocol !== route.protocol ||
           hops.join() !== route.hops.map((h) => h.node_id).join() ||
+          listenIPv6 !== route.listen_ipv6 ||
           (entryPort !== "" && Number(entryPort) !== route.entry_port);
         await api.updateRoute(route.id, input);
         await onSaved(
@@ -858,7 +932,10 @@ function RouteForm({ nodes, route, onClose, onSaved, onError }: RouteFormProps) 
   }
 
   return (
-    <Modal title={route ? `编辑链路 · ${route.name}` : "新建链路"} onClose={onClose}>
+    <Modal
+      title={route ? `编辑链路 · ${route.name}` : family === "v6" ? "新建 IPv6 链路" : "新建 IPv4 链路"}
+      onClose={onClose}
+    >
       <form onSubmit={submit}>
         <label>
           名称
@@ -914,6 +991,55 @@ function RouteForm({ nodes, route, onClose, onSaved, onError }: RouteFormProps) 
           />
         </label>
 
+        {showIPv6 && (
+          <>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+              <input
+                type="checkbox"
+                checked={listenIPv6}
+                disabled={!entryNode?.ipv6_capable && !listenIPv6}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setListenIPv6(on);
+                  // 开启后首跳若不支持 IPv6，它就不该再留在选择里：下拉会因为
+                  // 值不在选项中而显示空白，直到保存时才被后端拒绝。
+                  if (on && hops.length > 0) {
+                    const entry = nodes.find((n) => n.id === hops[0]);
+                    if (!entry?.ipv6_capable) {
+                      const first = usable.find((n) => n.ipv6_capable);
+                      setHops([first ? first.id : 0, ...hops.slice(1)]);
+                    }
+                  }
+                }}
+                style={{ width: "auto", marginTop: 3 }}
+              />
+              <span>入口监听 IPv6</span>
+            </label>
+            {entryNode?.ipv6_capable ? (
+              <p className="hint">
+                首跳改为<strong>只</strong>接受 IPv6 客户端，入口地址变成{" "}
+                <code>[{entryNode.ipv6_address || "节点的 v6 地址"}]:{entryPort || "入口端口"}</code>
+                ，同一节点的 IPv4 地址将连不上这条链路。落地走哪个协议族不受影响；
+                只影响这一条链路，同机器上其他链路不动。
+              </p>
+            ) : (
+              <p className="hint">
+                {hops.length === 0
+                  ? "先选好首跳节点，才能判断它支不支持 IPv6。"
+                  : `${entryNode?.name ?? "首跳节点"} 未探测到可用的 IPv6（需要全局 IPv6 地址，且 net.ipv6.bindv6only 为 0），先在节点页「探测」一次。`}
+              </p>
+            )}
+
+            {listenIPv6 && (
+              <Banner kind="warn">
+                这个端口在 IPv6 上必须没有别人占用。首跳绑 [::] 会取走该端口的整个 IPv6
+                通配空间，若机器上已有程序把它绑在某个具体 v6 地址上（比如另一个代理），
+                realm 会因端口冲突启动失败。面板分配端口时会避开已被占用的端口，手填时请自行确认。
+              </Banner>
+            )}
+          </>
+        )}
+
         <div className="grid2">
           <label>
             流量额度（GB）
@@ -960,9 +1086,9 @@ function RouteForm({ nodes, route, onClose, onSaved, onError }: RouteFormProps) 
               }}
               style={{ flex: 1 }}
             >
-              {usable.map((n) => (
+              {hopOptions(i).map((n) => (
                 <option key={n.id} value={n.id}>
-                  {n.name} ({n.host})
+                  {n.name} ({hopAddress(n, i)})
                 </option>
               ))}
             </select>
@@ -979,15 +1105,23 @@ function RouteForm({ nodes, route, onClose, onSaved, onError }: RouteFormProps) 
         <button
           type="button"
           className="btn sm"
-          disabled={usable.length === 0}
-          onClick={() => setHops([...hops, usable[0]?.id])}
+          disabled={hopOptions(hops.length).length === 0}
+          onClick={() => setHops([...hops, hopOptions(hops.length)[0]?.id])}
         >
           添加一跳
         </button>
-        {usable.length === 0 && (
+        {usable.length === 0 ? (
           <p className="hint">没有已探测的节点可用，请先到节点页完成探测。</p>
+        ) : (
+          listenIPv6 &&
+          hops.length === 0 &&
+          hopOptions(0).length === 0 && (
+            <p className="hint">
+              没有节点探测到可用的 IPv6，无法作为 IPv6 入口。先在节点页「探测」一次，
+              或改建 IPv4 链路。
+            </p>
+          )
         )}
-
         <div className="row" style={{ justifyContent: "flex-end", marginTop: 18 }}>
           <button type="button" className="btn" onClick={onClose}>
             取消

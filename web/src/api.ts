@@ -26,6 +26,10 @@ export interface Node {
   init_system: InitSystem;
   udp_capable: boolean | null;
   skip_udp_probe: boolean;
+  /** 探测得知：绑 [::] 能否同时服务 IPv4 和 IPv6。未探测时为 null。 */
+  ipv6_capable: boolean | null;
+  /** 探测到的全局 IPv6 地址，没有则为空串。host 永远是 v4，所以必须单独记。 */
+  ipv6_address: string;
   realm_version: string;
   status: NodeStatus;
   last_seen: string | null;
@@ -93,6 +97,8 @@ export interface Route {
   protocol: Protocol;
   entry_port: number;
   enabled: boolean;
+  /** 首跳是否绑 [::]，即客户端能否用 IPv6 连进来。 */
+  listen_ipv6: boolean;
   quota_bytes: number | null;
   quota_reset_day: number;
   /** 非空表示这条链路是被面板按额度停掉的，不是人停的。 */
@@ -367,6 +373,7 @@ export interface RouteInput {
   node_ids: number[];
   entry_port: number | null;
   enabled: boolean;
+  listen_ipv6: boolean;
   /** null 表示不限额。0 不是同义词——那表示一个字节都不许跑。 */
   quota_bytes: number | null;
   quota_reset_day: number;

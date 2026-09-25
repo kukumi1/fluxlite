@@ -341,6 +341,11 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
                       </td>
                       <td className="mono nowrap">
                         {n.ssh_user}@{n.host}:{n.ssh_port}
+                        {n.ipv6_address && (
+                          <div className="muted" style={{ fontSize: 11 }} title="探测到的全局 IPv6 地址，可作为链路的 IPv6 入口">
+                            {n.ipv6_address}
+                          </div>
+                        )}
                       </td>
                       <td>{statusTag(n)}</td>
                       <td className="nowrap">{pctText(m?.cpu_percent ?? null)}</td>
@@ -377,6 +382,15 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
                     <div className="mono muted" style={{ fontSize: 12 }}>
                       {n.ssh_user}@{n.host}:{n.ssh_port}
                     </div>
+                    {n.ipv6_address && (
+                      <div
+                        className="mono muted"
+                        style={{ fontSize: 12 }}
+                        title="探测到的全局 IPv6 地址，可作为链路的 IPv6 入口"
+                      >
+                        {n.ipv6_address}
+                      </div>
+                    )}
                   </div>
                   <div className="row" style={{ gap: 4, justifyContent: "flex-end" }}>
                     {statusTag(n)}
@@ -733,6 +747,7 @@ function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
           <span>跳过 UDP 检测</span>
         </label>
         <p className="hint">多数 NAT 机器只映射 TCP，不跑 UDP 链路可勾选，每次探测省十几秒。</p>
+
 
         <div className="row" style={{ justifyContent: "flex-end", marginTop: 8 }}>
           <button type="button" className="btn" onClick={onClose}>

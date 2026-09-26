@@ -151,6 +151,15 @@ export interface Traffic {
   from_entry: boolean;
 }
 
+/** 全部链路某一天的合计。 */
+export interface DailyTotal {
+  day: string;
+  bytes_in: number;
+  bytes_out: number;
+  /** 为假表示那天没有任何链路记到数 —— 不是「流量为 0」，是没人量。 */
+  counted: boolean;
+}
+
 export interface DailyTraffic {
   day: string;
   bytes_in: number;
@@ -328,6 +337,7 @@ export const api = {
 
   status: () => request<RouteStatus[] | null>("/status"),
   traffic: () => request<Record<string, Traffic> | null>("/traffic"),
+  dailyTotals: (days = 14) => request<DailyTotal[]>(`/traffic/daily?days=${days}`),
   metrics: () => request<Record<string, NodeMetrics> | null>("/metrics"),
   quotas: () => request<QuotaState[] | null>("/quotas"),
   audit: (limit = 100) => request<AuditEntry[] | null>(`/audit?limit=${limit}`),

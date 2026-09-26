@@ -1450,3 +1450,273 @@ tbody tr:last-child td {
   font-size: 13px;
   font-weight: 500;
 }
+
+/* ---------- 仪表盘图表 ----------
+ * 系列色只给图表用，按固定顺序取：入向是 1 号、出向是 2 号，两种主题各自一套
+ * 台阶。两组颜色都用校验器在各自的卡片底色上跑过（亮 #ffffff、暗 #0c1015），
+ * 色觉缺陷下的最小色差分别是 24.7 和 26.8。不要拿 --ok / --warn 顶替：那两个是
+ * 状态色，一旦被系列借走，用户就分不清「出向」和「警告」。 */
+:root {
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+}
+
+.dark {
+  --series-1: #3987e5;
+  --series-2: #d95926;
+}
+
+.dash-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.dash-grid > .card {
+  margin-bottom: 16px;
+}
+
+@media (max-width: 960px) {
+  .dash-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.legend {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.trend {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0 10px;
+  margin-top: 14px;
+}
+
+/* 刻度文字全是绝对定位，列宽不会被它们撑开。不给宽度，这一列会塌成 0，
+ * 标签就溢出到卡片左边界外面去。 */
+.trend-axis {
+  position: relative;
+  width: 58px;
+  height: 180px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.trend-axis span {
+  position: absolute;
+  right: 0;
+  transform: translateY(50%);
+  white-space: nowrap;
+}
+
+.trend-plot {
+  position: relative;
+  height: 180px;
+}
+
+.trend-grid {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
+}
+
+.trend-bars {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+/* 整列都是命中区，比柱子本身大得多 —— 最矮那几根也能指得到。 */
+.trend-col {
+  position: relative;
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  cursor: default;
+}
+
+.trend-col:hover {
+  background: color-mix(in oklch, var(--muted) 55%, transparent);
+  border-radius: 6px;
+}
+
+.trend-stack {
+  width: min(22px, 70%);
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+}
+
+.trend-seg {
+  min-height: 2px;
+}
+
+.trend-seg.in {
+  background: var(--series-1);
+}
+
+.trend-seg.out {
+  background: var(--series-2);
+}
+
+/* 圆角只给最顶上那一段，底部贴着基线是直角。 */
+.trend-stack > :last-child {
+  border-radius: 4px 4px 0 0;
+}
+
+/* 没人计数的那天画一根虚线占位，而不是空着 —— 空着看起来就是「那天没流量」。 */
+.trend-missing {
+  width: min(22px, 70%);
+  height: 14px;
+  border: 1px dashed color-mix(in oklch, var(--muted-foreground) 60%, transparent);
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+}
+
+.trend-labels {
+  grid-column: 2;
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.trend-labels span {
+  flex: 1;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* 提示框贴在柱子旁边、绘图区内侧。放到柱子正上方的话，高柱会把它顶出卡片
+ * 上沿被裁掉；右半边的柱子往左翻，免得撞出卡片右边。 */
+.chart-tip {
+  position: absolute;
+  top: 6px;
+  left: calc(100% + 6px);
+  z-index: 5;
+  min-width: 150px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  box-shadow: 0 6px 20px color-mix(in oklch, black 16%, transparent);
+  font-size: 12px;
+  color: var(--foreground);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.chart-tip.flip {
+  left: auto;
+  right: calc(100% + 6px);
+}
+
+.chart-tip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-table {
+  width: 100%;
+  margin-top: 12px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rank-list {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+}
+
+.rank-item {
+  display: block;
+  width: 100%;
+  padding: 6px 0;
+  border: none;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rank-item:hover .rank-name {
+  text-decoration: underline;
+}
+
+.rank-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.rank-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rank-value {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rank-track {
+  height: 6px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--muted) 80%, transparent);
+  overflow: hidden;
+}
+
+.rank-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--series-1);
+}
+
+/* 格子最小 340px：常见的 6 台机器在桌面宽度下排成 3 + 3。更窄的格子会排成
+ * 5 + 1，最后一台孤零零挂在第二行。 */
+.node-load-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.node-load {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in oklch, var(--card) 70%, transparent);
+}

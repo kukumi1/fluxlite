@@ -9,7 +9,9 @@ import {
 } from "lucide-react";
 import {
   api,
+  type DailyTotal,
   type Node,
+  type NodeMetrics,
   type QuotaState,
   type Route,
   type RouteStatus,
@@ -19,8 +21,13 @@ import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatCard } from "../components/StatCard";
+import { MetricBar } from "../components/MetricBar";
+import { TrafficTrend } from "../components/TrafficTrend";
 import { Banner } from "../components/Modal";
-import { describeAge, formatBytes, isStale, ageOf } from "../lib/format";
+import { describeAge, formatBytes, isStale, ageOf, percentOf } from "../lib/format";
+import { memCaveat } from "../lib/metrics";
+
+const RANK_LIMIT = 6;
 
 const QUOTA_NEAR_RATIO = 0.9;
 
@@ -129,23 +136,29 @@ export function Dashboard({ onNavigate }: Props) {
   const [statuses, setStatuses] = useState<RouteStatus[]>([]);
   const [traffic, setTraffic] = useState<Record<string, Traffic>>({});
   const [quotas, setQuotas] = useState<QuotaState[]>([]);
+  const [daily, setDaily] = useState<DailyTotal[]>([]);
+  const [metrics, setMetrics] = useState<Record<string, NodeMetrics>>({});
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
   async function load() {
     try {
-      const [r, n, s, t, q] = await Promise.all([
+      const [r, n, s, t, q, d, m] = await Promise.all([
         api.listRoutes(),
         api.listNodes(),
         api.status(),
         api.traffic(),
         api.quotas(),
+        api.dailyTotals(14),
+        api.metrics(),
       ]);
       setRoutes(r ?? []);
       setNodes(n ?? []);
       setStatuses(s ?? []);
       setTraffic(t ?? {});
       setQuotas(q ?? []);
+      setDaily(d ?? []);
+      setMetrics(m ?? {});
       setError("");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -167,6 +180,17 @@ export function Dashboard({ onNavigate }: Props) {
   const online = nodes.filter((n) => n.status === "online").length;
   const offline = nodes.filter((n) => n.status === "offline").length;
   const issues = collectIssues(routes, nodes, statuses, traffic, quotas);
+
+  // 只排有计数的链路。没计数的那几条不是「用得少」，是不知道用了多少 ——
+  // 把它们以 0 排在末尾，会让人以为它们闲着。
+  const ranked = routes
+    .map((route) => ({ route, t: traffic[String(route.id)] }))
+    .filter((x): x is { route: Route; t: Traffic } => !!x.t)
+    .map((x) => ({ ...x, total: x.t.bytes_in + x.t.bytes_out }))
+    .sort((a, b) => b.total - a.total);
+  const rankTop = ranked.slice(0, RANK_LIMIT);
+  const rankMax = rankTop[0]?.total ?? 0;
+  const uncounted = routes.length - ranked.length;
 
   if (loading) {
     return (
@@ -276,6 +300,101 @@ export function Dashboard({ onNavigate }: Props) {
               ))}
             </ul>
           )}
+        </Card>
+      )}
+
+      {routes.length > 0 && (
+        <div className="dash-grid">
+          <Card>
+            <TrafficTrend days={daily} />
+          </Card>
+
+          <Card>
+            <div className="spread">
+              <h2 style={{ margin: 0 }}>流量排行</h2>
+              <span className="muted" style={{ fontSize: 12 }}>累计 · 入+出</span>
+            </div>
+            {rankTop.length === 0 ? (
+              <p className="muted" style={{ marginTop: 12 }}>还没有任何链路记到数。</p>
+            ) : (
+              <ul className="rank-list">
+                {rankTop.map(({ route, t, total }) => (
+                  <li key={route.id}>
+                    <button
+                      className="rank-item"
+                      title={`入 ${formatBytes(t.bytes_in)} · 出 ${formatBytes(t.bytes_out)}`}
+                      onClick={() => onNavigate("routes")}
+                    >
+                      <div className="rank-head">
+                        <span className="rank-name">
+                          {route.name}
+                          {route.listen_ipv6 && (
+                            <span className="tag" style={{ marginLeft: 6 }}>
+                              IPv6
+                            </span>
+                          )}
+                        </span>
+                        <span className="rank-value">{formatBytes(total)}</span>
+                      </div>
+                      <div className="rank-track">
+                        <div
+                          className="rank-fill"
+                          style={{ width: `${rankMax > 0 ? (total / rankMax) * 100 : 0}%` }}
+                        />
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {(ranked.length > RANK_LIMIT || uncounted > 0) && (
+              <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+                {ranked.length > RANK_LIMIT && `另有 ${ranked.length - RANK_LIMIT} 条未列出。`}
+                {uncounted > 0 && `${uncounted} 条没有计数，不参与排行。`}
+              </p>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {nodes.length > 0 && (
+        <Card>
+          <div className="spread">
+            <h2 style={{ margin: 0 }}>节点负载</h2>
+            <button className="btn sm" onClick={() => onNavigate("nodes")}>
+              去节点页
+            </button>
+          </div>
+          <div className="node-load-grid">
+            {nodes.map((n) => {
+              const m = metrics[n.id];
+              const caveat = memCaveat(m);
+              return (
+                <div className="node-load" key={n.id}>
+                  <div className="spread" style={{ marginBottom: 8 }}>
+                    <strong>{n.name}</strong>
+                    <span
+                      className={`tag ${n.status === "online" ? "ok" : n.status === "offline" ? "err" : ""}`}
+                    >
+                      {n.status === "online" ? "在线" : n.status === "offline" ? "离线" : "未知"}
+                    </span>
+                  </div>
+                  <MetricBar label="CPU" percent={m?.cpu_percent ?? null} caveat={caveat} />
+                  <MetricBar
+                    label="内存"
+                    percent={percentOf(m?.mem_used ?? null, m?.mem_total ?? null)}
+                    detail={m?.mem_total ? formatBytes(m.mem_total) : undefined}
+                    caveat={caveat}
+                  />
+                  <MetricBar
+                    label="磁盘"
+                    percent={percentOf(m?.disk_used ?? null, m?.disk_total ?? null)}
+                    detail={m?.disk_total ? formatBytes(m.disk_total) : undefined}
+                  />
+                </div>
+              );
+            })}
+          </div>
         </Card>
       )}
     </>

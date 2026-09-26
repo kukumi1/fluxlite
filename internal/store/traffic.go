@@ -154,6 +154,30 @@ func (s *Store) DailyTraffic(ctx context.Context, routeID int64, days int) ([]mo
 	return out, rows.Err()
 }
 
+// DailyTotals sums every route's daily buckets from since onward, keyed by day.
+//
+// A day missing from the map had no bucket at all, which callers must keep
+// distinct from a day that was measured and came to zero.
+func (s *Store) DailyTotals(ctx context.Context, since string) (map[string]model.DailyTraffic, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT day, SUM(bytes_in), SUM(bytes_out) FROM route_traffic_daily
+		WHERE day >= ? GROUP BY day`, since)
+	if err != nil {
+		return nil, fmt.Errorf("sum daily traffic: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]model.DailyTraffic)
+	for rows.Next() {
+		var d model.DailyTraffic
+		if err := rows.Scan(&d.Day, &d.BytesIn, &d.BytesOut); err != nil {
+			return nil, fmt.Errorf("scan daily total: %w", err)
+		}
+		out[d.Day] = d
+	}
+	return out, rows.Err()
+}
+
 // PeriodUsage totals a route's daily buckets from the given day onward.
 //
 // counted reports whether any day contributed. A period with no rows is not

@@ -115,6 +115,35 @@ func (s *Service) DailyTraffic(ctx context.Context, routeID int64, days int) ([]
 	return s.store.DailyTraffic(ctx, routeID, days)
 }
 
+// DailyTotals returns the fleet's traffic for each of the last days days,
+// oldest first and ending today.
+//
+// Every day in the window is present, so a chart can lay out a fixed axis
+// without knowing which timezone the panel cuts days in; Counted tells a quiet
+// day from one nothing reported on.
+func (s *Service) DailyTotals(ctx context.Context, days int) ([]model.DailyTotal, error) {
+	return s.dailyTotalsAt(ctx, days, time.Now())
+}
+
+func (s *Service) dailyTotalsAt(ctx context.Context, days int, now time.Time) ([]model.DailyTotal, error) {
+	if days <= 0 || days > 90 {
+		days = 14
+	}
+	start := now.In(trafficZone).AddDate(0, 0, -(days - 1))
+	sums, err := s.store.DailyTotals(ctx, start.Format("2006-01-02"))
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]model.DailyTotal, days)
+	for i := range out {
+		day := start.AddDate(0, 0, i).Format("2006-01-02")
+		sum, counted := sums[day]
+		out[i] = model.DailyTotal{Day: day, BytesIn: sum.BytesIn, BytesOut: sum.BytesOut, Counted: counted}
+	}
+	return out, nil
+}
+
 // quotaNearRatio is how full a route has to be before the panel starts looking
 // more often. Enforcement can only act on what the last poll saw, so a route
 // about to cross its limit is worth checking sooner than one sitting idle.

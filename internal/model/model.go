@@ -415,6 +415,19 @@ type DailyTraffic struct {
 	BytesOut int64  `json:"bytes_out"`
 }
 
+// DailyTotal is every route's traffic on one day, added together.
+type DailyTotal struct {
+	Day      string `json:"day"`
+	BytesIn  int64  `json:"bytes_in"`
+	BytesOut int64  `json:"bytes_out"`
+
+	// Counted is false when no route recorded anything that day. Such a day is
+	// unmeasured, not quiet: the panel may have been down, or no counter
+	// installed yet, and drawing it as a zero-height bar would claim a lull
+	// nobody observed.
+	Counted bool `json:"counted"`
+}
+
 // MemSource says whose memory and CPU figures a sample describes.
 //
 // An unprivileged container shares the host's /proc, so a naive read reports

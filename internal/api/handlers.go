@@ -482,6 +482,17 @@ func (s *Server) handleTraffic(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, traffic)
 }
 
+// handleDailyTotals reports the whole fleet's traffic per day over a window.
+func (s *Server) handleDailyTotals(w http.ResponseWriter, r *http.Request) {
+	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
+	totals, err := s.svc.DailyTotals(r.Context(), days)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, totals)
+}
+
 // handleMetrics reports each node's latest resource snapshot, keyed by node id.
 //
 // Nodes absent from the response have never been collected, and individual

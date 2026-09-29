@@ -5,6 +5,7 @@ package prober
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"strings"
@@ -52,22 +53,11 @@ fi
 hostname 2>/dev/null || echo ""
 # Read from /proc rather than ip(8) and sysctl(8): the machines most likely to
 # be minimal are exactly the ones being asked about, and /proc needs no tools.
-# Scope 00 in if_inet6 is global — link-local (20) and loopback (10) would both
-# be useless to a client dialling in from outside.
-if [ "$(cat /proc/sys/net/ipv6/bindv6only 2>/dev/null)" = "0" ] &&
-   awk '$4 == "00" { found = 1 } END { exit !found }' /proc/net/if_inet6 2>/dev/null; then
-  echo dual
-else
-  echo v4only
-fi
-# if_inet6 stores the address as 32 undelimited hex digits. Grouping them is all
-# that happens here; canonical compression is left to net.ParseIP, which does it
-# correctly and without a shell reimplementation of RFC 5952.
-awk '$4 == "00" {
-  print substr($1,1,4)":"substr($1,5,4)":"substr($1,9,4)":"substr($1,13,4)":" \
-        substr($1,17,4)":"substr($1,21,4)":"substr($1,25,4)":"substr($1,29,4)
-  exit
-}' /proc/net/if_inet6 2>/dev/null || echo ""
+# Every scope-00 address goes back raw, and the judging happens in Go where it
+# can be tested: scope 00 includes unique-local fd00::/8, which the kernel calls
+# global but no client outside the provider's network can reach.
+cat /proc/sys/net/ipv6/bindv6only 2>/dev/null || echo ""
+awk '$4 == "00" { printf "%s%s", sep, $1; sep = "," } END { print "" }' /proc/net/if_inet6 2>/dev/null || echo ""
 `
 	out, err := sshx.RunCheck(ctx, client, script)
 	if err != nil {
@@ -88,9 +78,8 @@ awk '$4 == "00" {
 		InitSystem:   detectInit(get(2)),
 		RealmVersion: parseRealmVersion(get(3)),
 		Hostname:     get(4),
-		DualStack:    get(5) == "dual",
-		IPv6Address:  canonicalIPv6(get(6)),
 	}
+	facts.DualStack, facts.IPv6Address = judgeIPv6(get(5), get(6))
 	if facts.Arch == "" {
 		return nil, fmt.Errorf("probe node: could not determine architecture")
 	}
@@ -100,15 +89,33 @@ awk '$4 == "00" {
 	return facts, nil
 }
 
-// canonicalIPv6 reduces a grouped address to its canonical short form, and
-// discards anything that is not a usable IPv6 address rather than storing a
-// string the operator would paste and wonder about.
-func canonicalIPv6(s string) string {
-	ip := net.ParseIP(strings.TrimSpace(s))
-	if ip == nil || ip.To4() != nil {
-		return ""
+// judgeIPv6 decides whether a client outside can reach this node over IPv6,
+// from the node's bindv6only setting and its raw scope-00 addresses (32 hex
+// digits each, comma separated, as /proc/net/if_inet6 stores them).
+//
+// The kernel's "global" is not the question being asked. Unique-local
+// addresses (fc00::/7) sit in scope 00 too, and a NAT container holding only
+// one of those would otherwise be reported as reachable over IPv6 — while the
+// provider in fact delivers its public IPv6 to the container's IPv4. A relay
+// bound to [::] there receives nothing, and says nothing about it.
+func judgeIPv6(bindv6only, raw string) (dualStack bool, address string) {
+	for _, field := range strings.Split(raw, ",") {
+		b, err := hex.DecodeString(strings.TrimSpace(field))
+		if err != nil || len(b) != net.IPv6len {
+			continue
+		}
+		ip := net.IP(b)
+		if !publicIPv6(ip) {
+			continue
+		}
+		return strings.TrimSpace(bindv6only) == "0", ip.String()
 	}
-	return ip.String()
+	return false, ""
+}
+
+// publicIPv6 reports whether an address can be dialled from the internet.
+func publicIPv6(ip net.IP) bool {
+	return ip.To4() == nil && ip.IsGlobalUnicast() && !ip.IsPrivate()
 }
 
 // normaliseArch maps uname output onto Go's architecture names, which is what

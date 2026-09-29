@@ -13,7 +13,7 @@ import (
 
 const nodeColumns = `id, name, host, ssh_port, ssh_user, auth_type, auth_secret,
 	via_node_id, port_start, port_end, host_key, arch, os_id, init_system,
-	udp_capable, skip_udp_probe, ipv6_capable, ipv6_address, realm_version, status,
+	udp_capable, skip_udp_probe, ipv6_capable, ipv6_address, ipv6_entry, realm_version, status,
 	last_seen, created_at, updated_at`
 
 func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
@@ -25,7 +25,7 @@ func scanNode(row interface{ Scan(...any) error }) (*model.Node, error) {
 
 	err := row.Scan(&n.ID, &n.Name, &n.Host, &n.SSHPort, &n.SSHUser, &n.AuthType,
 		&n.AuthSecret, &via, &n.PortStart, &n.PortEnd, &n.HostKey, &n.Arch,
-		&n.OSID, &n.InitSystem, &udp, &n.SkipUDPProbe, &v6, &n.IPv6Address, &n.RealmVersion, &n.Status,
+		&n.OSID, &n.InitSystem, &udp, &n.SkipUDPProbe, &v6, &n.IPv6Address, &n.IPv6Entry, &n.RealmVersion, &n.Status,
 		&lastSeen, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -59,13 +59,13 @@ func (s *Store) CreateNode(ctx context.Context, n *model.Node) error {
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO nodes (name, host, ssh_port, ssh_user, auth_type, auth_secret,
 			via_node_id, port_start, port_end, host_key, arch, os_id, init_system,
-			udp_capable, skip_udp_probe, ipv6_capable, ipv6_address, realm_version,
+			udp_capable, skip_udp_probe, ipv6_capable, ipv6_address, ipv6_entry, realm_version,
 			status, last_seen, created_at, updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		n.Name, n.Host, n.SSHPort, n.SSHUser, n.AuthType, n.AuthSecret,
 		nullInt64(n.ViaNodeID), n.PortStart, n.PortEnd, n.HostKey, n.Arch,
 		n.OSID, n.InitSystem, nullBool(n.UDPCapable), n.SkipUDPProbe,
-		nullBool(n.IPv6Capable), n.IPv6Address,
+		nullBool(n.IPv6Capable), n.IPv6Address, n.IPv6Entry,
 		n.RealmVersion, n.Status, nullTime(n.LastSeen), n.CreatedAt, n.UpdatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -137,13 +137,13 @@ func (s *Store) UpdateNode(ctx context.Context, n *model.Node) error {
 		UPDATE nodes SET name=?, host=?, ssh_port=?, ssh_user=?, auth_type=?,
 			auth_secret=?, via_node_id=?, port_start=?, port_end=?, host_key=?,
 			arch=?, os_id=?, init_system=?, udp_capable=?, skip_udp_probe=?,
-			ipv6_capable=?, ipv6_address=?,
+			ipv6_capable=?, ipv6_address=?, ipv6_entry=?,
 			realm_version=?, status=?, last_seen=?, updated_at=?
 		WHERE id=?`,
 		n.Name, n.Host, n.SSHPort, n.SSHUser, n.AuthType, n.AuthSecret,
 		nullInt64(n.ViaNodeID), n.PortStart, n.PortEnd, n.HostKey, n.Arch,
 		n.OSID, n.InitSystem, nullBool(n.UDPCapable), n.SkipUDPProbe,
-		nullBool(n.IPv6Capable), n.IPv6Address,
+		nullBool(n.IPv6Capable), n.IPv6Address, n.IPv6Entry,
 		n.RealmVersion, n.Status, nullTime(n.LastSeen), n.UpdatedAt, n.ID)
 	if err != nil {
 		if isUniqueViolation(err) {

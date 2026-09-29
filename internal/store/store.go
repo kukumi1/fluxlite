@@ -309,6 +309,10 @@ var migrations = []string{
 	// target and stays IPv4, so without this the panel can only print the IPv4
 	// address and a working v6 entry looks like nothing happened.
 	`ALTER TABLE nodes ADD COLUMN ipv6_address TEXT NOT NULL DEFAULT ''`,
+
+	// A public IPv6 address the provider forwards to the node's IPv4, typed in
+	// by the operator. The probe cannot find it: the machine never holds it.
+	`ALTER TABLE nodes ADD COLUMN ipv6_entry TEXT NOT NULL DEFAULT ''`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

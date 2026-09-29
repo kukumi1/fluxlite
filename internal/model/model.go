@@ -146,6 +146,18 @@ type Node struct {
 	// on — it would keep printing the IPv4 one and look like nothing changed.
 	IPv6Address string `json:"ipv6_address"`
 
+	// IPv6Entry is a public IPv6 address the provider forwards to this node's
+	// IPv4, entered by the operator. Empty for a node that holds its own public
+	// IPv6, which the probe finds by itself.
+	//
+	// It exists for the same reason Host is typed in rather than detected: on a
+	// NAT box the address a client dials is not one the machine can see. Worse,
+	// such a provider typically hands the traffic to the container's IPv4, so a
+	// relay bound to [::] would receive nothing at all — which is why a set
+	// IPv6Entry also changes how the entry hop listens, not just what the
+	// panel prints.
+	IPv6Entry string `json:"ipv6_entry"`
+
 	// SkipUDPProbe suppresses the UDP reachability check for this node. Most
 	// NAT hosts forward TCP only, so an operator who never intends to carry
 	// UDP can skip a probe that costs a dozen seconds on every refresh.
@@ -158,6 +170,21 @@ type Node struct {
 	LastSeen  *time.Time `json:"last_seen"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
+}
+
+// IPv6Reachable reports whether a client can reach this node over IPv6 at all,
+// whether it holds the address itself or the provider forwards one to it.
+func (n *Node) IPv6Reachable() bool {
+	return n.IPv6Entry != "" || (n.IPv6Capable != nil && *n.IPv6Capable)
+}
+
+// IPv6DialAddress is the IPv6 address a client should use for this node, the
+// operator's entry taking precedence over what the probe found.
+func (n *Node) IPv6DialAddress() string {
+	if n.IPv6Entry != "" {
+		return n.IPv6Entry
+	}
+	return n.IPv6Address
 }
 
 // Addr returns the SSH dial address of the node.

@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -58,6 +60,11 @@ type NodeInput struct {
 	PortStart int            `json:"port_start"`
 	PortEnd   int            `json:"port_end"`
 	SkipUDP   bool           `json:"skip_udp_probe"`
+
+	// IPv6Entry is the public IPv6 address the provider forwards to this node,
+	// for NAT boxes whose own IPv6 is private. Empty means none, or that the
+	// node holds its own public IPv6 and the probe will find it.
+	IPv6Entry string `json:"ipv6_entry"`
 }
 
 var (
@@ -74,6 +81,30 @@ var (
 	ErrIPv6Unavailable = errors.New("该节点无法用一个监听同时服务 IPv4 和 IPv6（没有全局 IPv6 地址，或 net.ipv6.bindv6only 不是 0）")
 )
 
+var (
+	ErrIPv6EntryInvalid   = errors.New("IPv6 入口地址格式不对，应当是一个 IPv6 地址，例如 2400:c620:22:282::10")
+	ErrIPv6EntryNotPublic = errors.New("IPv6 入口地址必须是公网地址；fc00::/7（如 fd91:…）、fe80:: 这类是内网或链路本地地址，外面连不到")
+	ErrIPv6EntryInUse     = errors.New("还有 IPv6 链路以这台机器为入口，而它自己没有公网 IPv6；清空入口地址会让那些链路静默收不到流量，请先关掉它们的 IPv6 入口")
+)
+
+// normalizeIPv6Entry checks an operator-typed IPv6 entry and returns it in
+// canonical form. Brackets are tolerated because the address is so often
+// copied out of a "[addr]:port" string.
+func normalizeIPv6Entry(raw string) (string, error) {
+	s := strings.Trim(strings.TrimSpace(raw), "[]")
+	if s == "" {
+		return "", nil
+	}
+	ip := net.ParseIP(s)
+	if ip == nil || ip.To4() != nil {
+		return "", ErrIPv6EntryInvalid
+	}
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		return "", ErrIPv6EntryNotPublic
+	}
+	return ip.String(), nil
+}
+
 // allowListenIPv6 guards turning IPv6 entry on for a route.
 //
 // The node checked is the entry hop's, because that is the only hop that binds
@@ -85,13 +116,13 @@ func allowListenIPv6(entry *model.Node, was, want bool) error {
 	if !want || was {
 		return nil
 	}
+	if entry.IPv6Reachable() {
+		return nil
+	}
 	if entry.IPv6Capable == nil {
 		return ErrIPv6Unprobed
 	}
-	if !*entry.IPv6Capable {
-		return ErrIPv6Unavailable
-	}
-	return nil
+	return ErrIPv6Unavailable
 }
 
 // CreateNode stores a node with its credential encrypted at rest.
@@ -120,6 +151,11 @@ func (s *Service) CreateNode(ctx context.Context, in NodeInput) (*model.Node, er
 		SkipUDPProbe: in.SkipUDP,
 		Status:       model.StatusUnknown,
 	}
+	entry, err := normalizeIPv6Entry(in.IPv6Entry)
+	if err != nil {
+		return nil, err
+	}
+	node.IPv6Entry = entry
 	if err := s.store.CreateNode(ctx, node); err != nil {
 		return nil, err
 	}
@@ -155,6 +191,21 @@ func (s *Service) UpdateNode(ctx context.Context, id int64, in NodeInput) (*mode
 	node.PortStart = in.PortStart
 	node.PortEnd = in.PortEnd
 	node.SkipUDPProbe = in.SkipUDP
+
+	entry, err := normalizeIPv6Entry(in.IPv6Entry)
+	if err != nil {
+		return nil, err
+	}
+	if entry == "" && node.IPv6Entry != "" && !(node.IPv6Capable != nil && *node.IPv6Capable) {
+		inUse, err := s.ipv6EntryInUse(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if inUse {
+			return nil, ErrIPv6EntryInUse
+		}
+	}
+	node.IPv6Entry = entry
 
 	if in.Secret != "" {
 		sealed, err := s.sealer.Seal([]byte(in.Secret))
@@ -358,6 +409,27 @@ type RouteInput struct {
 	// a byte.
 	QuotaBytes    *int64 `json:"quota_bytes"`
 	QuotaResetDay int    `json:"quota_reset_day"`
+}
+
+// ipv6EntryInUse reports whether any IPv6-entry route starts on this node.
+func (s *Service) ipv6EntryInUse(ctx context.Context, nodeID int64) (bool, error) {
+	routes, err := s.store.RoutesOnNode(ctx, nodeID)
+	if err != nil {
+		return false, err
+	}
+	for _, r := range routes {
+		if !r.ListenIPv6 {
+			continue
+		}
+		full, err := s.store.RouteByID(ctx, r.ID)
+		if err != nil {
+			return false, err
+		}
+		if len(full.Hops) > 0 && full.Hops[0].NodeID == nodeID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // checkEntryIPv6 applies allowListenIPv6 to whichever node ends up carrying the

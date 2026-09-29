@@ -8,6 +8,7 @@ import {
   type NodeInput,
   type NodeMetrics,
   type ProbeResult,
+  ipv6DialAddress,
 } from "../api";
 import {
   ArrowDown,
@@ -43,6 +44,7 @@ const emptyInput: NodeInput = {
   port_start: DEFAULT_PORT_START,
   port_end: DEFAULT_PORT_END,
   skip_udp_probe: false,
+  ipv6_entry: "",
 };
 
 type NodeView = "card" | "compact" | "list";
@@ -58,6 +60,12 @@ const NODE_VIEW_OPTIONS = [
 function storedNodeView(): NodeView {
   const saved = localStorage.getItem(NODE_VIEW_KEY);
   return saved === "card" || saved === "compact" || saved === "list" ? saved : "card";
+}
+
+function v6Title(n: Node): string {
+  return n.ipv6_entry
+    ? "手填的 IPv6 入口：服务商把这个地址转进本机的 IPv4，链路按 IPv4 监听"
+    : "探测到的公网 IPv6 地址，可作为链路的 IPv6 入口";
 }
 
 function statusTag(n: Node) {
@@ -333,9 +341,10 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
                       </td>
                       <td className="mono nowrap">
                         {n.ssh_user}@{n.host}:{n.ssh_port}
-                        {n.ipv6_address && (
-                          <div className="muted" style={{ fontSize: 11 }} title="探测到的全局 IPv6 地址，可作为链路的 IPv6 入口">
-                            {n.ipv6_address}
+                        {ipv6DialAddress(n) && (
+                          <div className="muted" style={{ fontSize: 11 }} title={v6Title(n)}>
+                            {ipv6DialAddress(n)}
+                            {n.ipv6_entry && <span className="tag" style={{ marginLeft: 6 }}>映射</span>}
                           </div>
                         )}
                       </td>
@@ -374,13 +383,10 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
                     <div className="mono muted" style={{ fontSize: 12 }}>
                       {n.ssh_user}@{n.host}:{n.ssh_port}
                     </div>
-                    {n.ipv6_address && (
-                      <div
-                        className="mono muted"
-                        style={{ fontSize: 12 }}
-                        title="探测到的全局 IPv6 地址，可作为链路的 IPv6 入口"
-                      >
-                        {n.ipv6_address}
+                    {ipv6DialAddress(n) && (
+                      <div className="mono muted" style={{ fontSize: 12 }} title={v6Title(n)}>
+                        {ipv6DialAddress(n)}
+                        {n.ipv6_entry && <span className="tag" style={{ marginLeft: 6 }}>映射</span>}
                       </div>
                     )}
                   </div>
@@ -605,6 +611,7 @@ function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
           port_start: node.port_start,
           port_end: node.port_end,
           skip_udp_probe: node.skip_udp_probe,
+          ipv6_entry: node.ipv6_entry,
         }
       : emptyInput,
   );
@@ -728,6 +735,22 @@ function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
           </select>
         </label>
         <p className="hint">仅对控制器无法直连的内网节点设置，下发时会自动经跳板。</p>
+
+        <label>
+          IPv6 入口地址（选填）
+          <input
+            value={form.ipv6_entry}
+            onChange={(e) => set("ipv6_entry", e.target.value)}
+            placeholder={node?.ipv6_address ? `已探测到 ${node.ipv6_address}，无需填写` : "例如 2400:c620:22:282::10"}
+            className="mono"
+          />
+        </label>
+        <p className="hint">
+          只有 NAT 机器需要：服务商给了一个公网 IPv6「入口」，而机器自己身上只有内网
+          v6（fd 开头之类）。填上后，这台机器作为 IPv6 链路的入口时会按 IPv4 监听——
+          这类服务商是把 v6 流量转进机器的 IPv4 的。自己持有公网 IPv6 的机器留空，
+          探测会自动识别。
+        </p>
 
         <label style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
           <input

@@ -179,7 +179,7 @@ func Build(ctx context.Context, lookup NodeLookup, route *model.Route) (*Plan, e
 			remote = net.JoinHostPort(nodes[i+1].Host, strconv.Itoa(next.RelayPort))
 		}
 
-		listen := ListenAddress(route, h.HopOrder, h.RelayPort)
+		listen := ListenAddress(route, nodes[i], h.HopOrder, h.RelayPort)
 		ipv6Only := strings.HasPrefix(listen, "[")
 		cfg := renderConfig(route, listen, ipv6Only, remote)
 		plan.Hops[i] = HopPlan{
@@ -203,16 +203,21 @@ func Build(ctx context.Context, lookup NodeLookup, route *model.Route) (*Plan, e
 // ListenAddress is the wildcard this hop binds.
 //
 // 0.0.0.0 accepts IPv4 and nothing else, which is why a client on an IPv6-only
-// path cannot reach a relay however well the node is connected. [::] accepts
-// both families on one socket where net.ipv6.bindv6only is 0, which is what a
-// node's IPv6Capable flag records.
+// path cannot reach a relay however well the node is connected. [::] with
+// ipv6_only accepts IPv6 alone.
 //
 // Only hop 0 ever widens. Later hops are dialled by their predecessor at the
 // node's Host, which is IPv4, so an IPv6 listener there would receive nothing —
 // while still claiming the whole IPv6 wildcard for that port and colliding with
 // anything already bound to it.
-func ListenAddress(route *model.Route, hopOrder, port int) string {
-	if route.ListenIPv6 && hopOrder == 0 {
+//
+// And hop 0 widens only on a node that holds its own public IPv6. Where the
+// operator has entered an IPv6Entry, the provider forwards that address to the
+// node's IPv4: the client does connect over IPv6, but the bytes arrive on the
+// container's IPv4 side, so the relay has to listen there. Bound to [::] it
+// would receive nothing, with nothing anywhere to say so.
+func ListenAddress(route *model.Route, node *model.Node, hopOrder, port int) string {
+	if route.ListenIPv6 && hopOrder == 0 && node.IPv6Entry == "" {
 		return net.JoinHostPort("::", strconv.Itoa(port))
 	}
 	return net.JoinHostPort("0.0.0.0", strconv.Itoa(port))

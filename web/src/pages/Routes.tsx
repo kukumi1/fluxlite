@@ -12,6 +12,8 @@ import {
   type RouteStatus,
   type Traffic,
   type VerifyReport,
+  ipv6DialAddress,
+  ipv6Reachable,
 } from "../api";
 import { ArrowDown, ArrowUp, LayoutGrid, List, Plus, Rows3, Waypoints } from "lucide-react";
 import { Banner, Modal } from "../components/Modal";
@@ -59,8 +61,8 @@ function entryAddress(route: Route, nodes: Node[]): string {
   const entry = nodes.find((n) => n.id === route.hops[0]?.node_id);
   // 开了 IPv6 入口就必须显示 v6 地址：host 永远是面板拨号用的 v4，照搬它会让
   // 一个已经生效的 v6 入口看起来跟没开一样，用户照着填还是走 v4。
-  if (route.listen_ipv6 && entry?.ipv6_address) {
-    return `[${entry.ipv6_address}]:${route.entry_port}`;
+  if (route.listen_ipv6 && entry && ipv6DialAddress(entry)) {
+    return `[${ipv6DialAddress(entry)}]:${route.entry_port}`;
   }
   return `${entry?.host ?? "?"}:${route.entry_port}`;
 }
@@ -877,12 +879,12 @@ function RouteForm({ nodes, route, family, onClose, onSaved, onError }: RouteFor
   // 只有首跳会绑 IPv6，所以只有它需要筛。后续跳是被上一跳按节点的 IPv4 地址拨
   // 过去的，按 IPv6 去筛会把一批完全可用的机器无故排除掉。
   const hopOptions = (index: number) =>
-    listenIPv6 && index === 0 ? usable.filter((n) => n.ipv6_capable) : usable;
+    listenIPv6 && index === 0 ? usable.filter(ipv6Reachable) : usable;
 
   // 选了 IPv6 入口，列表里就该显示那条链路真正会用到的地址，而不是面板拨号用的
   // IPv4 —— 后者在这里只会让人照着填错。
   const hopAddress = (n: Node, index: number) =>
-    listenIPv6 && index === 0 && n.ipv6_address ? n.ipv6_address : n.host;
+    listenIPv6 && index === 0 && ipv6DialAddress(n) ? ipv6DialAddress(n) : n.host;
   const udpBlockers =
     protocol === "tcp+udp"
       ? hops
@@ -997,7 +999,7 @@ function RouteForm({ nodes, route, family, onClose, onSaved, onError }: RouteFor
               <input
                 type="checkbox"
                 checked={listenIPv6}
-                disabled={!entryNode?.ipv6_capable && !listenIPv6}
+                disabled={!(entryNode && ipv6Reachable(entryNode)) && !listenIPv6}
                 onChange={(e) => {
                   const on = e.target.checked;
                   setListenIPv6(on);
@@ -1005,8 +1007,8 @@ function RouteForm({ nodes, route, family, onClose, onSaved, onError }: RouteFor
                   // 值不在选项中而显示空白，直到保存时才被后端拒绝。
                   if (on && hops.length > 0) {
                     const entry = nodes.find((n) => n.id === hops[0]);
-                    if (!entry?.ipv6_capable) {
-                      const first = usable.find((n) => n.ipv6_capable);
+                    if (!(entry && ipv6Reachable(entry))) {
+                      const first = usable.find(ipv6Reachable);
                       setHops([first ? first.id : 0, ...hops.slice(1)]);
                     }
                   }
@@ -1015,10 +1017,18 @@ function RouteForm({ nodes, route, family, onClose, onSaved, onError }: RouteFor
               />
               <span>入口监听 IPv6</span>
             </label>
-            {entryNode?.ipv6_capable ? (
+            {entryNode && entryNode.ipv6_entry ? (
+              <p className="hint">
+                {entryNode.name} 的 IPv6 入口是服务商映射的{" "}
+                <code>[{entryNode.ipv6_entry}]:{entryPort || "入口端口"}</code>
+                ，流量被转进这台机器的 IPv4，所以首跳会按 IPv4 监听。客户端照样走 IPv6
+                连进来；但同一端口用它的 IPv4 地址也能连上——这由服务商的映射方式决定，
+                面板改变不了。
+              </p>
+            ) : entryNode && ipv6Reachable(entryNode) ? (
               <p className="hint">
                 首跳改为<strong>只</strong>接受 IPv6 客户端，入口地址变成{" "}
-                <code>[{entryNode.ipv6_address || "节点的 v6 地址"}]:{entryPort || "入口端口"}</code>
+                <code>[{ipv6DialAddress(entryNode) || "节点的 v6 地址"}]:{entryPort || "入口端口"}</code>
                 ，同一节点的 IPv4 地址将连不上这条链路。落地走哪个协议族不受影响；
                 只影响这一条链路，同机器上其他链路不动。
               </p>

@@ -8,7 +8,7 @@ import (
 )
 
 func TestListenAddressDefaultsToIPv4(t *testing.T) {
-	got := ListenAddress(&model.Route{}, 0, 10001)
+	got := ListenAddress(&model.Route{}, &model.Node{}, 0, 10001)
 	if got != "0.0.0.0:10001" {
 		t.Fatalf("默认应当维持 IPv4 监听，实际 %q —— 改监听地址会重写配置、"+
 			"而 realm 不能热重载，等于把在跑的链路断一次", got)
@@ -16,7 +16,7 @@ func TestListenAddressDefaultsToIPv4(t *testing.T) {
 }
 
 func TestListenAddressBracketsIPv6(t *testing.T) {
-	got := ListenAddress(&model.Route{ListenIPv6: true}, 0, 10001)
+	got := ListenAddress(&model.Route{ListenIPv6: true}, &model.Node{}, 0, 10001)
 	if got != "[::]:10001" {
 		t.Fatalf("IPv6 监听地址必须带方括号，否则 realm 会把冒号当成端口分隔符: %q", got)
 	}
@@ -29,11 +29,11 @@ func TestListenAddressBracketsIPv6(t *testing.T) {
 func TestListenAddressOnlyWidensTheEntryHop(t *testing.T) {
 	route := &model.Route{ListenIPv6: true}
 
-	if got := ListenAddress(route, 0, 10001); got != "[::]:10001" {
+	if got := ListenAddress(route, &model.Node{}, 0, 10001); got != "[::]:10001" {
 		t.Errorf("首跳才是客户端连入的那一跳，应当绑 IPv6: %q", got)
 	}
 	for _, hop := range []int{1, 2} {
-		if got := ListenAddress(route, hop, 10001); got != "0.0.0.0:10001" {
+		if got := ListenAddress(route, &model.Node{}, hop, 10001); got != "0.0.0.0:10001" {
 			t.Errorf("第 %d 跳是被上一跳按节点 v4 地址拨过去的，绑 IPv6 收不到任何东西，"+
 				"却会占掉整个 v6 通配空间去和别的程序冲突: %q", hop, got)
 		}
@@ -81,13 +81,13 @@ func TestListenAddressChangesConfigHash(t *testing.T) {
 func TestIPv6HopIsListenerOnlyForIPv6(t *testing.T) {
 	route := &model.Route{Slug: "hk-tw", Protocol: model.ProtocolTCPUDP, ListenIPv6: true}
 
-	v6 := renderConfig(route, ListenAddress(route, 0, 21300), true, "203.0.113.9:443")
+	v6 := renderConfig(route, ListenAddress(route, &model.Node{}, 0, 21300), true, "203.0.113.9:443")
 	if !strings.Contains(v6, "ipv6_only = true") {
 		t.Fatalf("IPv6 首跳缺少 ipv6_only，监听会变成双栈:\n%s", v6)
 	}
 
 	// 同一条链路的后续跳仍然是 IPv4，不能被这行波及。
-	later := renderConfig(route, ListenAddress(route, 1, 21300), false, "203.0.113.9:443")
+	later := renderConfig(route, ListenAddress(route, &model.Node{}, 1, 21300), false, "203.0.113.9:443")
 	if strings.Contains(later, "ipv6_only") {
 		t.Errorf("IPv4 跳不该出现 ipv6_only:\n%s", later)
 	}
@@ -102,5 +102,20 @@ func TestIPv6OnlyChangesConfigHash(t *testing.T) {
 	only := hashConfig(renderConfig(route, "[::]:21300", true, "203.0.113.9:443"))
 	if dual == only {
 		t.Fatal("开关 ipv6_only 没有改变配置 hash，下发会被跳过")
+	}
+}
+
+// WAWO-HK 那类 NAT 机：服务商把公网 IPv6 转进容器的 IPv4。实测对照过——同一个
+// v6 入口，只收 v4 的监听拿到了 SSH 欢迎串，只收 v6 的监听一个字节都没收到。
+// 所以这种节点上，即便链路要求 IPv6 入口，首跳也必须监听 IPv4。
+func TestListenAddressStaysIPv4OnForwardedIPv6Node(t *testing.T) {
+	route := &model.Route{ListenIPv6: true}
+	mapped := &model.Node{IPv6Entry: "2400:c620:22:282::10"}
+
+	if got := ListenAddress(route, mapped, 0, 58123); got != "0.0.0.0:58123" {
+		t.Fatalf("服务商映射型 IPv6 节点上首跳绑了 %q；流量是从容器的 IPv4 进来的，绑 IPv6 会收不到任何东西", got)
+	}
+	if got := ListenAddress(route, &model.Node{}, 0, 58123); got != "[::]:58123" {
+		t.Fatalf("自己持有公网 IPv6 的节点仍应绑 [::]，实际 %q", got)
 	}
 }

@@ -30,6 +30,8 @@ export interface Node {
   ipv6_capable: boolean | null;
   /** 探测到的全局 IPv6 地址，没有则为空串。host 永远是 v4，所以必须单独记。 */
   ipv6_address: string;
+  /** 手填的 IPv6 入口：服务商把这个公网 v6 转进本机 IPv4 的那种 NAT 机才需要。 */
+  ipv6_entry: string;
   realm_version: string;
   status: NodeStatus;
   last_seen: string | null;
@@ -149,6 +151,16 @@ export interface Traffic {
   /** 计到这个数字的跳；from_entry 为假时它不是入口跳，数字会偏小。 */
   hop_order: number;
   from_entry: boolean;
+}
+
+/** 客户端该用的 IPv6 地址：手填的入口优先，其次是探测到的。 */
+export function ipv6DialAddress(n: Node): string {
+  return n.ipv6_entry || n.ipv6_address;
+}
+
+/** 能不能从 IPv6 连到这台机器：自己持有公网 v6，或服务商映射了一个进来。 */
+export function ipv6Reachable(n: Node): boolean {
+  return n.ipv6_entry !== "" || n.ipv6_capable === true;
 }
 
 /** 全部链路某一天的合计。 */
@@ -374,6 +386,7 @@ export interface NodeInput {
   port_start: number;
   port_end: number;
   skip_udp_probe: boolean;
+  ipv6_entry: string;
 }
 
 export interface RouteInput {

@@ -313,6 +313,41 @@ var migrations = []string{
 	// A public IPv6 address the provider forwards to the node's IPv4, typed in
 	// by the operator. The probe cannot find it: the machine never holds it.
 	`ALTER TABLE nodes ADD COLUMN ipv6_entry TEXT NOT NULL DEFAULT ''`,
+
+	// IPv4 and IPv6 routes are listed, counted and allocated apart, so a name
+	// only has to be unique within its family. The inline UNIQUE on name can
+	// only go by rebuilding the table. It is one statement so it cannot be
+	// resumed halfway: a restart that picked up after the pragma would drop
+	// routes with foreign keys on, and the cascade would take every hop and
+	// traffic row with it. The pragma is a no-op inside a transaction, hence
+	// outside the BEGIN.
+	`PRAGMA foreign_keys = OFF;
+	BEGIN;
+	CREATE TABLE routes_rebuilt (
+		id              INTEGER PRIMARY KEY AUTOINCREMENT,
+		name            TEXT    NOT NULL,
+		target          TEXT    NOT NULL,
+		protocol        TEXT    NOT NULL,
+		enabled         INTEGER NOT NULL DEFAULT 1,
+		created_at      DATETIME NOT NULL,
+		updated_at      DATETIME NOT NULL,
+		slug            TEXT    NOT NULL DEFAULT '',
+		quota_bytes     INTEGER,
+		quota_reset_day INTEGER NOT NULL DEFAULT 1,
+		quota_paused_at DATETIME,
+		listen_ipv6     INTEGER NOT NULL DEFAULT 0
+	);
+	INSERT INTO routes_rebuilt (id, name, target, protocol, enabled, created_at, updated_at,
+		slug, quota_bytes, quota_reset_day, quota_paused_at, listen_ipv6)
+	SELECT id, name, target, protocol, enabled, created_at, updated_at,
+		slug, quota_bytes, quota_reset_day, quota_paused_at, listen_ipv6
+	FROM routes;
+	DROP TABLE routes;
+	ALTER TABLE routes_rebuilt RENAME TO routes;
+	CREATE UNIQUE INDEX idx_routes_slug ON routes(slug);
+	CREATE UNIQUE INDEX idx_routes_family_name ON routes(listen_ipv6, name);
+	COMMIT;
+	PRAGMA foreign_keys = ON;`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

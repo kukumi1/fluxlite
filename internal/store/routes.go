@@ -29,7 +29,7 @@ func (s *Store) CreateRoute(ctx context.Context, r *model.Route) error {
 			r.QuotaBytes, r.QuotaResetDay, r.CreatedAt, r.UpdatedAt)
 		if err != nil {
 			if isUniqueViolation(err) {
-				return fmt.Errorf("route name %q %w", r.Name, ErrConflict)
+				return routeNameConflict(r)
 			}
 			return fmt.Errorf("insert route: %w", err)
 		}
@@ -71,26 +71,6 @@ func (s *Store) RouteByID(ctx context.Context, id int64) (*model.Route, error) {
 	r, err := scanRoute(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("route %d: %w", id, ErrNotFound)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("scan route: %w", err)
-	}
-	if err := s.loadHops(ctx, r); err != nil {
-		return nil, err
-	}
-	return r, nil
-}
-
-// RouteByName returns a route by its unique name.
-func (s *Store) RouteByName(ctx context.Context, name string) (*model.Route, error) {
-	row := s.db.QueryRowContext(ctx, `
-		SELECT id, name, slug, target, protocol, enabled, listen_ipv6,
-			quota_bytes, quota_reset_day, quota_paused_at, created_at, updated_at
-		FROM routes WHERE name = ?`, name)
-
-	r, err := scanRoute(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("route %q: %w", name, ErrNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("scan route: %w", err)
@@ -220,7 +200,7 @@ func (s *Store) UpdateRoute(ctx context.Context, r *model.Route) error {
 			r.QuotaBytes, r.QuotaResetDay, r.UpdatedAt, r.ID)
 		if err != nil {
 			if isUniqueViolation(err) {
-				return fmt.Errorf("route name %q %w", r.Name, ErrConflict)
+				return routeNameConflict(r)
 			}
 			return fmt.Errorf("update route: %w", err)
 		}
@@ -419,3 +399,19 @@ func (s *Store) ClearHopRunning(ctx context.Context, routeID int64) error {
 	}
 	return nil
 }
+
+// routeNameConflict names the family, because a name only has to be unique
+// among routes of the same one. The message is shown to the operator as is,
+// so ErrConflict is carried for errors.Is without being spelled out in it.
+func routeNameConflict(r *model.Route) error {
+	family := "IPv4"
+	if r.ListenIPv6 {
+		family = "IPv6"
+	}
+	return conflictError(fmt.Sprintf("%s 转发里已经有名为「%s」的链路，换个名称", family, r.Name))
+}
+
+type conflictError string
+
+func (e conflictError) Error() string { return string(e) }
+func (e conflictError) Unwrap() error { return ErrConflict }

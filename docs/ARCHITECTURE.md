@@ -28,6 +28,7 @@
 | `applier` | SSH 下发，hash 比对幂等，从末跳往前建 |
 | `verifier` | 逐跳连通性 + 末跳抓包证明投递 |
 | `watcher` | 后台巡检与采样 |
+| `singbox` | 用户协议配置、独立服务下发、计数与额度暂停 |
 | `sshx` | SSH 连接层，连接池、ProxyJump 链、host key 固定 |
 | `cryptox` | 凭据封装、口令哈希、随机令牌 |
 
@@ -38,7 +39,7 @@
 下发 ──► planner.Build ──► applier.Apply      （SSH 写配置 + 重启）
 验证 ──► verifier.Verify                      （逐跳探测 + 末跳抓包）
 巡检 ──► applier.Apply（幂等）                 （纠正漂移，每 5 分钟）
-采样 ──► applier.Status + verifier.Measure     （存活与延迟，每 30 秒）
+采样 ──► applier.Status + verifier.Measure     （节点指标、存活与延迟，每 10 秒）
 ```
 
 ### 端口分配

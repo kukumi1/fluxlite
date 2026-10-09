@@ -7,6 +7,7 @@ import {
   Server,
   Sun,
   TerminalSquare,
+  Network,
   Waypoints,
   Zap,
 } from "lucide-react";
@@ -18,17 +19,19 @@ import { Nodes } from "./pages/Nodes";
 import { Routes } from "./pages/Routes";
 import { Audit } from "./pages/Audit";
 import { Account } from "./pages/Account";
+import { SingBox } from "./pages/SingBox";
 
 // 终端页连同 xterm 一起单独打包：不开终端的人不该为它下载一份终端模拟器。
 const Console = lazy(() => import("./pages/Console").then((m) => ({ default: m.Console })));
 
-type Tab = "dashboard" | "routes" | "nodes" | "console" | "audit" | "account";
+type Tab = "dashboard" | "routes" | "nodes" | "singbox" | "console" | "audit" | "account";
 type AuthState = "checking" | "in" | "out";
 
 const MAIN_NAV = [
   { id: "dashboard", label: "仪表盘", icon: LayoutDashboard },
   { id: "routes", label: "链路", icon: Waypoints },
-  { id: "nodes", label: "节点", icon: Server },
+  { id: "nodes", label: "机器", icon: Server },
+  { id: "singbox", label: "节点", icon: Network },
   { id: "console", label: "终端", icon: TerminalSquare },
 ] as const;
 
@@ -154,6 +157,7 @@ function Shell() {
           {tab === "dashboard" && <Dashboard onNavigate={setTab} />}
           {tab === "routes" && <Routes />}
           {tab === "nodes" && <Nodes onOpenConsole={openConsole} />}
+          {tab === "singbox" && <SingBox />}
           {tab === "console" && (
             <Suspense fallback={<p className="muted">正在载入终端…</p>}>
               <Console initialNode={consoleNode} />

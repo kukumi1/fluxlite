@@ -348,6 +348,37 @@ var migrations = []string{
 	CREATE UNIQUE INDEX idx_routes_family_name ON routes(listen_ipv6, name);
 	COMMIT;
 	PRAGMA foreign_keys = ON;`,
+
+	`CREATE TABLE IF NOT EXISTS singbox_users (
+		id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+		node_id            INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+		name               TEXT    NOT NULL,
+		protocol           TEXT    NOT NULL,
+		port               INTEGER NOT NULL,
+		enabled            INTEGER NOT NULL DEFAULT 1,
+		source             TEXT    NOT NULL DEFAULT 'managed',
+		status             TEXT    NOT NULL DEFAULT 'unknown',
+		service_name       TEXT    NOT NULL DEFAULT '',
+		config_path        TEXT    NOT NULL DEFAULT '',
+		external_path      TEXT    NOT NULL DEFAULT '',
+		config_blob        BLOB,
+		base_quota_bytes   INTEGER NOT NULL,
+		top_up_bytes       INTEGER NOT NULL DEFAULT 0,
+		used_in            INTEGER NOT NULL DEFAULT 0,
+		used_out           INTEGER NOT NULL DEFAULT 0,
+		raw_in             INTEGER NOT NULL DEFAULT 0,
+		raw_out            INTEGER NOT NULL DEFAULT 0,
+		period_started_at  DATETIME NOT NULL,
+		period_ends_at     DATETIME NOT NULL,
+		quota_paused_at    DATETIME,
+		created_at         DATETIME NOT NULL,
+		updated_at         DATETIME NOT NULL,
+		UNIQUE(node_id, name),
+		UNIQUE(node_id, port)
+	)`,
+
+	`ALTER TABLE singbox_users ADD COLUMN expires_at DATETIME`,
+	`UPDATE singbox_users SET expires_at = datetime(created_at, '+365 days') WHERE expires_at IS NULL`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

@@ -1720,3 +1720,69 @@ tbody tr:last-child td {
   border-radius: 10px;
   background: color-mix(in oklch, var(--card) 70%, transparent);
 }
+.toggle-switch {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: #9ca3af;
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+
+.toggle-switch span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 25%);
+  transition: transform 160ms ease;
+}
+
+.toggle-switch.on { background: #1687e8; }
+.toggle-switch.on span { transform: translateX(18px); }
+.toggle-switch:disabled { cursor: not-allowed; opacity: .5; }
+
+.singbox-create-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+
+.singbox-user-list { display: grid; gap: 10px; }
+.singbox-user-card {
+  padding: 14px 16px;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: color-mix(in oklch, var(--card) 72%, transparent);
+}
+.singbox-user-head,
+.singbox-user-title,
+.singbox-actions { display: flex; align-items: center; gap: 8px; }
+.singbox-user-head { justify-content: space-between; gap: 16px; }
+.singbox-user-title { flex-wrap: wrap; }
+.singbox-user-title strong { font-size: 15px; }
+.singbox-actions { flex-wrap: wrap; justify-content: flex-end; }
+.singbox-user-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--panel-border);
+}
+.singbox-user-meta div { display: grid; gap: 3px; min-width: 0; }
+.singbox-user-meta span { color: var(--muted-foreground); font-size: 12px; }
+.singbox-user-meta strong { overflow-wrap: anywhere; font-size: 13px; }
+
+@media (max-width: 800px) {
+  .singbox-create-grid { grid-template-columns: 1fr; }
+  .singbox-user-head { align-items: flex-start; flex-direction: column; }
+  .singbox-actions { justify-content: flex-start; }
+  .singbox-user-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

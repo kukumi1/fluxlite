@@ -2,6 +2,41 @@ export type AuthType = "key" | "password";
 export type Protocol = "tcp" | "tcp+udp";
 export type NodeStatus = "unknown" | "online" | "offline";
 export type InitSystem = "systemd" | "openrc" | "";
+export type SingBoxProtocol = "ss2022" | "anytls" | "vless-reality" | "hysteria2" | "tuic" | "trojan" | "vmess" | "vless-tls";
+export type SingBoxSource = "managed" | "external";
+export type SingBoxStatus = "unknown" | "running" | "stopped" | "exhausted" | "expired" | "error";
+export type SingBoxCipher = "2022-blake3-aes-128-gcm" | "2022-blake3-aes-256-gcm" | "2022-blake3-chacha20-poly1305";
+
+export interface SingBoxUser {
+  id: number;
+  node_id: number;
+  node_name?: string;
+  name: string;
+  protocol: SingBoxProtocol;
+  port: number;
+  enabled: boolean;
+  source: SingBoxSource;
+  status: SingBoxStatus;
+  service_name: string;
+  config_path: string;
+  base_quota_bytes: number;
+  top_up_bytes: number;
+  used_in: number;
+  used_out: number;
+  period_started_at: string;
+  period_ends_at: string;
+  expires_at: string | null;
+  quota_paused_at: string | null;
+}
+
+export interface SingBoxDiscovery {
+  node_id: number;
+  path: string;
+  tag: string;
+  protocol: SingBoxProtocol;
+  port: number;
+  running: boolean;
+}
 
 // Ports are allocated upward from the start of the pool, so starting at 1
 // would hand the first route a privileged port that scanners flag and cloud
@@ -352,6 +387,17 @@ export const api = {
   dailyTotals: (days = 14) => request<DailyTotal[]>(`/traffic/daily?days=${days}`),
   metrics: () => request<Record<string, NodeMetrics> | null>("/metrics"),
   quotas: () => request<QuotaState[] | null>("/quotas"),
+  listSingBoxUsers: () => request<SingBoxUser[] | null>("/singbox/users"),
+  scanSingBox: (nodeID: number) => request<SingBoxDiscovery[] | null>(`/nodes/${nodeID}/singbox/scan`),
+  createSingBoxUser: (input: SingBoxUserInput) => post<SingBoxUser>("/singbox/users", input),
+  startSingBoxUser: (id: number) => post<{ enabled: boolean }>(`/singbox/users/${id}/start`),
+  stopSingBoxUser: (id: number) => post<{ enabled: boolean }>(`/singbox/users/${id}/stop`),
+  topUpSingBoxUser: (id: number, bytes: number) => post<{ ok: boolean }>(`/singbox/users/${id}/top-up`, { bytes }),
+  resetSingBoxUser: (id: number) => post<{ ok: boolean }>(`/singbox/users/${id}/reset`),
+  setSingBoxExpiry: (id: number, expiresAt: string | null) => post<{ ok: boolean }>(`/singbox/users/${id}/expiry`, { expires_at: expiresAt }),
+  adoptSingBoxUser: (id: number, quotaBytes: number) => post<{ ok: boolean }>(`/singbox/users/${id}/adopt`, { bytes: quotaBytes }),
+  exportSingBoxUser: (id: number) => request<{ protocol: SingBoxProtocol; name: string; port: number; config: unknown; link: string; qr_data_url?: string }>(`/singbox/users/${id}/export`),
+  deleteSingBoxUser: (id: number) => request<{ ok: boolean }>(`/singbox/users/${id}`, { method: "DELETE" }),
   audit: (limit = 100) => request<AuditEntry[] | null>(`/audit?limit=${limit}`),
 
   consoleStatus: () => request<{ unlocked: boolean }>("/console/status"),
@@ -400,4 +446,15 @@ export interface RouteInput {
   /** null 表示不限额。0 不是同义词——那表示一个字节都不许跑。 */
   quota_bytes: number | null;
   quota_reset_day: number;
+}
+
+export interface SingBoxUserInput {
+  node_id: number;
+  name: string;
+  protocol: SingBoxProtocol;
+  port: number;
+  quota_bytes: number;
+  cipher: SingBoxCipher;
+  access_days: number;
+  expires_at: string | null;
 }

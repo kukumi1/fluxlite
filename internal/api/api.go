@@ -115,6 +115,7 @@ func (s *Server) Handler() http.Handler {
 			r.Delete("/nodes/{id}", s.handleDeleteNode)
 			r.Post("/nodes/{id}/probe", s.handleProbeNode)
 			r.Post("/nodes/{id}/realm", s.handleInstallRealm)
+			r.Get("/nodes/{id}/singbox/scan", s.handleScanSingBox)
 			r.Post("/nodes/{id}/reenroll", s.handleReenrollTicket)
 
 			r.Get("/routes", s.handleListRoutes)
@@ -133,6 +134,16 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/traffic/daily", s.handleDailyTotals)
 			r.Get("/quotas", s.handleQuotas)
 			r.Get("/metrics", s.handleMetrics)
+			r.Get("/singbox/users", s.handleListSingBoxUsers)
+			r.Post("/singbox/users", s.handleCreateSingBoxUser)
+			r.Post("/singbox/users/{id}/start", s.handleStartSingBoxUser)
+			r.Post("/singbox/users/{id}/stop", s.handleStopSingBoxUser)
+			r.Post("/singbox/users/{id}/top-up", s.handleTopUpSingBoxUser)
+			r.Post("/singbox/users/{id}/reset", s.handleResetSingBoxUser)
+			r.Post("/singbox/users/{id}/expiry", s.handleExtendSingBoxExpiry)
+			r.Post("/singbox/users/{id}/adopt", s.handleAdoptSingBoxUser)
+			r.Get("/singbox/users/{id}/export", s.handleExportSingBoxUser)
+			r.Delete("/singbox/users/{id}", s.handleDeleteSingBoxUser)
 			r.Get("/audit", s.handleAudit)
 
 			// Unlocking is reachable from an ordinary session; everything it

@@ -13,10 +13,10 @@ export function formatBytes(n: number): string {
   return `${v >= 100 ? v.toFixed(0) : v.toFixed(v >= 10 ? 1 : 2)} ${units[i]}`;
 }
 
-// staleAfterMs is how long a sample stays trustworthy. Sampling runs every 30
-// seconds, so anything several rounds old means the node stopped answering and
+// staleAfterMs is how long a sample stays trustworthy. Sampling runs every 10
+// seconds, so anything five rounds old means the node stopped answering and
 // the number on screen is frozen, not live.
-export const staleAfterMs = 150000;
+export const staleAfterMs = 50000;
 
 export function ageOf(at: string | null): number | null {
   if (!at) return null;

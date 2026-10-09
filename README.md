@@ -61,6 +61,7 @@
 - 抓包验证端到端投递，这是唯一可信的结论
 - **按链路统计流量**，累计总量加按天明细 —— `vnstat` 只能告诉你整台机器用了多少
 - **按链路设流量额度**，跑满自动停、下个周期自动恢复，重置日对齐各机账单日
+- **sing-box 用户节点**：每个用户独立服务、协议配置、二维码和 30 天入出站合计额度；可扫描并接管一键脚本节点
 - 仪表盘：近 14 天流量趋势、链路流量排行、各节点 CPU / 内存 / 磁盘负载。没有计数的日子单独标出，不画成 0
 - 完整审计日志
 
@@ -189,7 +190,7 @@ curl -fsSL https://your-panel/uninstall.sh | sh
 | `--listen` | `127.0.0.1:7800` | 监听地址 |
 | `--data` | `/var/lib/fluxlite` | 数据目录（数据库与 realm 缓存） |
 | `--reconcile-interval` | `5m` | 巡检间隔：探测节点、纠正配置漂移 |
-| `--sample-interval` | `30s` | 采样间隔：每跳存活与延迟 |
+| `--sample-interval` | `10s` | 采样间隔：节点指标、每跳存活与延迟 |
 | `--traffic-interval` | `1m` | 流量计数采集间隔（每节点一条命令，与链路数无关） |
 | `--insecure-cookies` | `false` | 允许 HTTP 下发送 session cookie，仅开发用 |
 | `--genkey` | | 生成主密钥后退出 |
@@ -228,6 +229,7 @@ go test ./...
 
 - [架构](docs/ARCHITECTURE.md) —— 模块划分、数据流、以及几个关键设计决策的由来
 - [运维手册](docs/OPERATIONS.md) —— 升级、端口池、故障排查、备份恢复
+- [sing-box 用户节点](docs/SINGBOX.md) —— 独立用户服务、协议配置和流量额度
 - [路线图](docs/ROADMAP.md) —— 接下来打算做什么，以及明确不做什么
 
 ## 致谢

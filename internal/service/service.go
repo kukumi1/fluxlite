@@ -237,6 +237,22 @@ func (s *Service) DeleteNode(ctx context.Context, id int64) error {
 	if len(dependents) > 0 {
 		return fmt.Errorf("%w as jump host by %d node(s)", ErrNodeInUse, len(dependents))
 	}
+	node, err := s.store.NodeByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	users, err := s.store.ListSingBoxUsersOnNode(ctx, id)
+	if err != nil {
+		return err
+	}
+	for _, user := range users {
+		if user.Source != model.SingBoxManaged {
+			continue
+		}
+		if err := s.removeSingBoxUser(ctx, node, user); err != nil {
+			return fmt.Errorf("remove sing-box user %s before deleting node: %w", user.Name, err)
+		}
+	}
 	return s.store.DeleteNode(ctx, id)
 }
 
@@ -308,26 +324,41 @@ func (s *Service) ProbeNode(ctx context.Context, id int64) (*ProbeResult, error)
 		return nil, err
 	}
 
-	s.collectMetrics(ctx, node, client.Client)
+	if err := s.collectMetrics(ctx, node, client.Client); err != nil {
+		s.log.Warn("could not collect node metrics", "node", node.Name, "error", err)
+	}
 	return &ProbeResult{Facts: facts, UDP: udp}, nil
 }
 
 // collectMetrics rides along on the probe's session rather than opening one of
 // its own, so watching eight machines costs no extra logins.
 //
-// A failure here is deliberately not returned. Resource figures are a
-// convenience; the probe exists to establish that a node is reachable and what
-// it is, and losing a memory reading is no reason to report the node as down.
-func (s *Service) collectMetrics(ctx context.Context, node *model.Node, client *ssh.Client) {
+// Callers decide whether a metrics failure should affect the node's status.
+func (s *Service) collectMetrics(ctx context.Context, node *model.Node, client *ssh.Client) error {
 	metrics, err := prober.Metrics(ctx, client)
 	if err != nil {
-		s.log.Warn("could not collect node metrics", "node", node.Name, "error", err)
-		return
+		return fmt.Errorf("collect metrics for %s: %w", node.Name, err)
 	}
 	metrics.NodeID = node.ID
 	if err := s.store.UpsertNodeMetrics(ctx, metrics); err != nil {
-		s.log.Warn("could not store node metrics", "node", node.Name, "error", err)
+		return fmt.Errorf("store metrics for %s: %w", node.Name, err)
 	}
+	return nil
+}
+
+// SampleNodeMetrics refreshes the latest resource snapshot without running the
+// full capability probe. The watcher calls this on its faster sampling loop so
+// dashboard load cards do not wait for the five-minute reconciliation pass.
+func (s *Service) SampleNodeMetrics(ctx context.Context, id int64) error {
+	node, err := s.store.NodeByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	client, err := s.pool.Get(ctx, node)
+	if err != nil {
+		return fmt.Errorf("connect to %s: %w", node.Name, err)
+	}
+	return s.collectMetrics(ctx, node, client.Client)
 }
 
 // NodeMetrics returns the latest snapshot for every node that has one.

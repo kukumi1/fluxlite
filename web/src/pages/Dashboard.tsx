@@ -30,6 +30,13 @@ import { memCaveat } from "../lib/metrics";
 const RANK_LIMIT = 6;
 
 const QUOTA_NEAR_RATIO = 0.9;
+const METRICS_REFRESH_MS = 5000;
+
+function metricAgeLabel(metric: NodeMetrics | undefined): string {
+  if (!metric) return "等待采集";
+  const age = ageOf(metric.collected_at);
+  return age === null ? "采集时间未知" : `更新于 ${describeAge(age)}`;
+}
 
 type Tone = "err" | "warn";
 
@@ -138,19 +145,19 @@ export function Dashboard({ onNavigate }: Props) {
   const [quotas, setQuotas] = useState<QuotaState[]>([]);
   const [daily, setDaily] = useState<DailyTotal[]>([]);
   const [metrics, setMetrics] = useState<Record<string, NodeMetrics>>({});
+  const [metricsError, setMetricsError] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
-  async function load() {
+  async function loadDashboard() {
     try {
-      const [r, n, s, t, q, d, m] = await Promise.all([
+      const [r, n, s, t, q, d] = await Promise.all([
         api.listRoutes(),
         api.listNodes(),
         api.status(),
         api.traffic(),
         api.quotas(),
         api.dailyTotals(14),
-        api.metrics(),
       ]);
       setRoutes(r ?? []);
       setNodes(n ?? []);
@@ -158,7 +165,6 @@ export function Dashboard({ onNavigate }: Props) {
       setTraffic(t ?? {});
       setQuotas(q ?? []);
       setDaily(d ?? []);
-      setMetrics(m ?? {});
       setError("");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -168,9 +174,37 @@ export function Dashboard({ onNavigate }: Props) {
   }
 
   useEffect(() => {
-    void load();
-    const timer = setInterval(() => void load(), 15000);
-    return () => clearInterval(timer);
+    void loadDashboard();
+    const timer = window.setInterval(() => void loadDashboard(), 15000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let timer: number | undefined;
+
+    const refreshMetrics = async () => {
+      try {
+        const next = await api.metrics();
+        if (disposed) return;
+        setMetrics(next ?? {});
+        setMetricsError("");
+      } catch (e) {
+        if (!disposed) {
+          setMetricsError(e instanceof Error ? e.message : String(e));
+        }
+      } finally {
+        if (!disposed) {
+          timer = window.setTimeout(refreshMetrics, METRICS_REFRESH_MS);
+        }
+      }
+    };
+
+    void refreshMetrics();
+    return () => {
+      disposed = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, []);
 
   const entries = Object.values(traffic);
@@ -360,7 +394,12 @@ export function Dashboard({ onNavigate }: Props) {
       {nodes.length > 0 && (
         <Card>
           <div className="spread">
-            <h2 style={{ margin: 0 }}>节点负载</h2>
+            <div>
+              <h2 style={{ margin: 0 }}>节点负载</h2>
+              <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+                {metricsError ? "指标更新失败，暂显示上次采集结果" : "每 5 秒刷新一次"}
+              </p>
+            </div>
             <button className="btn sm" onClick={() => onNavigate("nodes")}>
               去节点页
             </button>
@@ -372,7 +411,12 @@ export function Dashboard({ onNavigate }: Props) {
               return (
                 <div className="node-load" key={n.id}>
                   <div className="spread" style={{ marginBottom: 8 }}>
-                    <strong>{n.name}</strong>
+                    <div>
+                      <strong>{n.name}</strong>
+                      <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>
+                        {metricAgeLabel(m)}
+                      </div>
+                    </div>
                     <span
                       className={`tag ${n.status === "online" ? "ok" : n.status === "offline" ? "err" : ""}`}
                     >

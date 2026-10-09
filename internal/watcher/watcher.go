@@ -36,10 +36,11 @@ type Config struct {
 	// drifted routes.
 	Interval time.Duration
 
-	// SampleInterval governs runtime sampling: liveness and latency per hop.
-	// It is far shorter than Interval because a sample is two short commands
-	// per hop over an already-open SSH connection, where reconciliation probes
-	// every node and compares every config.
+	// SampleInterval governs runtime sampling: node metrics, liveness and
+	// latency per hop.
+	// It is far shorter than Interval because sampling uses short SSH commands
+	// over pooled connections, while reconciliation probes every node and
+	// compares every config.
 	SampleInterval time.Duration
 
 	// TrafficInterval governs byte counter collection. It costs one command
@@ -56,7 +57,7 @@ func New(cfg Config) *Watcher {
 	}
 	sample := cfg.SampleInterval
 	if sample <= 0 {
-		sample = 30 * time.Second
+		sample = 10 * time.Second
 	}
 	traffic := cfg.TrafficInterval
 	if traffic <= 0 {
@@ -73,11 +74,11 @@ func New(cfg Config) *Watcher {
 // The three loops are separate goroutines because they operate on wildly
 // different timescales: a reconcile probes every node, UDP check included, and
 // takes minutes on a fleet of any size. Sharing one loop let it starve the
-// sampler for that entire stretch, which is the opposite of what a
-// thirty-second sample interval promises.
+// sampler for that entire stretch, which is the opposite of what a fast
+// sample interval promises.
 func (w *Watcher) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 
 	go func() {
 		defer wg.Done()
@@ -89,10 +90,32 @@ func (w *Watcher) Run(ctx context.Context) {
 	}()
 	go func() {
 		defer wg.Done()
+		w.loop(ctx, w.sample, w.sampleNodeMetrics, true)
+	}()
+	go func() {
+		defer wg.Done()
 		w.trafficLoop(ctx)
 	}()
 
 	wg.Wait()
+}
+
+// sampleNodeMetrics refreshes resource snapshots independently of route
+// liveness. A node with no routes still appears live on the dashboard, and a
+// slow route probe cannot delay its CPU/memory/disk reading.
+func (w *Watcher) sampleNodeMetrics(ctx context.Context) {
+	nodes, err := w.store.ListNodes(ctx)
+	if err != nil {
+		w.log.Error("list nodes for metrics sampling", "error", err)
+		return
+	}
+
+	forEachConcurrently(ctx, nodes, sampleConcurrency, w.sample,
+		func(ctx context.Context, node *model.Node) {
+			if err := w.svc.SampleNodeMetrics(ctx, node.ID); err != nil {
+				w.log.Debug("node metrics sample failed", "node", node.Name, "error", err)
+			}
+		})
 }
 
 // loop runs fn on a ticker, optionally once up front.
@@ -124,7 +147,7 @@ const sampleConcurrency = 4
 // Each route gets its own budget, and routes are sampled concurrently. Sharing
 // one budget across a serial pass meant a route that timed out spent it on
 // behalf of everyone behind it: a single dead landing address costs eight
-// seconds per probe, two of them exhausted a thirty-second round, and since
+// seconds per probe, two of them exhausted one sampling round, and since
 // routes are listed by name the same tail was starved every single round. The
 // panel then showed those routes as unsampled — which is honest, but the cause
 // was the panel's own scheduling rather than anything wrong with them.
@@ -156,19 +179,19 @@ func (w *Watcher) sampleRoutes(ctx context.Context) {
 		})
 }
 
-// forEachConcurrently runs fn over routes, at most limit at a time, handing
-// each call its own budget so that one slow route cannot spend another's.
-func forEachConcurrently(
+// forEachConcurrently runs fn over items, at most limit at a time, handing
+// each call its own budget so that one slow item cannot spend another's.
+func forEachConcurrently[T any](
 	ctx context.Context,
-	routes []*model.Route,
+	items []*T,
 	limit int,
 	budget time.Duration,
-	fn func(context.Context, *model.Route),
+	fn func(context.Context, *T),
 ) {
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, limit)
 
-	for _, route := range routes {
+	for _, item := range items {
 		select {
 		case <-ctx.Done():
 			wg.Wait()
@@ -177,14 +200,14 @@ func forEachConcurrently(
 		}
 
 		wg.Add(1)
-		go func(route *model.Route) {
+		go func(item *T) {
 			defer wg.Done()
 			defer func() { <-slots }()
 
 			deadline, cancel := context.WithTimeout(ctx, budget)
 			defer cancel()
-			fn(deadline, route)
-		}(route)
+			fn(deadline, item)
+		}(item)
 	}
 	wg.Wait()
 }
@@ -220,6 +243,9 @@ func (w *Watcher) collectTraffic(ctx context.Context) bool {
 	if err := w.svc.CollectTraffic(deadline); err != nil {
 		// An unreachable node is ordinary and already visible as its status.
 		w.log.Debug("traffic collection incomplete", "error", err)
+	}
+	if err := w.svc.CollectSingBoxTraffic(deadline); err != nil {
+		w.log.Debug("sing-box traffic collection incomplete", "error", err)
 	}
 
 	// Enforcement runs even when collection was partial: the routes that were

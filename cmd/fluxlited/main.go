@@ -42,7 +42,7 @@ func run() error {
 		listen      = flag.String("listen", "127.0.0.1:7800", "address to listen on")
 		dataDir     = flag.String("data", "/var/lib/fluxlite", "data directory")
 		interval    = flag.Duration("reconcile-interval", 5*time.Minute, "how often to reconcile nodes and routes")
-		sample      = flag.Duration("sample-interval", 30*time.Second, "how often to sample per-hop liveness and latency")
+		sample      = flag.Duration("sample-interval", 10*time.Second, "how often to sample node metrics and per-hop liveness")
 		trafficPoll = flag.Duration("traffic-interval", time.Minute, "how often to collect per-route byte counters")
 		insecure    = flag.Bool("insecure-cookies", false, "allow session cookies over plain HTTP (development only)")
 		genKey      = flag.Bool("genkey", false, "print a fresh master key and exit")

@@ -140,6 +140,18 @@ ssh -L 7800:127.0.0.1:7800 root@your-server
 4. **链路**页新建链路：按顺序选节点，填落地地址 `host:port`，选协议
 5. **下发**，然后**验证**
 
+### sing-box 用户节点
+
+在**节点**页面之外的“节点”用户入口中，可以选择一台已纳管机器创建 sing-box 用户节点。每个面板创建的用户都有独立服务、端口和配置目录，支持 SS2022、AnyTLS、VLESS Reality、Hysteria2、TUIC、Trojan、VMess、VLESS TLS。
+
+- 基础额度留空表示无限；填入数值后按入站+出站合计执行硬额度
+- 连接过期时间可以留空表示永久，或直接选择具体日期时间
+- 流量额度始终按 30 天周期结算，与连接有效期相互独立
+- 面板创建的服务支持 systemd 和 Alpine OpenRC，状态可以在线/离线切换
+- 扫描已有 sing-box 节点默认只读；接管前不会修改远程配置
+
+面板删除机器时，会先清理该机器上所有面板创建的 sing-box 服务、配置和计数规则；外部扫描节点只删除面板记录，不碰远程配置。
+
 ### 一键注册
 
 ```bash
@@ -163,7 +175,7 @@ curl -fsSL https://your-panel/enroll.sh | sh -s -- https://your-panel <token>
 
 ### 下线节点
 
-面板删除只清面板这边的记录，机器上的东西需要在那台机器上清：
+如果是下线整台机器，面板会先清理它管理的 Realm 链路和 sing-box 用户服务；如果只想移除节点上的注册组件，再在机器上执行：
 
 ```bash
 curl -fsSL https://your-panel/uninstall.sh | sh

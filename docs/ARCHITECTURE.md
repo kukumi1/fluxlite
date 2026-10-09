@@ -2,14 +2,15 @@
 
 ## 全景
 
-面板是唯一的控制点，节点上只有 realm 和 systemd/OpenRC 单元，没有 agent、没有回连、没有常驻代理。所有动作都是面板主动经 SSH 发起的。
+面板是唯一的控制点，节点上只有 Realm/sing-box 和 systemd/OpenRC 单元，没有 agent、没有回连、没有常驻代理。所有动作都是面板主动经 SSH 发起的。
 
 ```
                     ┌──────────────────────────────────────┐
                     │            fluxlited                 │
    浏览器 ──HTTPS──►│  api → service → planner → applier   │──SSH──► 节点
-                    │                ↘ verifier            │
-                    │                ↘ prober              │
+                     │                ↘ verifier            │       ├─ Realm 链路
+                     │                ↘ singbox             │       └─ sing-box 用户服务
+                     │                ↘ prober              │
                     │         store (SQLite)   watcher     │
                     └──────────────────────────────────────┘
 ```
@@ -28,7 +29,7 @@
 | `applier` | SSH 下发，hash 比对幂等，从末跳往前建 |
 | `verifier` | 逐跳连通性 + 末跳抓包证明投递 |
 | `watcher` | 后台巡检与采样 |
-| `singbox` | 用户协议配置、独立服务下发、计数与额度暂停 |
+| `singbox` | 用户协议配置、独立服务下发、OpenRC/systemd、计数与额度暂停 |
 | `sshx` | SSH 连接层，连接池、ProxyJump 链、host key 固定 |
 | `cryptox` | 凭据封装、口令哈希、随机令牌 |
 
@@ -41,6 +42,19 @@
 巡检 ──► applier.Apply（幂等）                 （纠正漂移，每 5 分钟）
 采样 ──► applier.Status + verifier.Measure     （节点指标、存活与延迟，每 10 秒）
 ```
+
+## sing-box 用户节点生命周期
+
+```
+创建 ──► 生成协议配置 + 加密凭据 + 30 天流量周期
+下发 ──► 目标节点独立服务（systemd 或 OpenRC）
+采集 ──► iptables/ip6tables 按用户端口计数
+额度 ──► 入站+出站累计，达到上限只停止该用户
+过期 ──► 连接有效期到期只停止该用户
+删除 ──► 停止服务、删除配置、清理计数规则，再删除数据库记录
+```
+
+基础额度为 0 表示无限制；连接有效期为空表示永久。两者都不改变 Realm 链路的 30 天流量逻辑。
 
 ### 端口分配
 
@@ -133,6 +147,7 @@ nodes ──┘
 - `nodes` 存连接信息、能力探测结果、端口池。凭据 AES-256-GCM 加密。
 - `routes` 存链路定义：显示名、slug、落地地址、协议、启停、入口协议族。
 - `route_hops` 存每一跳：节点、顺序、分配到的端口，以及采样出的延迟和存活状态。
+- `singbox_users` 存每个用户的协议、端口、加密配置、服务来源、连接有效期、30 天流量周期和计数基线。`source=external` 只代表扫描记录，接管前不拥有远程配置。
 
 **显示名与 slug 分离**：显示名随意（中文、符号、emoji），slug 是从显示名派生的 ASCII 标识，用于 systemd 单元名、配置文件名、日志路径。改显示名不动 slug，所以改名不会重建节点上的服务。
 

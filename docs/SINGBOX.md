@@ -4,19 +4,19 @@ fluxlite 的 sing-box 用户节点和 Realm 链路是两个独立功能。Realm 
 
 ## 隔离方式
 
-每个面板用户使用一个独立 systemd 服务：
+每个面板用户使用一个独立 systemd/OpenRC 服务：
 
 ```text
 /etc/fluxlite/singbox/<id>/config.json
 /etc/fluxlite/singbox/<id>/server.crt
 /etc/fluxlite/singbox/<id>/server.key
 /var/lib/fluxlite-singbox/<id>/
-fluxlite-singbox-<id>.service
+fluxlite-singbox-<id>.service 或 fluxlite-singbox-<id>
 ```
 
-服务之间不共享配置。停止、删除或达到额度只影响一个用户。面板不会覆盖 `/etc/sing-box/config.json`，也不会修改一键脚本创建的 `/etc/sing-box/conf.d/vps-node-*.json`。
+服务之间不共享配置。停止、删除或达到额度只影响一个用户。面板不会覆盖 `/etc/sing-box/config.json`，也不会修改一键脚本创建的 `/etc/sing-box/conf.d/*.json`。
 
-当前面板部署要求目标节点已经安装可执行的 `sing-box` 并使用 systemd。配置写入后先执行 `sing-box check`，校验通过才启用服务。
+当前面板部署要求目标节点已经安装可执行的 `sing-box`。Debian/Ubuntu 使用 systemd，Alpine 使用 OpenRC；配置写入后先执行 `sing-box check`，校验通过才启用服务。
 
 ## 协议
 

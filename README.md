@@ -1,252 +1,125 @@
 # fluxlite
 
-多跳端口转发的管理面板。定义一条链路，它把每一跳的 realm 配置生成好、下发到位，并用抓包证明流量真的到了落地。
+一个专注于**多跳端口转发**和**sing-box 用户节点**的轻量面板。
 
-单个静态二进制，内嵌前端。节点上只跑 realm，不装 agent。
+- Go 单二进制，前端资源内嵌
+- SSH/ProxyJump 管理节点，不安装常驻 Agent
+- Realm 链路：TCP、TCP+UDP、多跳、抓包验证、配置漂移自愈
+- sing-box 用户节点：独立服务、独立端口、二维码和客户端配置
+- SQLite 持久化，凭据 AES-256-GCM 加密
+- 支持 systemd 和 Alpine OpenRC
 
-```
-客户端 ──► 入口节点 ──► 中继节点 ──► 中继节点 ──► 落地地址
-           ▲            ▲            ▲
-           └────────────┴────────────┴──── fluxlite 经 SSH 下发与巡检
-```
+## 功能概览
 
-<!-- 目录 -->
+### Realm 多跳链路
 
-- [为什么不直接用现成面板](#为什么不直接用现成面板)
-- [特性](#特性)
-- [安装](#安装)
-- [部署形态](#部署形态)
-- [上手](#上手)
-- [命令行参数](#命令行参数)
-- [从源码构建](#从源码构建)
-- [文档](#文档)
+- 任意跳数，自动从节点端口池分配端口
+- 创建、下发、验证、停止、删除和后台巡检
+- 节点能力探测：架构、系统、UDP、IPv6、Realm 版本
+- 入口 IPv6、NAT 端口避让、iptables/ip6tables 流量计数
+- 链路额度、按天统计、仪表盘趋势和审计日志
 
-## 为什么不直接用现成面板
+### sing-box 用户节点
 
-这个项目只做一件事：多跳转发。它从实际运维里长出来，针对几个反复踩到、而且**看不出来**的坑做了设计。
+- SS2022、AnyTLS、VLESS Reality、Hysteria2、TUIC、Trojan、VMess、VLESS TLS
+- SS2022 可选 AES-128-GCM、AES-256-GCM、ChaCha20-Poly1305
+- 每个用户独立配置和服务；支持 systemd/OpenRC
+- 基础额度留空表示无限；有额度时按入站+出站合计限制
+- 流量周期可自定义，默认 30 天
+- 连接过期时间可选择日期时间；留空表示永久
+- 二维码、连接链接、JSON 配置、在线/离线开关
+- 扫描并接管已有 `/etc/sing-box/conf.d/*.json` 节点
 
-**「能连上」不等于「转发通」。** realm 先在本地 accept 客户端连接，之后才异步拨后端。所以即使后端已经挂了，TCP 连接照样成功，而且快得离谱——一条物理 RTT 50ms 的链路，建连只要 4ms。fluxlite 的验证不采信建连结果：它在最后一跳抓包，确认特征串真的出现在发往落地的 payload 里。
-
-**NAT 机器不一定过 UDP。** 很多 NAT 小鸡只映射 TCP。配一条 tcp+udp 链路上去，面板一片绿，UDP 流量全进黑洞。fluxlite 在纳管时实测 UDP 穿透，而且**带本机自发自收的对照组**——监听没起来和网络不通是两回事，分不清就会得出错误结论。测不出来时记为「未知」，绝不武断标记为不通。
-
-**端口可能被 iptables 悄悄占着。** DNAT 规则在 PREROUTING 就改写了目标地址，数据包根本到不了本地套接字，而 `ss` 看不见任何东西。绑在这种端口上的 relay 会正常启动、正常显示、一个字节收不到。fluxlite 分配端口时同时读套接字和 nat 表。
-
-**有些节点根本连不上。** 内网机器往往只对某台特定前置可见。节点可以声明跳板，下发时自动经 ProxyJump 链穿透，不需要为此单独搭 VPN。
-
-设计上贯穿一条原则：**「不知道」永远不折叠成「好」或「坏」**。测不出来就显示未知，采样过期就标记过期——一个冻住的绿灯比红灯更危险。
-
-## 特性
-
-**转发**
-
-- 任意跳数的转发链，逐跳自动分配端口，尊重每台机的端口池
-- 分配时跳过节点上已被占用的端口：监听中的套接字、以及被 DNAT/REDIRECT 规则劫走的端口
-- 每条链路一个独立 realm 实例 —— realm 没有热重载，共用进程意味着改一条链路会断掉整机所有链路
-- TCP / TCP+UDP，建链前校验每一跳的 UDP 能力
-- 落地地址支持域名，realm 按连接解析，DDNS 换址自动跟上
-- **IPv6 入口**：链路可声明入口只收 IPv6 客户端，落地照走 IPv4。v4 晚高峰拥堵而 v6 干净时，不用换机器就能改走 v6
-
-**下发与自愈**
-
-- 幂等下发：配置 hash 比对，没变就不重启，不制造无谓断流
-- 从末跳往前建，中继不会指向一个还不存在的监听端口
-- 重启后复查服务是否真的活着 —— `Restart=always` 会让崩溃循环中的服务也报「启动成功」
-- 定时巡检自动纠正**配置漂移**：有人手改了节点上的配置，会被改回并重启
-- 支持 systemd 与 OpenRC（Alpine 上强制 `supervise-daemon`，避免 OOM 后不自愈）
-
-**可观测**
-
-- 每跳延迟与存活状态后台采样，链路卡片实时刷新
-- 采样过期会明确标记，不会拿旧数据冒充现状
-- 抓包验证端到端投递，这是唯一可信的结论
-- **按链路统计流量**，累计总量加按天明细 —— `vnstat` 只能告诉你整台机器用了多少
-- **按链路设流量额度**，跑满自动停、下个周期自动恢复，重置日对齐各机账单日
-- **sing-box 用户节点**：每个用户独立服务、协议配置、二维码和 30 天入出站合计额度；可扫描并接管一键脚本节点
-- 仪表盘：近 14 天流量趋势、链路流量排行、各节点 CPU / 内存 / 磁盘负载。没有计数的日子单独标出，不画成 0
-- 完整审计日志
-
-**安全**
-
-- 凭据 AES-256-GCM 加密存储，主密钥在数据库之外
-- 可选两步验证、登录失败锁定、改密码自动踢掉其他会话
-- SSH host key 固定（TOFU），防止中间人劫持到节点的 root 会话
-- 一键注册全程私钥不出面板
-
-## 安装
+## 快速安装
 
 从 [Releases](https://github.com/kukumi1/fluxlite/releases) 下载对应架构的二进制：
 
 ```bash
-curl -fsSL -o /usr/local/bin/fluxlited \
-  https://github.com/kukumi1/fluxlite/releases/latest/download/fluxlited-linux-amd64
-chmod +x /usr/local/bin/fluxlited
+install -m 755 fluxlited-linux-arm64 /usr/local/bin/fluxlited
+export FLUXLITE_MASTER_KEY="$(/usr/local/bin/fluxlited --genkey)"
+mkdir -p /var/lib/fluxlite
+/usr/local/bin/fluxlited --listen 127.0.0.1:7800 --data /var/lib/fluxlite
 ```
 
-生成主密钥并**离线备份**——弄丢它，所有已存的节点凭据都解不开，只能全部重新纳管：
+生产环境建议使用 systemd，并通过 Caddy/Nginx 反向代理 HTTPS。面板默认只监听 `127.0.0.1:7800`；不开放公网时可以使用 SSH 隧道：
 
 ```bash
-fluxlited --genkey > /etc/fluxlite/master.key
-chmod 600 /etc/fluxlite/master.key
+ssh -L 7800:127.0.0.1:7800 root@PANEL_HOST
 ```
 
-systemd 单元：
+## 基本使用
 
-```ini
-[Unit]
-Description=fluxlite control plane
-After=network-online.target
-Wants=network-online.target
+1. 首次打开面板创建管理员账号并配置主密钥。
+2. 在“机器”页面手动添加或一键注册 VPS。
+3. 在“链路”页面创建 Realm 多跳链路，点击下发并验证。
+4. 在“节点”页面创建 sing-box 用户节点，选择机器、协议、端口和额度。
+5. 外部扫描节点默认只读；点击接管后才由面板创建独立服务。
 
-[Service]
-Type=simple
-Environment=FLUXLITE_MASTER_KEY_FILE=/etc/fluxlite/master.key
-ExecStart=/usr/local/bin/fluxlited --listen 127.0.0.1:7800 --data /var/lib/fluxlite
-Restart=always
-RestartSec=3
-NoNewPrivileges=true
-ProtectSystem=full
-PrivateTmp=true
+删除机器前，面板会先清理该机器上由面板创建的 Realm 和 sing-box 服务、配置及计数规则。外部扫描记录只影响面板数据库，不会删除远程配置。
 
-[Install]
-WantedBy=multi-user.target
-```
+## sing-box 额度和周期
 
-## 部署形态
+- 基础额度为空：无限制；无流量时显示 `--`，有流量时显示已用量。
+- 基础额度为数值：达到入站+出站合计额度后停止该用户服务。
+- 流量周期独立计算，默认 30 天，可在编辑客户端时调整。
+- 连接有效期独立计算，留空永久；过期后只停止该连接。
+- 用户编辑、加量、减量、清零、启停和删除均写入审计日志。
 
-面板持有所有节点的 root 凭据，是整套系统里最高价值的目标。**默认只监听 `127.0.0.1`**，公网访问请交给反向代理处理 TLS：
-
-```caddyfile
-fl.example.com {
-    reverse_proxy 127.0.0.1:7800
-}
-```
-
-不想开公网就用 SSH 隧道：
-
-```bash
-ssh -L 7800:127.0.0.1:7800 root@your-server
-# 然后浏览器打开 http://localhost:7800
-```
-
-仅在本地无 TLS 调试时才需要 `--insecure-cookies`。
-
-> 反向代理只提供 TLS，不提供认证。放到公网上时，密码就是唯一防线——除非开启两步验证。
-
-## 上手
-
-1. 首次打开面板创建管理员账号，按需绑定两步验证（可跳过，之后在个人中心随时开启）
-2. **节点**页点「一键注册」，填名称、连接地址和端口池，生成命令
-3. 把命令粘到目标机器上以 root 执行
-4. **链路**页新建链路：按顺序选节点，填落地地址 `host:port`，选协议
-5. **下发**，然后**验证**
-
-### sing-box 用户节点
-
-在**节点**页面之外的“节点”用户入口中，可以选择一台已纳管机器创建 sing-box 用户节点。每个面板创建的用户都有独立服务、端口和配置目录，支持 SS2022、AnyTLS、VLESS Reality、Hysteria2、TUIC、Trojan、VMess、VLESS TLS。
-
-- 基础额度留空表示无限；填入数值后按入站+出站合计执行硬额度
-- 连接过期时间可以留空表示永久，或直接选择具体日期时间
-- 流量额度始终按 30 天周期结算，与连接有效期相互独立
-- 面板创建的服务支持 systemd 和 Alpine OpenRC，状态可以在线/离线切换
-- 扫描已有 sing-box 节点默认只读；接管前不会修改远程配置
-
-面板删除机器时，会先清理该机器上所有面板创建的 sing-box 服务、配置和计数规则；外部扫描节点只删除面板记录，不碰远程配置。
-
-### 一键注册
-
-```bash
-curl -fsSL https://your-panel/enroll.sh | sh -s -- https://your-panel <token>
-```
-
-脚本会识别系统架构与 init、把面板公钥写进 `authorized_keys`、从**面板**下载安装 realm、补齐 `tcpdump` 与 `iptables`，然后回报并触发面板立即回连验证，结果直接打在终端上。
-
-几个要点：
-
-- **私钥始终留在面板**，只有公钥下发到节点，注册过程不把可用凭据放到网络上
-- realm 由面板下发，**节点不需要访问 GitHub** —— 国内机器最常卡住的一步
-- 令牌一次性、60 分钟过期
-- 严格 POSIX sh，Alpine 的 busybox ash 上同样可用
-- 会检查 sshd 是否禁用了公钥认证或 root 登录，提前告警而不是等回连失败
-- **辅助工具装不上只警告不中断**。`tcpdump` 决定抓包验证能不能拿到证据，`iptables` 决定流量统计数不数得了 —— 两个都不参与转发，没理由让它们挡住注册。Debian 13 起默认不带 `iptables`，这一步会补上
-
-**NAT 机器的连接地址必须手填**，脚本无法自动探测：NAT 主机的出口地址和入口地址通常不是一个。填服务商给你的映射地址即可，其余信息脚本自己搞定。
-
-仍然可以走「手动添加」用密码或私钥纳管，两种方式并存。
-
-### 下线节点
-
-如果是下线整台机器，面板会先清理它管理的 Realm 链路和 sing-box 用户服务；如果只想移除节点上的注册组件，再在机器上执行：
-
-```bash
-curl -fsSL https://your-panel/uninstall.sh | sh
-```
-
-它会移除转发服务、配置目录和**面板的登录公钥**，只删注释以 `fluxlite-` 开头的那一行，你自己的密钥不受影响。详见[运维手册](docs/OPERATIONS.md#下线一台节点)。
-
-### 读懂验证结果
-
-只有出现**「抓包已证实数据真实抵达落地」**才算真的通。其余项目全绿但这项没过，说明链路能建连但不转发。
-
-> 抓包验证需要最后一跳装有 `tcpdump`。没有时该项报「未知」而不是「通过」——**缺工具既不能算健康也不能算故障**。
->
-> 一键注册会自动装上它。0.9.3 之前注册的节点没有，手动补一次即可：
->
-> ```bash
-> command -v tcpdump || { apt-get install -y tcpdump || apk add --no-cache tcpdump || dnf install -y tcpdump; }
-> ```
+目标机器需要已经安装可执行的 sing-box。面板不会自动下载未经固定版本校验的内核；配置下发前会执行 `sing-box check`。
 
 ## 命令行参数
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `--listen` | `127.0.0.1:7800` | 监听地址 |
-| `--data` | `/var/lib/fluxlite` | 数据目录（数据库与 realm 缓存） |
-| `--reconcile-interval` | `5m` | 巡检间隔：探测节点、纠正配置漂移 |
-| `--sample-interval` | `10s` | 采样间隔：节点指标、每跳存活与延迟 |
-| `--traffic-interval` | `1m` | 流量计数采集间隔（每节点一条命令，与链路数无关） |
-| `--insecure-cookies` | `false` | 允许 HTTP 下发送 session cookie，仅开发用 |
-| `--genkey` | | 生成主密钥后退出 |
-| `--version` | | 打印版本后退出 |
+| `--listen` | `127.0.0.1:7800` | HTTP 监听地址 |
+| `--data` | `/var/lib/fluxlite` | 数据库与运行数据目录 |
+| `--reconcile-interval` | `5m` | 节点探测和配置漂移巡检 |
+| `--sample-interval` | `10s` | 节点指标、链路存活和延迟采样 |
+| `--traffic-interval` | `1m` | 流量计数采集 |
+| `--insecure-cookies` | `false` | 仅开发环境允许 HTTP Cookie |
+| `--genkey` | — | 生成主密钥并退出 |
+| `--version` | — | 输出版本并退出 |
 
-主密钥二选一，必须设置：
+主密钥必须通过以下任一环境变量提供：
 
-| 环境变量 | 说明 |
-|---|---|
-| `FLUXLITE_MASTER_KEY` | 密钥本身（hex） |
-| `FLUXLITE_MASTER_KEY_FILE` | 密钥文件路径，推荐 |
+```text
+FLUXLITE_MASTER_KEY       # 32 字节 hex
+FLUXLITE_MASTER_KEY_FILE  # 推荐，文件内容为 32 字节 hex
+```
 
 ## 从源码构建
 
 ```bash
-cd web && npm ci && npm run build && cd ..
-go build -o fluxlited ./cmd/fluxlited
-```
-
-前端产物由 `go:embed` 打进二进制，所以**必须先构建前端**。
-
-交叉编译（无 CGO，产物是静态二进制）：
-
-```bash
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
-  -ldflags "-s -w -X main.version=$(git describe --tags)" -o fluxlited-linux-amd64 ./cmd/fluxlited
-```
-
-跑测试：
-
-```bash
+cd web
+npm ci
+npm run build
+cd ..
 go test ./...
+go vet ./...
+go build ./...
+```
+
+交叉编译 ARM64：
+
+```bash
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
+  go build -trimpath -ldflags="-s -w -X main.version=VERSION" \
+  -o fluxlited-linux-arm64 ./cmd/fluxlited
 ```
 
 ## 文档
 
-- [架构](docs/ARCHITECTURE.md) —— 模块划分、数据流、以及几个关键设计决策的由来
-- [运维手册](docs/OPERATIONS.md) —— 升级、端口池、故障排查、备份恢复
-- [sing-box 用户节点](docs/SINGBOX.md) —— 独立用户服务、协议配置和流量额度
-- [路线图](docs/ROADMAP.md) —— 接下来打算做什么，以及明确不做什么
+- [架构说明](docs/ARCHITECTURE.md)
+- [运维手册](docs/OPERATIONS.md)
+- [sing-box 用户节点](docs/SINGBOX.md)
+- [路线图与限制](docs/ROADMAP.md)
 
-## 致谢
+## 设计边界
 
-多跳路由的数据模型思路来自 [flux-panel](https://github.com/0xNetuser/flux-panel)。转发内核是 [realm](https://github.com/zhboner/realm)。
+- 不安装节点 Agent，不做常驻回连。
+- 不把项目扩展成订阅或通用代理面板。
+- 不覆盖外部 sing-box 配置，外部节点必须显式接管。
+- 入口公网可达性仍需从外部节点验证；本机回环验证不能证明 NAT 映射可达。
 
 ## License
 

@@ -370,6 +370,7 @@ var migrations = []string{
 		raw_out            INTEGER NOT NULL DEFAULT 0,
 		period_started_at  DATETIME NOT NULL,
 		period_ends_at     DATETIME NOT NULL,
+		period_days        INTEGER NOT NULL DEFAULT 30,
 		quota_paused_at    DATETIME,
 		created_at         DATETIME NOT NULL,
 		updated_at         DATETIME NOT NULL,
@@ -378,6 +379,7 @@ var migrations = []string{
 	)`,
 
 	`ALTER TABLE singbox_users ADD COLUMN expires_at DATETIME`,
+	`ALTER TABLE singbox_users ADD COLUMN period_days INTEGER NOT NULL DEFAULT 30`,
 	`UPDATE singbox_users SET expires_at = datetime(created_at, '+365 days') WHERE expires_at IS NULL`,
 }
 
@@ -411,6 +413,18 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := s.db.ExecContext(ctx, `UPDATE schema_version SET version = ?`, i+1); err != nil {
 			return fmt.Errorf("record migration %d: %w", i+1, err)
+		}
+	}
+	// Keep this schema guard independent of schema_version. Older deployed
+	// builds could have recorded the migration while the ALTER itself was
+	// skipped, which would otherwise leave period queries unusable.
+	hasPeriodDays, err := s.hasColumn(ctx, "singbox_users", "period_days")
+	if err != nil {
+		return fmt.Errorf("check sing-box period_days column: %w", err)
+	}
+	if !hasPeriodDays {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE singbox_users ADD COLUMN period_days INTEGER NOT NULL DEFAULT 30`); err != nil {
+			return fmt.Errorf("add sing-box period_days column: %w", err)
 		}
 	}
 	return nil

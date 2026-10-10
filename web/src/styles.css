@@ -1754,6 +1754,45 @@ tbody tr:last-child td {
   gap: 14px 18px;
 }
 
+.singbox-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.singbox-stat {
+  display: grid;
+  gap: 4px;
+  min-height: 76px;
+  padding: 14px 16px;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: color-mix(in oklch, var(--card) 78%, transparent);
+}
+.singbox-stat span { color: var(--muted-foreground); font-size: 12px; }
+.singbox-stat strong { font-size: 23px; line-height: 1.1; }
+.ok-text { color: var(--ok); }
+.warn-text { color: var(--warn); }
+.err-text { color: var(--err); }
+.singbox-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.singbox-expiry { align-self: center; padding: 3px 8px; border-radius: 6px; color: var(--ok); background: color-mix(in oklch, var(--ok) 12%, transparent); font-size: 12px; white-space: nowrap; }
+.singbox-expiry.warn { color: var(--warn); background: color-mix(in oklch, var(--warn) 14%, transparent); }
+.singbox-period-value { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.icon-only { display: inline-grid; place-items: center; width: 32px; padding-inline: 0; }
+.singbox-qr-modal { display: grid; gap: 12px; max-width: 520px; }
+.singbox-qr-modal img { justify-self: center; border: 1px solid var(--border); border-radius: 10px; }
+.singbox-link { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.singbox-info-grid { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 10px 16px; padding-top: 12px; }
+.singbox-info-grid span { color: var(--muted-foreground); }
+.singbox-info-grid strong { overflow-wrap: anywhere; }
+.singbox-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding-top: 12px; }
+.singbox-check { display: flex; align-items: center; gap: 8px; }
+.singbox-check input { width: auto; }
+.singbox-usage { min-width: 0; }
+.singbox-progress { height: 5px; margin-top: 5px; overflow: hidden; border-radius: 999px; background: color-mix(in oklch, var(--muted) 75%, transparent); }
+.singbox-progress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--tint-3), var(--tint-2)); }
+.singbox-compact-list .singbox-user-card { padding-block: 11px; }
+
 .singbox-user-list { display: grid; gap: 10px; }
 .singbox-user-card {
   padding: 14px 16px;
@@ -1781,8 +1820,14 @@ tbody tr:last-child td {
 .singbox-user-meta strong { overflow-wrap: anywhere; font-size: 13px; }
 
 @media (max-width: 800px) {
+  .singbox-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .singbox-create-grid { grid-template-columns: 1fr; }
   .singbox-user-head { align-items: flex-start; flex-direction: column; }
   .singbox-actions { justify-content: flex-start; }
   .singbox-user-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .singbox-edit-grid { grid-template-columns: 1fr; }
+}
+
+@media (min-width: 801px) and (max-width: 1100px) {
+  .singbox-stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }

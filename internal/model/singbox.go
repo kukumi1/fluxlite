@@ -80,6 +80,7 @@ type SingBoxUser struct {
 	RawOut          int64      `json:"-"`
 	PeriodStartedAt time.Time  `json:"period_started_at"`
 	PeriodEndsAt    time.Time  `json:"period_ends_at"`
+	PeriodDays      int        `json:"period_days"`
 	ExpiresAt       time.Time  `json:"expires_at"`
 	QuotaPausedAt   *time.Time `json:"quota_paused_at,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
@@ -103,6 +104,9 @@ func (u *SingBoxUser) Validate() error {
 		return ErrSingBoxQuota
 	}
 	if !u.PeriodEndsAt.After(u.PeriodStartedAt) {
+		return ErrSingBoxPeriod
+	}
+	if u.PeriodDays < 1 || u.PeriodDays > 3650 {
 		return ErrSingBoxPeriod
 	}
 	return nil

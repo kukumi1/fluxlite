@@ -23,12 +23,12 @@ func (s *Store) CreateSingBoxUser(ctx context.Context, u *model.SingBoxUser) err
 		INSERT INTO singbox_users (node_id,name,protocol,port,enabled,source,status,
 			service_name,config_path,external_path,config_blob,base_quota_bytes,
 			top_up_bytes,used_in,used_out,raw_in,raw_out,period_started_at,
-			period_ends_at,expires_at,quota_paused_at,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			period_ends_at,period_days,expires_at,quota_paused_at,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		u.NodeID, u.Name, u.Protocol, u.Port, u.Enabled, u.Source, u.Status,
 		u.ServiceName, u.ConfigPath, u.ExternalPath, u.ConfigBlob, u.BaseQuotaBytes,
 		u.TopUpBytes, u.UsedIn, u.UsedOut, u.RawIn, u.RawOut, u.PeriodStartedAt,
-		u.PeriodEndsAt, nullableExpiry(u.ExpiresAt), u.QuotaPausedAt, u.CreatedAt, u.UpdatedAt)
+		u.PeriodEndsAt, u.PeriodDays, nullableExpiry(u.ExpiresAt), u.QuotaPausedAt, u.CreatedAt, u.UpdatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("sing-box name or port already exists: %w", ErrConflict)
@@ -96,7 +96,7 @@ func (s *Store) ListSingBoxUsersOnNode(ctx context.Context, nodeID int64) ([]*mo
 
 const singBoxSelect = `SELECT id,node_id,name,protocol,port,enabled,source,status,
 	service_name,config_path,external_path,config_blob,base_quota_bytes,top_up_bytes,
-	used_in,used_out,raw_in,raw_out,period_started_at,period_ends_at,expires_at,quota_paused_at,
+	used_in,used_out,raw_in,raw_out,period_started_at,period_ends_at,period_days,expires_at,quota_paused_at,
 	created_at,updated_at FROM singbox_users`
 
 type rowScanner interface{ Scan(...any) error }
@@ -107,13 +107,11 @@ func scanSingBoxUser(row rowScanner) (*model.SingBoxUser, error) {
 	err := row.Scan(&u.ID, &u.NodeID, &u.Name, &u.Protocol, &u.Port, &u.Enabled,
 		&u.Source, &u.Status, &u.ServiceName, &u.ConfigPath, &u.ExternalPath,
 		&u.ConfigBlob, &u.BaseQuotaBytes, &u.TopUpBytes, &u.UsedIn, &u.UsedOut,
-		&u.RawIn, &u.RawOut, &u.PeriodStartedAt, &u.PeriodEndsAt, &expires, &u.QuotaPausedAt,
+		&u.RawIn, &u.RawOut, &u.PeriodStartedAt, &u.PeriodEndsAt, &u.PeriodDays, &expires, &u.QuotaPausedAt,
 		&u.CreatedAt, &u.UpdatedAt)
 	if err == nil {
 		if expires.Valid {
 			u.ExpiresAt = expires.Time
-		} else {
-			u.ExpiresAt = u.CreatedAt.Add(365 * 24 * time.Hour)
 		}
 	}
 	return u, err
@@ -127,10 +125,10 @@ func (s *Store) UpdateSingBoxUser(ctx context.Context, u *model.SingBoxUser) err
 	res, err := s.db.ExecContext(ctx, `UPDATE singbox_users SET name=?, protocol=?, port=?,
 		enabled=?, source=?, status=?, service_name=?, config_path=?, external_path=?,
 		config_blob=?, base_quota_bytes=?, top_up_bytes=?, used_in=?, used_out=?, raw_in=?, raw_out=?, period_started_at=?,
-		period_ends_at=?, expires_at=?, quota_paused_at=?, updated_at=? WHERE id=?`,
+		period_ends_at=?, period_days=?, expires_at=?, quota_paused_at=?, updated_at=? WHERE id=?`,
 		u.Name, u.Protocol, u.Port, u.Enabled, u.Source, u.Status, u.ServiceName,
 		u.ConfigPath, u.ExternalPath, u.ConfigBlob, u.BaseQuotaBytes, u.TopUpBytes, u.UsedIn, u.UsedOut, u.RawIn, u.RawOut,
-		u.PeriodStartedAt, u.PeriodEndsAt, nullableExpiry(u.ExpiresAt), u.QuotaPausedAt, u.UpdatedAt, u.ID)
+		u.PeriodStartedAt, u.PeriodEndsAt, u.PeriodDays, nullableExpiry(u.ExpiresAt), u.QuotaPausedAt, u.UpdatedAt, u.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("sing-box name or port already exists: %w", ErrConflict)
@@ -159,6 +157,42 @@ func (s *Store) AddSingBoxTopUp(ctx context.Context, id, bytes int64) error {
 	return checkAffected(res, "sing-box user", id)
 }
 
+func (s *Store) ReduceSingBoxQuota(ctx context.Context, id, bytes int64) error {
+	if bytes <= 0 {
+		return model.ErrSingBoxQuota
+	}
+	u, err := s.SingBoxUserByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	total := u.QuotaBytes()
+	if total == 0 || bytes >= total || bytes > total-u.UsedBytes() {
+		return model.ErrSingBoxQuota
+	}
+	remaining := bytes
+	topUp := u.TopUpBytes
+	if remaining <= topUp {
+		topUp -= remaining
+		remaining = 0
+	} else {
+		remaining -= topUp
+		topUp = 0
+	}
+	base := u.BaseQuotaBytes - remaining
+	if base < 0 {
+		return model.ErrSingBoxQuota
+	}
+	var pausedAt any
+	if base+topUp > 0 && u.UsedBytes() >= base+topUp {
+		pausedAt = time.Now().UTC()
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE singbox_users SET base_quota_bytes=?,top_up_bytes=?,quota_paused_at=?,updated_at=? WHERE id=?`, base, topUp, pausedAt, time.Now().UTC(), id)
+	if err != nil {
+		return err
+	}
+	return checkAffected(res, "sing-box user", id)
+}
+
 func (s *Store) ResetSingBoxUsage(ctx context.Context, id int64) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE singbox_users SET used_in=0,used_out=0,raw_in=0,raw_out=0,quota_paused_at=NULL,updated_at=? WHERE id=?`, time.Now().UTC(), id)
 	if err != nil {
@@ -168,11 +202,14 @@ func (s *Store) ResetSingBoxUsage(ctx context.Context, id int64) error {
 }
 
 func (s *Store) RollSingBoxPeriod(ctx context.Context, u *model.SingBoxUser, now time.Time) error {
+	if u.PeriodDays < 1 {
+		u.PeriodDays = 30
+	}
 	for !now.Before(u.PeriodEndsAt) {
 		u.PeriodStartedAt = u.PeriodEndsAt
-		u.PeriodEndsAt = u.PeriodEndsAt.Add(30 * 24 * time.Hour)
+		u.PeriodEndsAt = u.PeriodEndsAt.Add(time.Duration(u.PeriodDays) * 24 * time.Hour)
 	}
-	u.TopUpBytes, u.UsedIn, u.UsedOut, u.RawIn, u.RawOut = 0, 0, 0, 0, 0
+	u.TopUpBytes, u.UsedIn, u.UsedOut = 0, 0, 0
 	u.QuotaPausedAt = nil
 	return s.UpdateSingBoxUser(ctx, u)
 }

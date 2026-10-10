@@ -25,6 +25,7 @@ export interface SingBoxUser {
   used_out: number;
   period_started_at: string;
   period_ends_at: string;
+  period_days: number;
   expires_at: string | null;
   quota_paused_at: string | null;
 }
@@ -390,9 +391,11 @@ export const api = {
   listSingBoxUsers: () => request<SingBoxUser[] | null>("/singbox/users"),
   scanSingBox: (nodeID: number) => request<SingBoxDiscovery[] | null>(`/nodes/${nodeID}/singbox/scan`),
   createSingBoxUser: (input: SingBoxUserInput) => post<SingBoxUser>("/singbox/users", input),
+    updateSingBoxUser: (id: number, input: SingBoxUserUpdate) => request<{ ok: boolean }>(`/singbox/users/${id}`, { method: "PUT", body: JSON.stringify(input) }),
   startSingBoxUser: (id: number) => post<{ enabled: boolean }>(`/singbox/users/${id}/start`),
   stopSingBoxUser: (id: number) => post<{ enabled: boolean }>(`/singbox/users/${id}/stop`),
   topUpSingBoxUser: (id: number, bytes: number) => post<{ ok: boolean }>(`/singbox/users/${id}/top-up`, { bytes }),
+    reduceSingBoxQuota: (id: number, bytes: number) => post<{ ok: boolean }>(`/singbox/users/${id}/reduce`, { bytes }),
   resetSingBoxUser: (id: number) => post<{ ok: boolean }>(`/singbox/users/${id}/reset`),
   setSingBoxExpiry: (id: number, expiresAt: string | null) => post<{ ok: boolean }>(`/singbox/users/${id}/expiry`, { expires_at: expiresAt }),
   adoptSingBoxUser: (id: number, quotaBytes: number) => post<{ ok: boolean }>(`/singbox/users/${id}/adopt`, { bytes: quotaBytes }),
@@ -457,4 +460,12 @@ export interface SingBoxUserInput {
   cipher: SingBoxCipher;
   access_days: number;
   expires_at: string | null;
+}
+
+export interface SingBoxUserUpdate {
+  name: string;
+  quota_bytes: number;
+  period_days: number;
+  expires_at: string | null;
+  enabled: boolean;
 }

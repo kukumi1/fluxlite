@@ -54,6 +54,24 @@ func (s *Server) handleCreateSingBoxUser(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusCreated, u)
 }
 
+func (s *Server) handleUpdateSingBoxUser(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var req service.SingBoxUserUpdate
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.svc.UpdateSingBoxUser(r.Context(), id, req); err != nil {
+		writeError(w, statusForError(err), err.Error())
+		return
+	}
+	s.audit(r, "singbox.update", strconv.FormatInt(id, 10), req.Name)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) handleStartSingBoxUser(w http.ResponseWriter, r *http.Request) {
 	s.handleSetSingBoxEnabled(w, r, true)
 }
@@ -94,6 +112,24 @@ func (s *Server) handleTopUpSingBoxUser(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.audit(r, "singbox.top_up", strconv.FormatInt(id, 10), strconv.FormatInt(req.Bytes, 10))
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleReduceSingBoxQuota(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var req singBoxTopUpRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.svc.ReduceSingBoxQuota(r.Context(), id, req.Bytes); err != nil {
+		writeError(w, statusForError(err), err.Error())
+		return
+	}
+	s.audit(r, "singbox.reduce_quota", strconv.FormatInt(id, 10), strconv.FormatInt(req.Bytes, 10))
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

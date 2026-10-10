@@ -29,6 +29,50 @@ type SingBoxUserInput struct {
 	ExpiresAt  time.Time             `json:"expires_at"`
 }
 
+type SingBoxUserUpdate struct {
+	Name       string    `json:"name"`
+	QuotaBytes int64     `json:"quota_bytes"`
+	PeriodDays int       `json:"period_days"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	Enabled    bool      `json:"enabled"`
+}
+
+func (s *Service) UpdateSingBoxUser(ctx context.Context, id int64, in SingBoxUserUpdate) error {
+	u, err := s.store.SingBoxUserByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if u.Source != model.SingBoxManaged {
+		return ErrSingBoxNotManaged
+	}
+	if strings.TrimSpace(in.Name) == "" {
+		return model.ErrSingBoxName
+	}
+	if in.QuotaBytes < 0 {
+		return model.ErrSingBoxQuota
+	}
+	in.ExpiresAt = in.ExpiresAt.UTC()
+	if !in.ExpiresAt.IsZero() && !in.ExpiresAt.After(time.Now().UTC()) {
+		return fmt.Errorf("connection expiry must be in the future")
+	}
+	if in.QuotaBytes > 0 && in.QuotaBytes < u.UsedBytes() {
+		return model.ErrSingBoxQuota
+	}
+	u.Name, u.BaseQuotaBytes, u.TopUpBytes, u.ExpiresAt = strings.TrimSpace(in.Name), in.QuotaBytes, 0, in.ExpiresAt
+	if in.PeriodDays < 1 || in.PeriodDays > 3650 {
+		return model.ErrSingBoxPeriod
+	}
+	u.PeriodDays = in.PeriodDays
+	u.PeriodEndsAt = u.PeriodStartedAt.Add(time.Duration(u.PeriodDays) * 24 * time.Hour)
+	if err := s.store.UpdateSingBoxUser(ctx, u); err != nil {
+		return err
+	}
+	if u.Enabled != in.Enabled {
+		return s.SetSingBoxEnabled(ctx, id, in.Enabled)
+	}
+	return nil
+}
+
 type SingBoxUserView struct {
 	*model.SingBoxUser
 	NodeName string `json:"node_name"`
@@ -147,7 +191,7 @@ func (s *Service) ScanSingBox(ctx context.Context, nodeID int64) ([]SingBoxDisco
 				now := time.Now().UTC()
 				external := &model.SingBoxUser{NodeID: nodeID, Name: in.Tag, Protocol: protocol, Port: in.Port,
 					Enabled: serviceRunning, Source: model.SingBoxExternal,
-					Status: model.SingBoxStatusUnknown, ServiceName: "sing-box", ConfigPath: path,
+					Status: model.SingBoxStatusUnknown, ServiceName: "sing-box", ConfigPath: path, PeriodDays: 30,
 					ExternalPath: path, BaseQuotaBytes: 1, PeriodStartedAt: now, PeriodEndsAt: now.Add(30 * 24 * time.Hour)}
 				if serviceRunning {
 					external.Status = model.SingBoxStatusRunning
@@ -207,7 +251,7 @@ func (s *Service) CreateSingBoxUser(ctx context.Context, in SingBoxUserInput) (*
 	u := &model.SingBoxUser{
 		NodeID: node.ID, Name: strings.TrimSpace(in.Name), Protocol: in.Protocol,
 		Port: port, Enabled: true, Source: model.SingBoxManaged,
-		Status: model.SingBoxStatusUnknown, BaseQuotaBytes: in.QuotaBytes,
+		Status: model.SingBoxStatusUnknown, BaseQuotaBytes: in.QuotaBytes, PeriodDays: 30,
 		PeriodStartedAt: periodStart, PeriodEndsAt: periodStart.Add(30 * 24 * time.Hour), ExpiresAt: expiresAt,
 		ServiceName: "pending", ConfigPath: "pending",
 	}
@@ -290,7 +334,7 @@ func (s *Service) AdoptSingBoxUser(ctx context.Context, id int64, quota int64) e
 	u.ConfigPath = fmt.Sprintf("/etc/fluxlite/singbox/%d/config.json", u.ID)
 	u.BaseQuotaBytes = quota
 	u.TopUpBytes, u.UsedIn, u.UsedOut, u.RawIn, u.RawOut = 0, 0, 0, 0, 0
-	u.PeriodStartedAt, u.PeriodEndsAt = now, now.Add(30*24*time.Hour)
+	u.PeriodStartedAt, u.PeriodEndsAt = now, now.Add(time.Duration(u.PeriodDays)*24*time.Hour)
 	u.ExpiresAt = now.Add(365 * 24 * time.Hour)
 	bundle := &singbox.Bundle{Config: json.RawMessage(res.Stdout), Protocol: u.Protocol, Name: u.Name, Port: u.Port}
 	u.ConfigBlob, err = s.sealer.Seal(mustJSON(bundle))
@@ -388,6 +432,35 @@ func (s *Service) AddSingBoxTopUp(ctx context.Context, id, bytes int64) error {
 	}
 	if updated.QuotaPausedAt != nil && (updated.QuotaBytes() == 0 || updated.RemainingBytes() > 0) {
 		return s.SetSingBoxEnabled(ctx, id, true)
+	}
+	return nil
+}
+
+func (s *Service) ReduceSingBoxQuota(ctx context.Context, id, bytes int64) error {
+	u, err := s.store.SingBoxUserByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if u.Source != model.SingBoxManaged {
+		return ErrSingBoxNotManaged
+	}
+	if err := s.store.ReduceSingBoxQuota(ctx, id, bytes); err != nil {
+		return err
+	}
+	updated, err := s.store.SingBoxUserByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if updated.QuotaPausedAt != nil && updated.Enabled {
+		node, err := s.store.NodeByID(ctx, updated.NodeID)
+		if err != nil {
+			return err
+		}
+		if err := s.remoteUnit(ctx, node, updated, "stop"); err != nil {
+			return err
+		}
+		updated.Enabled, updated.Status = false, model.SingBoxStatusExhausted
+		return s.store.UpdateSingBoxUser(ctx, updated)
 	}
 	return nil
 }

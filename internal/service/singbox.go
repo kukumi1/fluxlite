@@ -176,7 +176,7 @@ func (s *Service) CreateSingBoxUser(ctx context.Context, in SingBoxUserInput) (*
 	if expiresAt.IsZero() && in.AccessDays > 0 {
 		expiresAt = time.Now().UTC().Add(time.Duration(in.AccessDays) * 24 * time.Hour)
 	}
-	if !expiresAt.After(time.Now().UTC()) {
+	if !expiresAt.IsZero() && !expiresAt.After(time.Now().UTC()) {
 		return nil, fmt.Errorf("connection expiry must be in the future")
 	}
 	port := in.Port

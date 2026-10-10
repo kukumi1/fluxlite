@@ -81,15 +81,20 @@ export function SingBox() {
   const [externalOpen, setExternalOpen] = useState(false);
   const [discoveredOpen, setDiscoveredOpen] = useState(false);
 
-  async function load() {
+  async function load(selectDefaultNode = true) {
     try {
       const [u, n] = await Promise.all([api.listSingBoxUsers(), api.listNodes()]);
       setUsers(u ?? []); setNodes(n ?? []);
-      if (!input.node_id && n?.length) setInput((old) => ({ ...old, node_id: n[0].id }));
+      if (selectDefaultNode && !input.node_id && n?.length) setInput((old) => ({ ...old, node_id: n[0].id }));
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
 
   useEffect(() => { void load(); }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => { void load(false); }, 5000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   async function create() {
     setBusy(true); setError(""); setNotice("");

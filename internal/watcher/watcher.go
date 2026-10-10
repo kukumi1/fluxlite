@@ -71,14 +71,14 @@ func New(cfg Config) *Watcher {
 
 // Run blocks until ctx is cancelled.
 //
-// The three loops are separate goroutines because they operate on wildly
+// The maintenance loops are separate goroutines because they operate on wildly
 // different timescales: a reconcile probes every node, UDP check included, and
 // takes minutes on a fleet of any size. Sharing one loop let it starve the
 // sampler for that entire stretch, which is the opposite of what a fast
 // sample interval promises.
 func (w *Watcher) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(5)
 
 	go func() {
 		defer wg.Done()
@@ -91,6 +91,10 @@ func (w *Watcher) Run(ctx context.Context) {
 	go func() {
 		defer wg.Done()
 		w.loop(ctx, w.sample, w.sampleNodeMetrics, true)
+	}()
+	go func() {
+		defer wg.Done()
+		w.loop(ctx, w.sample, w.sampleSingBoxStatus, true)
 	}()
 	go func() {
 		defer wg.Done()
@@ -114,6 +118,28 @@ func (w *Watcher) sampleNodeMetrics(ctx context.Context) {
 		func(ctx context.Context, node *model.Node) {
 			if err := w.svc.SampleNodeMetrics(ctx, node.ID); err != nil {
 				w.log.Debug("node metrics sample failed", "node", node.Name, "error", err)
+			}
+		})
+}
+
+// sampleSingBoxStatus keeps the presence indicator independent from the
+// service switch. A running service with no client session is offline.
+func (w *Watcher) sampleSingBoxStatus(ctx context.Context) {
+	users, err := w.store.ListSingBoxUsers(ctx)
+	if err != nil {
+		w.log.Error("list sing-box users for status sampling", "error", err)
+		return
+	}
+	managed := users[:0:0]
+	for _, user := range users {
+		if user.Source == model.SingBoxManaged {
+			managed = append(managed, user)
+		}
+	}
+	forEachConcurrently(ctx, managed, sampleConcurrency, w.sample,
+		func(ctx context.Context, user *model.SingBoxUser) {
+			if err := w.svc.SampleSingBoxUserStatus(ctx, user.ID); err != nil {
+				w.log.Debug("sing-box status sample failed", "user", user.Name, "error", err)
 			}
 		})
 }

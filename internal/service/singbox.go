@@ -112,7 +112,7 @@ func (s *Service) SetSingBoxExpiry(ctx context.Context, id int64, expiresAt time
 		if err := s.remoteUnit(ctx, node, u, "start"); err != nil {
 			return err
 		}
-		u.Enabled, u.Status = true, model.SingBoxStatusRunning
+		u.Enabled, u.Status = true, model.SingBoxStatusStopped
 	}
 	return s.store.UpdateSingBoxUser(ctx, u)
 }
@@ -290,7 +290,7 @@ func (s *Service) CreateSingBoxUser(ctx context.Context, in SingBoxUserInput) (*
 		_ = s.store.DeleteSingBoxUser(ctx, u.ID)
 		return nil, err
 	}
-	u.Status = model.SingBoxStatusRunning
+	u.Status = model.SingBoxStatusStopped
 	_ = s.store.UpdateSingBoxUser(ctx, u)
 	return u, nil
 }
@@ -359,7 +359,7 @@ func (s *Service) AdoptSingBoxUser(ctx context.Context, id int64, quota int64) e
 		_ = s.store.UpdateSingBoxUser(ctx, &old)
 		return fmt.Errorf("finish shared sing-box handover: %w", err)
 	}
-	u.Status = model.SingBoxStatusRunning
+	u.Status = model.SingBoxStatusStopped
 	return s.store.UpdateSingBoxUser(ctx, u)
 }
 
@@ -387,7 +387,7 @@ func (s *Service) SetSingBoxEnabled(ctx context.Context, id int64, enabled bool)
 		}
 		u.Enabled = true
 		u.QuotaPausedAt = nil
-		u.Status = model.SingBoxStatusRunning
+		u.Status = model.SingBoxStatusStopped
 	} else {
 		if err := s.remoteUnit(ctx, node, u, "stop"); err != nil {
 			return err
@@ -534,7 +534,7 @@ func (s *Service) CollectSingBoxTraffic(ctx context.Context) error {
 				if err := s.remoteUnit(ctx, node, u, "start"); err != nil {
 					return err
 				}
-				u.Enabled, u.Status = true, model.SingBoxStatusRunning
+				u.Enabled, u.Status = true, model.SingBoxStatusStopped
 				if err := s.store.UpdateSingBoxUser(ctx, u); err != nil {
 					return err
 				}
@@ -547,26 +547,30 @@ func (s *Service) CollectSingBoxTraffic(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if u.Enabled {
-			active, statusErr := s.singBoxUnitActive(ctx, node, u)
-			if statusErr == nil && !active && u.QuotaPausedAt == nil {
-				u.Status = model.SingBoxStatusStopped
-				if err := s.store.UpdateSingBoxUser(ctx, u); err != nil {
-					return err
-				}
-				continue
-			}
-			if statusErr == nil && active && u.Status != model.SingBoxStatusRunning {
-				u.Status = model.SingBoxStatusRunning
-				if err := s.store.UpdateSingBoxUser(ctx, u); err != nil {
-					return err
-				}
-			}
-		}
 		counters, err := s.readSingBoxCounters(ctx, node, u.ID)
 		if err != nil {
 			s.log.Debug("sing-box traffic sample failed", "user", u.Name, "error", err)
 			continue
+		}
+		if u.Enabled && u.QuotaPausedAt == nil {
+			online, statusErr := s.singBoxUserOnline(ctx, node, u)
+			if statusErr == nil {
+				// A packet seen since the previous counter sample also counts as
+				// activity. This covers UDP clients on hosts without conntrack.
+				recentActivity := counters[0] > u.RawIn || counters[1] > u.RawOut
+				desired := model.SingBoxStatusStopped
+				if online || recentActivity {
+					desired = model.SingBoxStatusRunning
+				}
+				if u.Status != desired {
+					u.Status = desired
+					if err := s.store.UpdateSingBoxUser(ctx, u); err != nil {
+						return err
+					}
+				}
+			} else {
+				s.log.Debug("sing-box online probe failed", "user", u.Name, "error", statusErr)
+			}
 		}
 		updated, err := s.store.RecordSingBoxTraffic(ctx, u.ID, counters[0], counters[1])
 		if err != nil {
@@ -586,20 +590,78 @@ func (s *Service) CollectSingBoxTraffic(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) singBoxUnitActive(ctx context.Context, node *model.Node, u *model.SingBoxUser) (bool, error) {
+// SampleSingBoxUserStatus updates only the presence indicator. Enabled is the
+// administrator's availability switch; Status is derived from live sessions
+// and therefore becomes offline when the client disconnects without stopping
+// the user's service.
+func (s *Service) SampleSingBoxUserStatus(ctx context.Context, id int64) error {
+	u, err := s.store.SingBoxUserByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if u.Source != model.SingBoxManaged || !u.Enabled || u.QuotaPausedAt != nil ||
+		(!u.ExpiresAt.IsZero() && !time.Now().UTC().Before(u.ExpiresAt)) {
+		return nil
+	}
+	node, err := s.store.NodeByID(ctx, u.NodeID)
+	if err != nil {
+		return err
+	}
+	online, err := s.singBoxUserOnline(ctx, node, u)
+	if err != nil {
+		return err
+	}
+	if counters, counterErr := s.readSingBoxCounters(ctx, node, u.ID); counterErr == nil {
+		online = online || counters[0] > u.RawIn || counters[1] > u.RawOut
+	}
+	if online == (u.Status == model.SingBoxStatusRunning) {
+		return nil
+	}
+	if online {
+		u.Status = model.SingBoxStatusRunning
+	} else {
+		u.Status = model.SingBoxStatusStopped
+	}
+	return s.store.UpdateSingBoxUser(ctx, u)
+}
+
+// singBoxUserOnline reports whether a managed sing-box inbound currently has
+// a client session. TCP is read from the kernel socket tables; UDP uses
+// conntrack when available. The traffic-counter fallback in
+// CollectSingBoxTraffic covers UDP-only hosts without conntrack.
+func (s *Service) singBoxUserOnline(ctx context.Context, node *model.Node, u *model.SingBoxUser) (bool, error) {
 	client, err := s.pool.Get(ctx, node)
 	if err != nil {
 		return false, err
 	}
-	cmd := "systemctl is-active " + shellQuote(u.ServiceName) + ".service 2>/dev/null || true"
-	if node.InitSystem == model.InitOpenRC {
-		cmd = "rc-service " + shellQuote(u.ServiceName) + " status >/dev/null 2>&1 && echo active || echo inactive"
-	}
+	port := strconv.Itoa(u.Port)
+	cmd := "port=" + shellQuote(port) + "\n" +
+		"hexport=$(printf '%04X' \"$port\")\n" +
+		"tcp=0\n" +
+		"for table in /proc/net/tcp /proc/net/tcp6; do\n" +
+		"  if [ -r \"$table\" ]; then\n" +
+		"    n=$(awk -v p=\"$hexport\" 'NR > 1 { split($2, a, \":\"); if (tolower(a[length(a)]) == tolower(p) && $4 == \"01\") n++ } END { print n + 0 }' \"$table\")\n" +
+		"    tcp=$((tcp + n))\n" +
+		"  fi\n" +
+		"done\n" +
+		"udp=0\n" +
+		"if command -v conntrack >/dev/null 2>&1; then\n" +
+		"  udp=$(conntrack -L -p udp 2>/dev/null | awk -v p=\"$port\" '($0 ~ (\"dport=\" p) || $0 ~ (\"sport=\" p)) && ($0 ~ /ESTABLISHED|UNREPLIED/) { n++ } END { print n + 0 }')\n" +
+		"fi\n" +
+		"if [ \"$udp\" -eq 0 ]; then\n" +
+		"  for table in /proc/net/nf_conntrack /proc/net/ip_conntrack; do\n" +
+		"    if [ -r \"$table\" ]; then\n" +
+		"      n=$(awk -v p=\"$port\" '$0 ~ /udp/ && ($0 ~ (\"dport=\" p) || $0 ~ (\"sport=\" p)) && ($0 ~ /ESTABLISHED|UNREPLIED/) { n++ } END { print n + 0 }' \"$table\")\n" +
+		"      udp=$((udp + n))\n" +
+		"    fi\n" +
+		"  done\n" +
+		"fi\n" +
+		"if [ \"$tcp\" -gt 0 ] || [ \"$udp\" -gt 0 ]; then echo ONLINE; else echo OFFLINE; fi"
 	res, err := sshx.Run(ctx, client.Client, cmd)
 	if err != nil {
 		return false, err
 	}
-	return strings.TrimSpace(res.Stdout) == "active", nil
+	return strings.TrimSpace(res.Stdout) == "ONLINE", nil
 }
 
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }

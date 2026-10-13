@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"image/png"
 	"net/http"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/kukumi1/fluxlite/internal/service"
+	"github.com/kukumi1/fluxlite/internal/singbox"
 )
 
 func (s *Server) handleScanSingBox(w http.ResponseWriter, r *http.Request) {
@@ -185,6 +187,7 @@ func (s *Server) handleAdoptSingBoxUser(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleExportSingBoxUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	id, ok := pathID(w, r)
 	if !ok {
 		return
@@ -207,12 +210,18 @@ func (s *Server) handleExportSingBoxUser(w http.ResponseWriter, r *http.Request)
 	}
 	export, err := s.svc.ExportSingBoxBundle(r.Context(), id, host)
 	if err != nil {
-		writeError(w, statusForError(err), err.Error())
+		status := statusForError(err)
+		if errors.Is(err, singbox.ErrClientExport) {
+			status = http.StatusUnprocessableEntity
+		}
+		writeError(w, status, err.Error())
 		return
 	}
 	if link, ok := export["link"].(string); ok && link != "" {
 		if qrURL, err := qrDataURL(link); err == nil {
 			export["qr_data_url"] = qrURL
+		} else {
+			export["qr_error"] = "二维码生成失败，请复制节点链接或客户端配置导入"
 		}
 	}
 	s.audit(r, "singbox.export", strconv.FormatInt(id, 10), "credentials exported")

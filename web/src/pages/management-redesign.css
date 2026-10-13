@@ -163,6 +163,26 @@
 .machines-management .machine-detail-toggle[aria-expanded="true"] svg { transform:rotate(180deg); }
 .machines-management .machine-detail-toggle:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
 .machines-management .machine-address-row[hidden] { display:none; }
+
+/* Credentials wrap in the export modal; only JSON scrolls horizontally. */
+.modal:has(.singbox-qr-modal) { max-width:680px; min-width:0; overflow-x:hidden; }
+.singbox-qr-modal { width:100%; max-width:none; min-width:0; grid-template-columns:minmax(0,1fr); margin-top:20px; gap:20px; }
+.singbox-qr-modal > *, .singbox-export-section > * { min-width:0; max-width:100%; }
+.singbox-qr-modal img { width:240px; max-width:100%; height:auto; background:white; }
+.singbox-export-section { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; }
+.singbox-export-section h3 { margin:0; font-size:14px; }
+.singbox-qr-modal .singbox-link { display:block; padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--muted); white-space:normal; overflow-wrap:anywhere; word-break:break-word; line-height:1.6; user-select:text; }
+.singbox-export-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+.singbox-export-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.singbox-export-actions .btn { white-space:normal; }
+.singbox-qr-modal .banner { margin:0; overflow-wrap:anywhere; }
+.singbox-qr-modal .code-block { box-sizing:border-box; width:100%; margin:0; padding:14px; max-height:320px; overflow:auto; white-space:pre; border:1px solid var(--border); border-radius:10px; background:var(--muted); font-size:12px; line-height:1.6; }
+.singbox-qr-modal .code-block:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+@media(max-width:560px) {
+  .modal:has(.singbox-qr-modal) { padding:18px; }
+  .singbox-export-heading { align-items:flex-start; flex-direction:column; }
+  .singbox-qr-modal .code-block { max-height:260px; }
+}
 @media(min-width:761px) {
   .machines-management .machine-resource-table tbody[data-details-expanded="false"] .machine-resource-row > td { border-bottom:1px solid var(--border); }
   .machines-management .machine-resource-table tbody[data-details-expanded="false"]:last-child .machine-resource-row > td { border-bottom:0; }

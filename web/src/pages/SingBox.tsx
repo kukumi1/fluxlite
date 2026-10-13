@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Info, Pencil, Plus, QrCode, RefreshCw, RotateCcw, Search, Trash2 } from "lucide-react";
 import { api, type Node, type SingBoxCipher, type SingBoxDiscovery, type SingBoxProtocol, type SingBoxUser, type SingBoxUserInput } from "../api";
 import { Card } from "../components/Card";
@@ -9,6 +9,7 @@ import { Drawer } from "../components/Drawer";
 import { useConfirm } from "../components/ConfirmDialog";
 import "./management-redesign.css";
 import { formatBytes } from "../lib/format";
+import { normalizeSingBoxExport, type SingBoxExportView } from "../lib/singbox-export";
 
 const protocols: Array<[SingBoxProtocol, string]> = [
   ["ss2022", "SS2022"], ["anytls", "AnyTLS"], ["vless-reality", "VLESS + Reality"],
@@ -77,7 +78,9 @@ export function SingBox() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [discovered, setDiscovered] = useState<SingBoxDiscovery[]>([]);
   const [input, setInput] = useState<SingBoxUserInput>(emptyInput);
-  const [exported, setExported] = useState<{ link: string; config: string; qr?: string } | null>(null);
+  const [exported, setExported] = useState<SingBoxExportView | null>(null);
+  const exportRequest = useRef(0);
+  const exportPending = useRef(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -119,7 +122,7 @@ export function SingBox() {
       }
     }
     void poll();
-    return () => { cancelled = true; window.clearTimeout(timer); };
+    return () => { cancelled = true; window.clearTimeout(timer); exportRequest.current++; exportPending.current = false; };
   }, []);
 
   async function create() {
@@ -141,8 +144,18 @@ export function SingBox() {
   }
 
   async function exportUser(id: number) {
-    try { const out = await api.exportSingBoxUser(id); setExported({ link: out.link, config: JSON.stringify(out.config, null, 2), qr: out.qr_data_url }); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    if (busy || exportPending.current) return;
+    const request = ++exportRequest.current;
+    exportPending.current = true;
+    setBusy(true); setExported(null); setError(""); setNotice("");
+    try {
+      const out = await api.exportSingBoxUser(id);
+      if (request === exportRequest.current) setExported(normalizeSingBoxExport(out));
+    } catch (e) {
+      if (request === exportRequest.current) setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (request === exportRequest.current) { exportPending.current = false; setBusy(false); }
+    }
   }
 
   function openQuotaDialog(user: SingBoxUser, adopt: boolean, reduce = false) {
@@ -303,7 +316,18 @@ export function SingBox() {
         <div className="spread"><button className="btn sm" onClick={() => setExternalOpen((open) => !open)}>{externalOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}外部扫描节点（{externalUsers.length}）</button><span className="muted">移除记录不会删除远程配置</span></div>
         {externalOpen && userTable(externalUsers.filter(matches), true)}
       </Card>
-      {exported && <Modal title="二维码与节点连接" onClose={() => setExported(null)}><div className="singbox-qr-modal">{exported.qr && <img src={exported.qr} width={240} height={240} alt="节点二维码" />}<p className="muted">节点连接</p><div className="row"><code className="singbox-link">{exported.link}</code><CopyButton text={exported.link} /></div><p className="muted">客户端配置</p><pre className="code-block">{exported.config}</pre></div></Modal>}
+      {exported && <Modal title="二维码与节点连接" onClose={() => setExported(null)}><div className="singbox-qr-modal">
+        {exported.warnings.map((warning, index) => <Banner kind="warn" key={index}>{warning}</Banner>)}
+        {exported.qr ? <img src={exported.qr} width={240} height={240} alt="节点二维码" onError={() => setExported((current) => current?.qr === exported.qr && current?.link === exported.link ? { ...current, qr: undefined, qrError: "二维码加载失败，仍可复制节点链接或客户端配置导入。" } : current)} /> : <Banner kind="warn">{exported.qrError}</Banner>}
+        <section className="singbox-export-section" aria-label="节点链接">
+          <h3>节点链接</h3><code className="singbox-link">{exported.link}</code>
+          <div className="singbox-export-actions"><CopyButton text={exported.link} label="复制节点链接" /></div>
+        </section>
+        <section className="singbox-export-section" aria-label="客户端配置">
+          <div className="singbox-export-heading"><h3>客户端配置</h3><div className="singbox-export-actions"><CopyButton text={exported.config} label="复制客户端配置" /></div></div>
+          <pre className="code-block" tabIndex={0} aria-label="客户端 JSON 配置">{exported.config}</pre>
+        </section>
+      </div></Modal>}
       {infoUser && <Modal title={`客户端信息 — ${infoUser.name}`} onClose={() => setInfoUser(null)}><div className="singbox-info-grid"><span>节点</span><strong>{infoUser.node_name ?? infoUser.node_id}</strong><span>入口</span><strong>{infoUser.name}</strong><span>协议</span><strong>{protocols.find(([protocol]) => protocol === infoUser.protocol)?.[1] ?? infoUser.protocol}</strong><span>流量</span><strong>{usageLabel(infoUser, infoUser.used_in + infoUser.used_out, infoUser.base_quota_bytes + infoUser.top_up_bytes)}</strong><span>连接有效期</span><strong>{hasExpiry(infoUser.expires_at) ? formatDateTime(infoUser.expires_at) : "永久"}</strong><span>周期结束</span><strong>{formatDateTime(infoUser.period_ends_at)}</strong></div></Modal>}
       {quotaDialog && <Modal title={quotaDialog.adopt ? "接管外部节点" : quotaDialog.reduce ? "减少本周期额度" : "增加本周期额度"} onClose={() => setQuotaDialog(null)}>{error && <Banner kind="err">{error}</Banner>}<p className="muted">{quotaDialog.adopt ? "面板会备份原片段并迁移到独立服务。" : quotaDialog.reduce ? "不能减少到低于已使用流量；无限额度不能直接减量。" : "周期结束时间和已用流量保持不变。"}</p><label>额度（GB）<input autoFocus type="number" min={1} value={quotaGB} onChange={(e) => setQuotaGB(e.target.value)} /></label><div className="row" style={{ justifyContent: "flex-end", marginTop: 16 }}><button className="btn" onClick={() => setQuotaDialog(null)}>取消</button><button className="btn primary" disabled={busy} onClick={() => void confirmQuotaDialog()}>确定</button></div></Modal>}
       {editUser && <Drawer title="编辑节点" onClose={() => setEditUser(null)}>{error && <Banner kind="err">{error}</Banner>}<div className="singbox-edit-grid"><label>客户端名称<input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)} /></label><label>基础额度（GB，留空=无限）<input type="number" min={0} value={editQuotaGB} onChange={(e) => setEditQuotaGB(e.target.value)} /></label><label>流量自定义周期（天，默认 30 天）<input type="number" min={1} max={3650} value={editPeriodDays} onChange={(e) => setEditPeriodDays(e.target.value)} /></label><label>连接过期时间（留空=永久）<input type="datetime-local" value={expiryAt} onChange={(e) => setExpiryAt(e.target.value)} /></label><label className="singbox-check"><input type="checkbox" checked={editEnabled} onChange={(e) => setEditEnabled(e.target.checked)} />启用客户端</label></div><div className="row" style={{ justifyContent: "flex-end", marginTop: 16 }}><button className="btn" onClick={() => setEditUser(null)}>取消</button><button className="btn primary" disabled={busy} onClick={() => void saveEditDialog()}>保存</button></div></Drawer>}

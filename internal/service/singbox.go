@@ -480,6 +480,9 @@ func (s *Service) ExportSingBoxBundle(ctx context.Context, id int64, host string
 	if err != nil {
 		return nil, err
 	}
+	if u.Source != model.SingBoxManaged {
+		return nil, ErrSingBoxNotManaged
+	}
 	plain, err := s.sealer.Open(u.ConfigBlob)
 	if err != nil {
 		return nil, err
@@ -488,8 +491,67 @@ func (s *Service) ExportSingBoxBundle(ctx context.Context, id int64, host string
 	if err := json.Unmarshal(plain, &bundle); err != nil {
 		return nil, err
 	}
-	return map[string]any{"protocol": bundle.Protocol, "name": bundle.Name, "port": bundle.Port,
-		"config": json.RawMessage(bundle.Config), "link": bundle.Link(host)}, nil
+	// Older adopted bundles contain only the original server JSON and no link
+	// template. Derive client credentials on demand without rewriting the DB,
+	// redeploying the service, or changing existing client passwords.
+	bundle.Name, bundle.Port = u.Name, u.Port
+	link, clientConfig, err := bundle.ExportClient(host)
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]any{"protocol": bundle.Protocol, "name": u.Name, "port": u.Port,
+		"config": clientConfig, "link": link}
+	var client struct {
+		Outbounds []struct {
+			Type string `json:"type"`
+			TLS  struct {
+				Insecure bool `json:"insecure"`
+				Reality  struct {
+					Enabled bool `json:"enabled"`
+				} `json:"reality"`
+			} `json:"tls"`
+		} `json:"outbounds"`
+	}
+	if err := json.Unmarshal(clientConfig, &client); err != nil {
+		return nil, fmt.Errorf("decode client export: %w", err)
+	}
+	for _, outbound := range client.Outbounds {
+		if outbound.Type == "vless" {
+			result["protocol"] = model.SingBoxVLESSTLS
+			if outbound.TLS.Reality.Enabled {
+				result["protocol"] = model.SingBoxVLESSReality
+			}
+		}
+		if outbound.TLS.Insecure {
+			result["warnings"] = []string{"此导出配置跳过 TLS 证书校验。连接前请确认目标地址和证书；如使用受信任证书，请在客户端开启证书校验并设置正确的 SNI。"}
+			break
+		}
+	}
+	if bundle.LinkTemplate == "" {
+		var original struct {
+			Inbounds []struct {
+				Port int `json:"listen_port"`
+				TLS  struct {
+					Enabled    bool   `json:"enabled"`
+					ServerName string `json:"server_name"`
+					Reality    struct {
+						Enabled bool `json:"enabled"`
+					} `json:"reality"`
+				} `json:"tls"`
+			} `json:"inbounds"`
+		}
+		if err := json.Unmarshal(bundle.Config, &original); err != nil {
+			return nil, fmt.Errorf("decode original export: %w", err)
+		}
+		for _, inbound := range original.Inbounds {
+			if inbound.Port == u.Port && inbound.TLS.Enabled && inbound.TLS.ServerName == "" && !inbound.TLS.Reality.Enabled {
+				warnings, _ := result["warnings"].([]string)
+				result["warnings"] = append(warnings, "原节点未指定 TLS 服务器名称，客户端默认按入口地址校验证书。若导入后出现证书错误，请确认正确的 SNI 和证书信任配置；面板不会根据证书文件路径自动关闭校验。")
+				break
+			}
+		}
+	}
+	return result, nil
 }
 
 func (s *Service) CollectSingBoxTraffic(ctx context.Context) error {

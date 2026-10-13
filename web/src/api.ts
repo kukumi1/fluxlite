@@ -418,7 +418,7 @@ export const api = {
   resetSingBoxUser: (id: number) => post<{ ok: boolean }>(`/singbox/users/${id}/reset`),
   setSingBoxExpiry: (id: number, expiresAt: string | null) => post<{ ok: boolean }>(`/singbox/users/${id}/expiry`, { expires_at: expiresAt }),
   adoptSingBoxUser: (id: number, quotaBytes: number) => post<{ ok: boolean }>(`/singbox/users/${id}/adopt`, { bytes: quotaBytes }),
-  exportSingBoxUser: (id: number) => request<{ protocol: SingBoxProtocol; name: string; port: number; config: unknown; link: string; qr_data_url?: string }>(`/singbox/users/${id}/export`),
+  exportSingBoxUser: (id: number) => request<{ protocol: SingBoxProtocol; name: string; port: number; config: unknown; link: string; qr_data_url?: string; qr_error?: string; warnings?: string[] }>(`/singbox/users/${id}/export`),
   deleteSingBoxUser: (id: number) => request<{ ok: boolean }>(`/singbox/users/${id}`, { method: "DELETE" }),
   audit: (limit = 100) => request<AuditEntry[] | null>(`/audit?limit=${limit}`),
 

@@ -20,6 +20,7 @@ import { api } from "./api";
 import { readPreference, writePreference } from "./lib/appearance";
 import { ThemeProvider, useTheme, useThemeState } from "./theme";
 import { Login } from "./pages/Login";
+import { Recovery } from "./pages/Recovery";
 import { Dashboard } from "./pages/Dashboard";
 import { Nodes } from "./pages/Nodes";
 import { Routes } from "./pages/Routes";
@@ -54,6 +55,7 @@ export function App() {
 
 function Shell() {
   const [authState, setAuthState] = useState<AuthState>("checking");
+  const [recovering, setRecovering] = useState(false);
   const [username, setUsername] = useState("");
   const [avatar, setAvatar] = useState("");
   const [tab, setTab] = useState<Tab>("dashboard");
@@ -132,7 +134,9 @@ function Shell() {
     return <div className="login-wrap muted">加载中…</div>;
   }
   if (authState === "out") {
-    return <Login onAuthenticated={() => void checkSession()} />;
+    return recovering
+      ? <Recovery onBack={() => setRecovering(false)} />
+      : <Login onAuthenticated={() => void checkSession()} onForgotPassword={() => setRecovering(true)} />;
   }
 
   async function logout() {

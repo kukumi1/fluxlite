@@ -173,6 +173,35 @@ func (s *Store) CreateSession(ctx context.Context, token string, userID int64, e
 	return nil
 }
 
+func credentialsMatch(current, expected *User) bool {
+	return !current.Locked(time.Now().UTC()) && current.PasswordHash == expected.PasswordHash &&
+		current.Username == expected.Username && current.TOTPSecret == expected.TOTPSecret && current.TOTPEnrolled == expected.TOTPEnrolled
+}
+
+// CreateSessionIfCredentialsMatch ensures an in-flight login cannot resurrect
+// a session from an old password proof after a password reset revoked them.
+// Failure accounting and session creation share the same credential check.
+func (s *Store) CreateSessionIfCredentialsMatch(ctx context.Context, expected *User, token string, expiresAt time.Time) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		current, err := scanUser(tx.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id=?`, expected.ID))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrConflict
+		}
+		if err != nil {
+			return err
+		}
+		if !credentialsMatch(current, expected) {
+			return ErrConflict
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET failed_count=0, locked_until=NULL, updated_at=? WHERE id=?`, time.Now().UTC(), expected.ID); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?,?,?,?)`,
+			token, expected.ID, expiresAt.UTC(), time.Now().UTC())
+		return err
+	})
+}
+
 // SessionUser resolves a session token to its account, rejecting expired ones.
 func (s *Store) SessionUser(ctx context.Context, token string) (*User, error) {
 	var userID int64

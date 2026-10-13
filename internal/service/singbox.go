@@ -297,9 +297,15 @@ func (s *Service) CreateSingBoxUser(ctx context.Context, in SingBoxUserInput) (*
 
 // AdoptSingBoxUser migrates one discovered fragment out of the shared
 // installer service into the per-user namespace. The shared service is stopped
-// only for the short port handover; on every failure the original fragment is
-// restored and the shared service is started again.
+// only if it was running; failures restore its fragment and prior running state.
 func (s *Service) AdoptSingBoxUser(ctx context.Context, id int64, quota int64) error {
+	release, err := s.lockSingBoxAdoption(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	// Read the source only after acquiring the gate: a queued request must not
+	// roll back the independently managed service a prior request just created.
 	u, err := s.store.SingBoxUserByID(ctx, id)
 	if err != nil {
 		return err
@@ -325,7 +331,6 @@ func (s *Service) AdoptSingBoxUser(ctx context.Context, id int64, quota int64) e
 	if res.ExitCode != 0 {
 		return fmt.Errorf("read external sing-box fragment: %s", strings.TrimSpace(res.Stderr))
 	}
-	old := *u
 	now := time.Now().UTC()
 	u.Source = model.SingBoxManaged
 	u.Enabled = true
@@ -341,26 +346,17 @@ func (s *Service) AdoptSingBoxUser(ctx context.Context, id int64, quota int64) e
 	if err != nil {
 		return err
 	}
-	if err := s.store.UpdateSingBoxUser(ctx, u); err != nil {
-		return err
-	}
 	backup := u.ExternalPath + fmt.Sprintf(".fluxlite-backup-%d", u.ID)
-	if _, err := sshx.RunCheck(ctx, client.Client, "cp "+shellQuote(u.ExternalPath)+" "+shellQuote(backup)+" && systemctl stop sing-box"); err != nil {
-		_ = s.store.UpdateSingBoxUser(ctx, &old)
-		return fmt.Errorf("prepare shared sing-box handover: %w", err)
-	}
-	if err := s.deploySingBoxUser(ctx, node, u, bundle); err != nil {
-		_, _ = sshx.Run(ctx, client.Client, "systemctl start sing-box")
-		_ = s.store.UpdateSingBoxUser(ctx, &old)
-		return err
-	}
-	if _, err := sshx.RunCheck(ctx, client.Client, "mv "+shellQuote(u.ExternalPath)+" "+shellQuote(u.ExternalPath+".disabled")+" && systemctl start sing-box"); err != nil {
-		_, _ = sshx.Run(ctx, client.Client, "systemctl stop "+shellQuote(u.ServiceName)+".service; mv "+shellQuote(u.ExternalPath+".disabled")+" "+shellQuote(u.ExternalPath)+"; systemctl start sing-box")
-		_ = s.store.UpdateSingBoxUser(ctx, &old)
-		return fmt.Errorf("finish shared sing-box handover: %w", err)
-	}
-	u.Status = model.SingBoxStatusStopped
-	return s.store.UpdateSingBoxUser(ctx, u)
+	return handoverSingBox(ctx, node.InitSystem, u.ExternalPath, backup,
+		func(ctx context.Context, cmd string) (string, error) {
+			return sshx.RunCheck(ctx, client.Client, cmd)
+		},
+		func(ctx context.Context) error { return s.deploySingBoxUser(ctx, node, u, bundle) },
+		func(ctx context.Context) error { return s.rollbackAdoptedSingBoxUser(ctx, node, u) },
+		func(ctx context.Context) error {
+			u.Status = model.SingBoxStatusStopped
+			return s.store.UpdateSingBoxUser(ctx, u)
+		})
 }
 
 func (s *Service) SetSingBoxEnabled(ctx context.Context, id int64, enabled bool) error {

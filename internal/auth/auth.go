@@ -151,16 +151,15 @@ func (s *Service) Login(ctx context.Context, username, password, code string) (s
 		return "", time.Time{}, ErrInvalidCredentials
 	}
 
-	if err := s.store.ResetLoginFailures(ctx, user.ID); err != nil {
-		return "", time.Time{}, fmt.Errorf("reset failures: %w", err)
-	}
-
 	token, err := cryptox.RandomToken(sessionTokenBytes)
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	expires := now.Add(SessionTTL)
-	if err := s.store.CreateSession(ctx, token, user.ID, expires); err != nil {
+	if err := s.store.CreateSessionIfCredentialsMatch(ctx, user, token, expires); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			return "", time.Time{}, ErrInvalidCredentials
+		}
 		return "", time.Time{}, err
 	}
 	return token, expires, nil

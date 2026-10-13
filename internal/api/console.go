@@ -28,7 +28,14 @@ const (
 	consolePingInterval = 30 * time.Second
 
 	consoleReadLimit = 1 << 20
+
+	// Revalidate even a quiet socket: session deletion must close an already
+	// opened root shell, not just reject its next HTTP request.
+	consoleAuthorizationInterval = 5 * time.Second
+	consoleAuthorizationTimeout  = 2 * time.Second
 )
+
+var errConsoleRevoked = errors.New("终端授权已失效，请重新登录并验证身份")
 
 // requireConsoleUnlocked gates everything terminal-related behind a session
 // that has re-proven the password.
@@ -131,13 +138,31 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(consoleReadLimit)
 	defer conn.CloseNow()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	token := sessionToken(r)
+	authorized := func(ctx context.Context) bool { return s.consoleSessionAllowed(ctx, token) }
+	if !authorized(ctx) {
+		s.closeWithReason(conn, errConsoleRevoked.Error())
+		return
+	}
+	go watchConsoleAuthorization(ctx, cancel, consoleAuthorizationInterval, authorized)
+	go func() {
+		<-ctx.Done()
+		_ = conn.CloseNow()
+	}()
+
 	user := userFrom(r.Context())
-	client, node, err := s.svc.DialConsole(r.Context(), id)
+	client, node, err := s.svc.DialConsole(ctx, id)
 	if err != nil {
 		s.closeWithReason(conn, "连接节点失败："+err.Error())
 		return
 	}
 	defer client.Close()
+	go func() {
+		<-ctx.Done()
+		_ = client.Close()
+	}()
 
 	session, err := client.NewSession()
 	if err != nil {
@@ -163,6 +188,10 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 		s.closeWithReason(conn, "申请终端失败："+err.Error())
 		return
 	}
+	if !authorized(ctx) {
+		cancel()
+		return
+	}
 	if err := session.Shell(); err != nil {
 		s.closeWithReason(conn, "启动 shell 失败："+err.Error())
 		return
@@ -175,9 +204,6 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 			"session lasted "+time.Since(opened).Round(time.Second).String())
 	}()
 	s.log.Info("console opened", "node", node.Name, "user", user.Username)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	// 空闲计时只由用户的输入推进。仅有输出不算活跃 —— 一个刷个不停的
 	// tail -f 会让一个没人看的 root shell 永远不过期。
@@ -207,7 +233,7 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 
 	// 浏览器 → 节点
 	for {
-		kind, data, err := conn.Read(ctx)
+		kind, data, err := readAuthorizedConsoleFrame(ctx, conn, authorized)
 		if err != nil {
 			return
 		}
@@ -229,6 +255,54 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// ConsoleUnlocked checks both the live session expiry and its unlock mark in
+// one query. A database failure cannot turn revocation into an open shell.
+func (s *Server) consoleSessionAllowed(ctx context.Context, token string) bool {
+	checkCtx, cancel := context.WithTimeout(ctx, consoleAuthorizationTimeout)
+	defer cancel()
+	unlocked, err := s.svc.Store().ConsoleUnlocked(checkCtx, token)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.log.Warn("console authorization check failed", "error", err)
+		}
+		return false
+	}
+	return unlocked && ctx.Err() == nil
+}
+
+func watchConsoleAuthorization(ctx context.Context, cancel context.CancelFunc, interval time.Duration, authorized func(context.Context) bool) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !authorized(ctx) {
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+type consoleFrameReader interface {
+	Read(context.Context) (websocket.MessageType, []byte, error)
+}
+
+// Revalidate after receiving every input/resize frame, before forwarding it
+// to SSH. The idle watchdog alone would leave a five-second command window.
+func readAuthorizedConsoleFrame(ctx context.Context, reader consoleFrameReader, authorized func(context.Context) bool) (websocket.MessageType, []byte, error) {
+	kind, data, err := reader.Read(ctx)
+	if err != nil {
+		return kind, nil, err
+	}
+	if ctx.Err() != nil || !authorized(ctx) {
+		return kind, nil, errConsoleRevoked
+	}
+	return kind, data, nil
 }
 
 func (s *Server) consoleIdleWatch(ctx context.Context, cancel context.CancelFunc, activity <-chan struct{}) {

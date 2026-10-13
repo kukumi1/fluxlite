@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -39,6 +40,12 @@ type Service struct {
 	verifier *verifier.Verifier
 	realm    applier.RealmSource
 	log      *slog.Logger
+
+	// Adoption briefly stops a node's shared service. This low-frequency
+	// operation is serialized across the panel rather than keeping unbounded
+	// per-node locks, so both duplicate users and different fragments are safe.
+	singBoxAdoptionOnce sync.Once
+	singBoxAdoptionGate chan struct{}
 }
 
 func New(st *store.Store, sealer *cryptox.Sealer, pool *sshx.Pool, ap *applier.Applier, vf *verifier.Verifier, realm applier.RealmSource, log *slog.Logger) *Service {

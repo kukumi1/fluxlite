@@ -85,6 +85,11 @@ func (s *Server) Handler() http.Handler {
 		r.With(s.rateLimit).Post("/setup", s.handleSetup)
 		r.With(s.rateLimit).Post("/setup/confirm", s.handleSetupConfirm)
 		r.With(s.rateLimit).Post("/login", s.handleLogin)
+		r.With(s.recoveryNoStore, s.rateLimit).Post("/recovery/question", s.handleRecoveryQuestion)
+		r.With(s.recoveryNoStore, s.rateLimit).Post("/recovery/reset", s.handleRecoveryReset)
+		r.With(s.recoveryNoStore, s.requireAuth).Get("/account/recovery", s.handleRecoveryStatus)
+		r.With(s.recoveryNoStore, s.requireAuth, s.rateLimit).Post("/account/recovery", s.handleConfigureRecovery)
+		r.With(s.recoveryNoStore, s.requireAuth, s.rateLimit).Delete("/account/recovery", s.handleDisableRecovery)
 
 		// The installer authenticates with its one-shot enrollment token
 		// rather than a session, since it runs on a bare machine.

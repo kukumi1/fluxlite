@@ -6,6 +6,8 @@ import { Upload } from "lucide-react";
 import { AVATAR_SIZE, toAvatarPNG } from "../lib/avatar";
 import { useTheme } from "../theme";
 import { normalizeGlassStrength } from "../lib/appearance";
+import { RecoverySettings } from "./RecoverySettings";
+import { authErrorMessage } from "../lib/auth-errors";
 
 interface Props {
   onUsernameChanged: (name: string) => void;
@@ -33,8 +35,7 @@ export function Account({ onUsernameChanged, onAvatarChanged, onSignedOut }: Pro
     void load();
   }, []);
 
-  const report = (err: unknown) =>
-    setError(err instanceof ApiError ? err.message : "操作失败");
+  const report = (err: unknown) => setError(authErrorMessage(err));
 
   const announce = (msg: string) => {
     setError("");
@@ -102,6 +103,8 @@ export function Account({ onUsernameChanged, onAvatarChanged, onSignedOut }: Pro
       />
 
       <PasswordCard onDone={announce} onError={report} />
+
+      <RecoverySettings enrolled={me.totp_enrolled} onDone={announce} onError={report} />
 
       <TwoFactorCard
         enrolled={me.totp_enrolled}

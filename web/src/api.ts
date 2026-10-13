@@ -285,6 +285,16 @@ export interface Account {
   avatar: string;
 }
 
+export interface RecoverySettings {
+  enabled: boolean;
+  question: string;
+}
+
+export interface RecoveryProof {
+  username: string;
+  recovery_code: string;
+}
+
 export interface EnrollRequest {
   name: string;
   host: string;
@@ -358,6 +368,15 @@ export const api = {
   revokeSessions: () => post<{ ok: boolean }>("/account/sessions/revoke"),
   setAvatar: (data: string) => post<{ avatar: string }>("/account/avatar", { data }),
   clearAvatar: () => request<{ avatar: string }>("/account/avatar", { method: "DELETE" }),
+  recoverySettings: () => request<RecoverySettings>("/account/recovery"),
+  configureRecovery: (input: { password: string; code: string; question: string; answer: string }) =>
+    post<{ recovery_code: string }>("/account/recovery", input),
+  disableRecovery: (password: string, code: string) =>
+    request<{ ok: boolean }>("/account/recovery", { method: "DELETE", body: JSON.stringify({ password, code }) }),
+  recoveryQuestion: (proof: RecoveryProof) =>
+    post<{ question: string; totp_required: boolean }>("/recovery/question", proof),
+  resetForgottenPassword: (input: RecoveryProof & { answer: string; code: string; password: string }) =>
+    post<{ ok: boolean }>("/recovery/reset", input),
 
   enrollTicket: (input: EnrollRequest) => post<EnrollTicket>("/enroll/ticket", input),
   // Reinstall reuses the node's own record, so nothing about the machine is

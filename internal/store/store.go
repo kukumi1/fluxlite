@@ -381,6 +381,13 @@ var migrations = []string{
 	`ALTER TABLE singbox_users ADD COLUMN expires_at DATETIME`,
 	`ALTER TABLE singbox_users ADD COLUMN period_days INTEGER NOT NULL DEFAULT 30`,
 	`UPDATE singbox_users SET expires_at = datetime(created_at, '+365 days') WHERE expires_at IS NULL`,
+
+	`CREATE TABLE IF NOT EXISTS user_recovery (
+		user_id     INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+		question    TEXT NOT NULL,
+		answer_hash TEXT NOT NULL,
+		code_hash   BLOB NOT NULL CHECK(length(code_hash) = 32)
+	)`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

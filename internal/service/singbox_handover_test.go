@@ -49,7 +49,7 @@ func TestSharedSingBoxStateOpenRC(t *testing.T) {
 		t.Run(state, func(t *testing.T) {
 			running, stop, start, err := sharedSingBoxState(context.Background(), model.InitOpenRC,
 				func(_ context.Context, cmd string) (string, error) {
-					if !strings.Contains(cmd, "rc-service --exists sing-box") || strings.Contains(cmd, "systemctl") {
+					if !strings.Contains(cmd, "/etc/init.d/sing-box") || strings.Contains(cmd, "systemctl") {
 						t.Fatalf("wrong OpenRC state command: %s", cmd)
 					}
 					return state, nil
@@ -204,7 +204,7 @@ func TestSingBoxHandoverOpenRC(t *testing.T) {
 				if strings.Contains(cmd, "systemctl") || strings.Contains(cmd, "rc-update") {
 					t.Fatalf("wrong init or boot enablement change: %s", cmd)
 				}
-				if strings.HasPrefix(cmd, "rc-service --exists ") {
+				if strings.HasPrefix(cmd, "if ! command -v rc-service") {
 					return state, nil
 				}
 				if strings.HasPrefix(cmd, "rc-service sing-box ") {
@@ -226,6 +226,24 @@ func TestSingBoxHandoverOpenRC(t *testing.T) {
 				t.Fatalf("inactive shared service must stay untouched: %v", services)
 			}
 		})
+	}
+}
+
+func TestSingBoxHandoverOpenRCRejectsUnmanagedServiceBeforeChangingFiles(t *testing.T) {
+	var changed bool
+	run := func(_ context.Context, cmd string) (string, error) {
+		if strings.HasPrefix(cmd, "if ! command -v rc-service") {
+			return "unmanaged", nil
+		}
+		changed = true
+		return "", nil
+	}
+	err := handoverSingBox(context.Background(), model.InitOpenRC, "/fragment.json", "/backup", run,
+		func(context.Context) error { t.Fatal("unmanaged service must not deploy"); return nil },
+		func(context.Context) error { t.Fatal("unmanaged service must not roll back"); return nil },
+		func(context.Context) error { t.Fatal("unmanaged service must not commit"); return nil })
+	if err == nil || !strings.Contains(err.Error(), "/etc/init.d/sing-box") || changed {
+		t.Fatalf("unexpected unmanaged OpenRC handover result: err=%v changed=%v", err, changed)
 	}
 }
 

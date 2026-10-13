@@ -55,16 +55,23 @@ func sharedSingBoxState(ctx context.Context, initSystem model.InitSystem, run si
 		}
 		return running, "systemctl stop sing-box.service", "systemctl start sing-box.service && systemctl is-active --quiet sing-box.service", nil
 	case model.InitOpenRC:
-		out, err := run(ctx, `rc-service --exists sing-box || exit 1
+		out, err := run(ctx, `if ! command -v rc-service >/dev/null 2>&1; then echo unsupported; exit 0; fi
+if [ ! -x /etc/init.d/sing-box ]; then echo unmanaged; exit 0; fi
 rc-service sing-box status >/dev/null 2>&1
 status=$?
-case "$status" in 0) echo active;; 3) echo inactive;; *) exit "$status";; esac`)
+case "$status" in 0) echo active;; 3) echo inactive;; *) echo "unexpected:$status";; esac`)
 		if err != nil {
 			return false, "", "", err
 		}
 		state := strings.TrimSpace(out)
+		if state == "unsupported" {
+			return false, "", "", errors.New("OpenRC 环境缺少 rc-service，无法安全接管共享 sing-box 服务")
+		}
+		if state == "unmanaged" {
+			return false, "", "", errors.New("未发现可管理的 OpenRC sing-box 服务（/etc/init.d/sing-box）；为避免与原服务抢占端口，已取消接管")
+		}
 		if state != "active" && state != "inactive" {
-			return false, "", "", fmt.Errorf("cannot inspect shared sing-box OpenRC state %q", state)
+			return false, "", "", fmt.Errorf("无法确认 OpenRC sing-box 服务状态 %q，请等待服务状态稳定后重试", state)
 		}
 		return state == "active", "rc-service sing-box stop", "rc-service sing-box start", nil
 	default:

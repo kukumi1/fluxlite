@@ -175,15 +175,13 @@ func (s *Server) handleAdoptSingBoxUser(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var req struct {
-		Bytes            int64                     `json:"bytes"`
-		OriginalLink     *string                   `json:"original_link,omitempty"`
-		ClientParameters *singbox.ClientParameters `json:"client_parameters,omitempty"`
+		Bytes int64 `json:"bytes"`
 	}
-	if err := decodeClientParametersRequest(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "请求格式错误")
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := s.svc.AdoptSingBoxUserWithClientParameters(r.Context(), id, req.Bytes, service.SingBoxClientParametersInput{Parameters: req.ClientParameters, OriginalLink: req.OriginalLink}); err != nil {
+	if err := s.svc.AdoptSingBoxUser(r.Context(), id, req.Bytes); err != nil {
 		writeError(w, statusForError(err), err.Error())
 		return
 	}

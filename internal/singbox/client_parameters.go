@@ -12,8 +12,10 @@ import (
 	"strings"
 )
 
-// ClientParameters are explicit client-only choices. They are sealed with the
-// bundle, never written to the server inbound, and contain no credentials.
+// ClientParameters preserves legacy client-only values that were already
+// captured before direct host-config export became the default. They are
+// sealed with the bundle, never written to the server inbound, and contain no
+// credentials.
 type ClientParameters struct {
 	SNI         string `json:"sni"`
 	Insecure    bool   `json:"insecure"`

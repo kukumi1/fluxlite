@@ -304,23 +304,6 @@ func (s *Service) CreateSingBoxUser(ctx context.Context, in SingBoxUserInput) (*
 // installer service into the per-user namespace. The shared service is stopped
 // only if it was running; failures restore its fragment and prior running state.
 func (s *Service) AdoptSingBoxUser(ctx context.Context, id int64, quota int64) error {
-	return s.AdoptSingBoxUserWithClientParameters(ctx, id, quota, SingBoxClientParametersInput{})
-}
-
-func (s *Service) AdoptSingBoxUserWithClientParameters(ctx context.Context, id int64, quota int64, in SingBoxClientParametersInput) error {
-	if in.OriginalLink != nil {
-		if err := singbox.ValidateOriginalAnyTLSLink(*in.OriginalLink); err != nil {
-			return err
-		}
-	}
-	if in.Parameters != nil && in.OriginalLink != nil {
-		return singbox.ErrClientExport
-	}
-	if in.Parameters != nil {
-		if err := in.Parameters.Validate(); err != nil {
-			return err
-		}
-	}
 	release, err := s.lockSingBoxAdoption(ctx)
 	if err != nil {
 		return err
@@ -354,16 +337,6 @@ func (s *Service) AdoptSingBoxUserWithClientParameters(ctx context.Context, id i
 		return fmt.Errorf("read external sing-box fragment: %s", strings.TrimSpace(res.Stderr))
 	}
 	bundle := &singbox.Bundle{Config: json.RawMessage(res.Stdout), Protocol: u.Protocol, Name: u.Name, Port: u.Port}
-	if in.Parameters != nil || in.OriginalLink != nil {
-		parameters, err := chooseClientParameters(bundle, node, in)
-		if err != nil {
-			return err
-		}
-		bundle.ClientParameters = parameters
-		if _, _, err := bundle.ExportClient(singBoxExportHost(node)); err != nil {
-			return err
-		}
-	}
 	now := time.Now().UTC()
 	u.Source = model.SingBoxManaged
 	u.Enabled = true
@@ -578,7 +551,7 @@ func (s *Service) ExportSingBoxBundle(ctx context.Context, id int64, host string
 		for _, inbound := range original.Inbounds {
 			if inbound.Port == u.Port && inbound.TLS.Enabled && inbound.TLS.ServerName == "" && !inbound.TLS.Reality.Enabled {
 				warnings, _ := result["warnings"].([]string)
-				result["warnings"] = append(warnings, "服务端配置未提供可恢复的客户端 SNI，原客户端链接可能单独设置了 SNI。请导入原链接或保存客户端参数；未设置时默认按入口地址校验证书，面板不会根据证书文件路径自动关闭校验。")
+				result["warnings"] = append(warnings, "服务端配置未提供可恢复的客户端 SNI；已按原始服务端配置导出并保留证书校验，未猜测或写入客户端专属参数。")
 				break
 			}
 		}

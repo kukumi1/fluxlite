@@ -3,7 +3,6 @@ import { ChevronDown, ChevronRight, Info, Pencil, Plus, QrCode, RefreshCw, Rotat
 import { api, type Node, type SingBoxCipher, type SingBoxDiscovery, type SingBoxProtocol, type SingBoxUser, type SingBoxUserInput } from "../api";
 import { Card } from "../components/Card";
 import { CopyButton } from "../components/CopyButton";
-import { ClientParametersDialog } from "../components/ClientParametersDialog";
 import { PageHeader } from "../components/PageHeader";
 import { Banner, Modal } from "../components/Modal";
 import { Drawer } from "../components/Drawer";
@@ -87,8 +86,6 @@ export function SingBox() {
   const [busy, setBusy] = useState(false);
   const [quotaDialog, setQuotaDialog] = useState<{ user: SingBoxUser; adopt: boolean; reduce: boolean } | null>(null);
   const [quotaGB, setQuotaGB] = useState("100");
-  const [adoptionOriginalLink, setAdoptionOriginalLink] = useState("");
-  const [clientParametersUser, setClientParametersUser] = useState<SingBoxUser | null>(null);
   const [expiryAt, setExpiryAt] = useState("");
   const [infoUser, setInfoUser] = useState<SingBoxUser | null>(null);
   const [editUser, setEditUser] = useState<SingBoxUser | null>(null);
@@ -164,13 +161,11 @@ export function SingBox() {
   function openQuotaDialog(user: SingBoxUser, adopt: boolean, reduce = false) {
     setError("");
     setQuotaGB("100");
-    setAdoptionOriginalLink("");
     setQuotaDialog({ user, adopt, reduce });
   }
 
   function closeQuotaDialog() {
     if (busy) return;
-    setAdoptionOriginalLink("");
     setQuotaDialog(null);
   }
 
@@ -181,14 +176,13 @@ export function SingBox() {
     const bytes = Math.round(gb * 1024 ** 3);
     let saved = false;
     if (quotaDialog.adopt) {
-      const originalLink = adoptionOriginalLink.trim();
-      saved = await action(() => api.adoptSingBoxUser(quotaDialog.user.id, bytes, originalLink ? { original_link: originalLink } : undefined), "外部节点已接管");
+      saved = await action(() => api.adoptSingBoxUser(quotaDialog.user.id, bytes), "外部节点已接管");
     } else if (quotaDialog.reduce) {
       saved = await action(() => api.reduceSingBoxQuota(quotaDialog.user.id, bytes), "本周期额度已减少");
     } else {
       saved = await action(() => api.topUpSingBoxUser(quotaDialog.user.id, bytes), "本周期额度已增加");
     }
-    if (saved) { setAdoptionOriginalLink(""); setQuotaDialog(null); }
+    if (saved) setQuotaDialog(null);
   }
 
   function openEditDialog(user: SingBoxUser) {
@@ -253,7 +247,6 @@ export function SingBox() {
                       <button className={`toggle-switch ${user.enabled ? "on" : ""}`} aria-label={user.enabled ? "关闭节点" : "开启节点"} aria-pressed={user.enabled} disabled={busy || user.status === "expired" || user.status === "exhausted"} onClick={() => void action(() => user.enabled ? api.stopSingBoxUser(user.id) : api.startSingBoxUser(user.id), user.enabled ? "已关闭" : "已开启")}><span /></button>
                       <button className="btn sm icon-only" aria-label="二维码" title="二维码" disabled={busy} onClick={() => void exportUser(user.id)}><QrCode size={15} /></button>
                       <button className="btn sm icon-only" aria-label="客户端信息" title="客户端信息" disabled={busy} onClick={() => setInfoUser(user)}><Info size={15} /></button>
-                      <button className="btn sm" disabled={busy || user.protocol === "ss2022"} title={user.protocol === "ss2022" ? "此协议不使用普通 TLS 客户端参数" : "设置客户端 SNI、证书校验和 TLS 指纹；是否支持以实际入站配置为准"} onClick={() => { setExported(null); setClientParametersUser(user); }}>客户端参数</button>
                       <button className="btn sm" disabled={busy} onClick={() => openQuotaDialog(user, false)}>加量</button>
                       <button className="btn sm" disabled={busy || total === 0} onClick={() => openQuotaDialog(user, false, true)}>减量</button>
                       <button className="btn sm icon-only" aria-label="重置流量" title="重置流量" disabled={busy} onClick={() => void resetUser(user)}><RotateCcw size={15} /></button>
@@ -297,7 +290,7 @@ export function SingBox() {
         <div className="singbox-stat"><span>已启用</span><strong>{managedUsers.filter((user) => user.enabled).length}</strong></div>
       </div>
       <div className="management-toolbar">
-        <label className="management-search"><Search size={16} /><input aria-label="搜索节点" placeholder="搜索名称、机器、协议或端口…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+        <label className="management-search"><Search size={16} /><input aria-label="搜索节点" name="singbox-node-search" autoComplete="off" placeholder="搜索名称、机器、协议或端口…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
         <select aria-label="筛选节点状态" value={filter} onChange={(event) => setFilter(event.target.value)}><option value="all">全部状态</option><option value="running">在线</option><option value="stopped">离线</option><option value="enabled">已启用</option><option value="disabled">已关闭</option><option value="exhausted">额度用尽</option><option value="expired">已过期</option></select>
         <span className="management-result-count">{managedUsers.filter(matches).length} 个节点</span>
       </div>
@@ -341,8 +334,7 @@ export function SingBox() {
         </section>
       </div></Modal>}
       {infoUser && <Modal title={`客户端信息 — ${infoUser.name}`} onClose={() => setInfoUser(null)}><div className="singbox-info-grid"><span>节点</span><strong>{infoUser.node_name ?? infoUser.node_id}</strong><span>入口</span><strong>{infoUser.name}</strong><span>协议</span><strong>{protocols.find(([protocol]) => protocol === infoUser.protocol)?.[1] ?? infoUser.protocol}</strong><span>流量</span><strong>{usageLabel(infoUser, infoUser.used_in + infoUser.used_out, infoUser.base_quota_bytes + infoUser.top_up_bytes)}</strong><span>连接有效期</span><strong>{hasExpiry(infoUser.expires_at) ? formatDateTime(infoUser.expires_at) : "永久"}</strong><span>周期结束</span><strong>{formatDateTime(infoUser.period_ends_at)}</strong></div></Modal>}
-      {quotaDialog && <Modal title={quotaDialog.adopt ? "接管外部节点" : quotaDialog.reduce ? "减少本周期额度" : "增加本周期额度"} onClose={closeQuotaDialog}>{error && <Banner kind="err">{error}</Banner>}<p className="muted">{quotaDialog.adopt ? "面板会备份原片段并迁移到独立服务。" : quotaDialog.reduce ? "不能减少到低于已使用流量；无限额度不能直接减量。" : "周期结束时间和已用流量保持不变。"}</p><label>额度（GB）<input autoFocus type="number" min={1} value={quotaGB} disabled={busy} onChange={(e) => setQuotaGB(e.target.value)} /></label>{quotaDialog.adopt && quotaDialog.user.protocol === "anytls" && <div className="singbox-adoption-client-link"><label>原节点链接（可选，仅 AnyTLS）<input type="password" value={adoptionOriginalLink} disabled={busy} onChange={(event) => setAdoptionOriginalLink(event.target.value)} placeholder="粘贴 anytls:// 原节点链接" autoComplete="off" spellCheck={false} /></label><p className="muted">保留原链接中的 SNI、证书校验和指纹参数。链接包含密码，不会保存完整链接；留空使用服务端可读取的默认参数，接管后仍可通过“客户端参数”补充。</p></div>}<div className="row" style={{ justifyContent: "flex-end", marginTop: 16 }}><button className="btn" disabled={busy} onClick={closeQuotaDialog}>取消</button><button className="btn primary" disabled={busy} onClick={() => void confirmQuotaDialog()}>确定</button></div></Modal>}
-      {clientParametersUser && <ClientParametersDialog key={clientParametersUser.id} user={clientParametersUser} onClose={() => setClientParametersUser(null)} onChanged={() => { exportRequest.current++; exportPending.current = false; setExported(null); setNotice("客户端参数已更新，请重新导出节点。"); }} />}
+      {quotaDialog && <Modal title={quotaDialog.adopt ? "接管外部节点" : quotaDialog.reduce ? "减少本周期额度" : "增加本周期额度"} onClose={closeQuotaDialog}>{error && <Banner kind="err">{error}</Banner>}<p className="muted">{quotaDialog.adopt ? "面板将读取当前服务端配置，备份原片段并迁移到独立服务。" : quotaDialog.reduce ? "不能减少到低于已使用流量；无限额度不能直接减量。" : "周期结束时间和已用流量保持不变。"}</p><label>额度（GB）<input autoFocus type="number" min={1} value={quotaGB} disabled={busy} onChange={(e) => setQuotaGB(e.target.value)} /></label><div className="row" style={{ justifyContent: "flex-end", marginTop: 16 }}><button className="btn" disabled={busy} onClick={closeQuotaDialog}>取消</button><button className="btn primary" disabled={busy} onClick={() => void confirmQuotaDialog()}>确定</button></div></Modal>}
       {editUser && <Drawer title="编辑节点" onClose={() => setEditUser(null)}>{error && <Banner kind="err">{error}</Banner>}<div className="singbox-edit-grid"><label>客户端名称<input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)} /></label><label>基础额度（GB，留空=无限）<input type="number" min={0} value={editQuotaGB} onChange={(e) => setEditQuotaGB(e.target.value)} /></label><label>流量自定义周期（天，默认 30 天）<input type="number" min={1} max={3650} value={editPeriodDays} onChange={(e) => setEditPeriodDays(e.target.value)} /></label><label>连接过期时间（留空=永久）<input type="datetime-local" value={expiryAt} onChange={(e) => setExpiryAt(e.target.value)} /></label><label className="singbox-check"><input type="checkbox" checked={editEnabled} onChange={(e) => setEditEnabled(e.target.checked)} />启用客户端</label></div><div className="row" style={{ justifyContent: "flex-end", marginTop: 16 }}><button className="btn" onClick={() => setEditUser(null)}>取消</button><button className="btn primary" disabled={busy} onClick={() => void saveEditDialog()}>保存</button></div></Drawer>}
       {confirmDialog}
     </div>

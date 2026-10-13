@@ -17,6 +17,7 @@ import {
   Zap,
 } from "lucide-react";
 import { api } from "./api";
+import { readPreference, writePreference } from "./lib/appearance";
 import { ThemeProvider, useTheme, useThemeState } from "./theme";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
@@ -58,7 +59,7 @@ function Shell() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [consoleNode, setConsoleNode] = useState<number | null>(null);
   const { theme, toggle } = useTheme();
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("fluxlite-sidebar-collapsed") === "true");
+  const [collapsed, setCollapsed] = useState(() => readPreference("fluxlite-sidebar-collapsed") === "true");
   const [mobileOpen, setMobileOpen] = useState(false);
   const sidebarRef = useRef<HTMLElement>(null);
 
@@ -69,7 +70,7 @@ function Shell() {
 
   function toggleSidebar() {
     const next = !collapsed;
-    localStorage.setItem("fluxlite-sidebar-collapsed", String(next));
+    writePreference("fluxlite-sidebar-collapsed", String(next));
     setCollapsed(next);
   }
 

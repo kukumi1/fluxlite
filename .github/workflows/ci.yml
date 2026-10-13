@@ -16,10 +16,11 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Build frontend
+      - name: Test and build frontend
         working-directory: web
         run: |
           npm ci
+          npm test
           npm run build
 
       - uses: actions/setup-go@v5

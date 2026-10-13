@@ -1889,3 +1889,54 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .drawer-heading { padding: 20px 18px 16px; }
   .page-header h1 { font-size: 24px; }
 }
+
+/* ===== Local appearance preferences ===== */
+:root {
+  --glass-blur: 11.22px;
+  --glass-opacity: 85.11%;
+  --depth-highlight: #ffffffb3;
+  --depth-shade: #32223f12;
+}
+.dark { --depth-highlight: #ffffff12; --depth-shade: #00000038; }
+html.appearance-depth :is(.card, .singbox-user-card, .node-load, .singbox-stat, .modal, .drawer) {
+  box-shadow: inset 0 1px 0 var(--depth-highlight), inset 0 -1px 0 var(--depth-shade), 0 7px 20px var(--depth-shade);
+}
+html.appearance-depth .sidebar { box-shadow: inset -1px 0 0 var(--depth-highlight), 5px 0 20px var(--depth-shade); }
+html.appearance-depth .topbar { box-shadow: inset 0 -1px 0 var(--depth-highlight); }
+html.appearance-depth .dashboard-redesign .dashboard-kpis .card {
+  box-shadow: inset 0 1px 0 #ffffff70, inset 0 -1px 0 #35304018, 0 7px 20px var(--depth-shade);
+}
+
+/* Only opt into translucent surfaces when real backdrop blur is supported.
+   Unsupported browsers retain the original opaque backgrounds, including tables. */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html.appearance-glass :is(.card, .singbox-user-card, .node-load, .sidebar, .topbar, .modal, .drawer, .drawer-heading):not(.dashboard-kpis .card) {
+    background-color: color-mix(in srgb, var(--card) var(--glass-opacity), transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.12);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.12);
+  }
+  html.appearance-glass .sidebar { background-color: color-mix(in srgb, var(--sidebar) var(--glass-opacity), transparent); }
+  html.appearance-glass :is(.modal, .drawer, .drawer-heading) { background-image: none; }
+  html.appearance-glass .dashboard-redesign :is(.dashboard-traffic, .dashboard-health) {
+    background-image: linear-gradient(145deg, color-mix(in srgb,var(--lavender) 9%,transparent),transparent);
+  }
+  html.appearance-glass :is(.dashboard-machine-table, .machine-resource-table, .route-list-table) th {
+    background-color: color-mix(in srgb, var(--muted) var(--glass-opacity), transparent);
+  }
+}
+
+.appearance-settings-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+.appearance-settings-heading h2 { margin:0; }
+.appearance-settings-heading .hint { margin-bottom:0; }
+.appearance-option { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:20px 0; border-bottom:1px solid var(--border); }
+.appearance-option strong { display:block; font-size:13px; font-weight:600; }
+.appearance-option p { margin:5px 0 0; font-size:12px; color:var(--muted-foreground); }
+.appearance-option .toggle-switch { flex-shrink:0; }
+.appearance-strength { padding-top:18px; max-width:640px; }
+.appearance-strength > label { margin:0 0 10px; font-size:13px; }
+.appearance-strength > label .muted { margin-left:8px; font-size:11px; }
+.appearance-strength-controls { display:flex; align-items:center; gap:18px; }
+.appearance-strength-controls input[type="range"] { flex:1; width:0; min-width:60px; margin:0; padding:0; border:0; box-shadow:none; accent-color:var(--primary); height:24px; cursor:pointer; }
+.appearance-strength-controls input[type="number"] { flex:0 0 86px; width:86px; margin:0; text-align:center; }
+.appearance-strength.is-disabled input { opacity:.5; cursor:not-allowed; }
+@media (max-width:600px) { .appearance-option { gap:16px; } .appearance-settings-heading { gap:10px; } }

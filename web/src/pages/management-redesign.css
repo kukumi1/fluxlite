@@ -57,7 +57,6 @@
 .routes-management .management-hop-label { color:var(--muted-foreground);font-size:10px; }
 .routes-management .management-chain strong { font-size:13px;overflow-wrap:anywhere; }
 .routes-management .management-chain .muted { font-size:11px; }
-.routes-management .management-chain > .lat.total { flex-basis:100%;margin-top:8px; }
 .routes-management .table-scroll .management-chain { min-width:420px;margin:0;gap:6px; }
 .routes-management .table-scroll .management-chain .hop { padding:8px;min-width:100px; }
 @media(max-width:1200px) { .singbox-management .singbox-stat-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } .singbox-management .singbox-user-list { grid-template-columns:1fr; } }
@@ -154,3 +153,17 @@
 .routes-management .route-list-table .management-chain .arrow { flex-shrink:0; }
 .routes-management .route-list-table .management-chain .management-hop-address { min-width:0; }
 .routes-management .route-list-table .spread { flex-wrap:wrap; gap:4px; }
+
+/* Disclosure state is keyed by machine, independent of filtering and metrics. */
+.machines-management .machine-list-name { display:flex; align-items:center; gap:6px; min-width:0; }
+.machines-management .machine-list-name > strong { min-width:0; }
+.machines-management .machine-detail-toggle { display:inline-grid; place-items:center; flex:0 0 26px; width:26px; height:26px; padding:0; border:1px solid var(--border); border-radius:6px; background:transparent; color:var(--muted-foreground); cursor:pointer; }
+.machines-management .machine-detail-toggle:hover,
+.machines-management .machine-detail-toggle[aria-expanded="true"] { color:var(--foreground); background:var(--muted); }
+.machines-management .machine-detail-toggle[aria-expanded="true"] svg { transform:rotate(180deg); }
+.machines-management .machine-detail-toggle:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.machines-management .machine-address-row[hidden] { display:none; }
+@media(min-width:761px) {
+  .machines-management .machine-resource-table tbody[data-details-expanded="false"] .machine-resource-row > td { border-bottom:1px solid var(--border); }
+  .machines-management .machine-resource-table tbody[data-details-expanded="false"]:last-child .machine-resource-row > td { border-bottom:0; }
+}

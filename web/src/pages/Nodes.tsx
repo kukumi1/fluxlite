@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   api,
   ApiError,
@@ -13,6 +13,7 @@ import {
 import {
   ArrowDown,
   ArrowUp,
+  ChevronDown,
   LayoutGrid,
   List,
   Plus,
@@ -110,6 +111,8 @@ function uninstallCommand(): string {
 }
 
 export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => void }) {
+  const detailsPrefix = useId();
+  const [expandedDetails, setExpandedDetails] = useState<Record<number, boolean>>({});
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -328,12 +331,12 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
               const sshAddress = `${n.ssh_user}@${n.host.includes(":") ? `[${n.host}]` : n.host}:${n.ssh_port}`;
               const ipv6 = ipv6DialAddress(n);
               return (
-                <tbody key={n.id}>
+                <tbody key={n.id} data-details-expanded={!!expandedDetails[n.id]}>
                   <tr className="machine-resource-row">
                     <td className="machine-identity-cell">
                       <div className="machine-list-identity">
                         <span className="machine-list-icon"><Server size={18} /></span>
-                        <div><strong>{n.name}</strong><div className="machine-list-system">{systemCell(n)}</div>{m?.container && <span className="tag" title={caveat ?? "运行在容器里"}>{m.container}</span>}</div>
+                        <div><div className="machine-list-name"><strong>{n.name}</strong><button type="button" className="machine-detail-toggle" aria-expanded={!!expandedDetails[n.id]} aria-controls={`${detailsPrefix}-${n.id}`} aria-label={`${expandedDetails[n.id] ? "收起" : "展开"} ${n.name} 连接详情`} title="连接详情" onClick={() => setExpandedDetails((current) => ({ ...current, [n.id]: !current[n.id] }))}><ChevronDown size={15} /></button></div><div className="machine-list-system">{systemCell(n)}</div>{m?.container && <span className="tag" title={caveat ?? "运行在容器里"}>{m.container}</span>}</div>
                       </div>
                     </td>
                     <td className="machine-list-status">{statusTag(n)}</td>
@@ -342,7 +345,7 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
                     <td className="machine-list-resource machine-list-disk"><MetricBar label="磁盘" percent={percentOf(m?.disk_used ?? null, m?.disk_total ?? null)} detail={ratioText(m?.disk_used ?? null, m?.disk_total ?? null)} /></td>
                     <td className="machine-list-actions">{nodeActions(n)}</td>
                   </tr>
-                  <tr className="machine-address-row"><td colSpan={6}>
+                  <tr id={`${detailsPrefix}-${n.id}`} className="machine-address-row" hidden={!expandedDetails[n.id]}><td colSpan={6}>
                     <div className="machine-addresses">
                       <span className="machine-address"><span className="machine-address-label">SSH</span><code>{sshAddress}</code><CopyIconButton text={sshAddress} title="复制 SSH 地址" /></span>
                       {ipv6 && <span className="machine-address" title={v6Title(n)}><span className="machine-address-label">IPv6</span><code>{ipv6}</code><CopyIconButton text={ipv6} title="复制 IPv6 地址" />{n.ipv6_entry && <span className="tag">映射</span>}</span>}

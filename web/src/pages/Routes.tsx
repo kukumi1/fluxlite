@@ -6,7 +6,6 @@ import {
   type Node,
   type DailyTraffic,
   type Route,
-  type RouteHop,
   type RouteInput,
   type QuotaState,
   type RouteStatus,
@@ -126,30 +125,6 @@ function Link({ ms, at }: { ms: number | null; at: string | null }) {
       <span className={`lat ${stale ? "stale" : ""}`}>
         {ms}ms{stale && " ⚠"}
       </span>
-    </span>
-  );
-}
-
-// ChainTotal sums the legs. It is deliberately absent unless every leg has
-// been measured: a partial sum understates the chain and invites the wrong
-// conclusion about which link is slow.
-function ChainTotal({ hops }: { hops: RouteHop[] }) {
-  if (hops.length === 0 || hops.some((h) => h.latency_ms === null)) return null;
-  const total = hops.reduce((sum, h) => sum + (h.latency_ms ?? 0), 0);
-  const stale = hops.some((h) => {
-    const age = ageOf(h.latency_at);
-    return age !== null && age > staleAfterMs;
-  });
-  return (
-    <span
-      className={`lat total ${stale ? "stale" : ""}`}
-      title={
-        stale
-          ? "其中有链段已停止更新，合计不代表现状"
-          : "各段建连耗时之和，不是端到端实测往返"
-      }
-    >
-      合计 {total}ms{stale && " ⚠"}
     </span>
   );
 }
@@ -343,7 +318,6 @@ export function Routes() {
           );
         })}
         <span className="hop mono management-hop-target"><small className="management-hop-label">落地目标</small><span className="management-hop-address"><strong>{route.target}</strong><CopyIconButton text={route.target} title="复制落地地址" /></span></span>
-        <ChainTotal hops={route.hops} />
       </div>
     );
   }

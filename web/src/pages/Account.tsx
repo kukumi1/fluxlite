@@ -4,6 +4,8 @@ import { Banner } from "../components/Modal";
 import { PageHeader } from "../components/PageHeader";
 import { Upload } from "lucide-react";
 import { AVATAR_SIZE, toAvatarPNG } from "../lib/avatar";
+import { useTheme } from "../theme";
+import { normalizeGlassStrength } from "../lib/appearance";
 
 interface Props {
   onUsernameChanged: (name: string) => void;
@@ -51,10 +53,12 @@ export function Account({ onUsernameChanged, onAvatarChanged, onSignedOut }: Pro
 
   return (
     <>
-      <PageHeader title="个人中心" desc="账号、密码与登录保护。" />
+      <PageHeader title="个人中心" desc="外观偏好、账号与登录保护。" />
 
       {error && <Banner kind="err">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
+
+      <AppearanceCard />
 
       <AvatarCard
         username={me.username}
@@ -143,6 +147,48 @@ export function Account({ onUsernameChanged, onAvatarChanged, onSignedOut }: Pro
         </button>
       </div>
     </>
+  );
+}
+
+function AppearanceCard() {
+  const { appearance, updateAppearance, preferencesSaved } = useTheme();
+  const [strengthDraft, setStrengthDraft] = useState<string | null>(null);
+
+  function finishStrength() {
+    if (strengthDraft === null) return;
+    const value = strengthDraft.trim() === "" ? appearance.glassStrength : Number(strengthDraft);
+    updateAppearance({ glassStrength: normalizeGlassStrength(value) });
+    setStrengthDraft(null);
+  }
+
+  return (
+    <section className="card appearance-settings" aria-labelledby="appearance-title">
+      <div className="appearance-settings-heading">
+        <div><h2 id="appearance-title">外观设置</h2><p className="hint">即时生效并自动保存在当前浏览器，不同步到服务器或其他设备。</p></div>
+        <span className={`tag ${preferencesSaved ? "ok" : "warn"}`} role="status">{preferencesSaved ? "已保存到此浏览器" : "浏览器禁止保存，仅本次有效"}</span>
+      </div>
+      <div className="appearance-option">
+        <div><strong id="depth-label">轻微立体效果</strong><p id="depth-help">柔和阴影与边缘高光，让卡片更有层次，不增加晃动动画。</p></div>
+        <button type="button" role="switch" aria-checked={appearance.depth} aria-labelledby="depth-label" aria-describedby="depth-help" className={`toggle-switch ${appearance.depth ? "on" : ""}`} onClick={() => updateAppearance({ depth: !appearance.depth })}><span /></button>
+      </div>
+      <div className="appearance-option">
+        <div><strong id="glass-label">毛玻璃效果</strong><p id="glass-help">为面板与导航增加半透明模糊；关闭时保留清晰、低开销的实色背景。</p></div>
+        <button type="button" role="switch" aria-checked={appearance.glass} aria-labelledby="glass-label" aria-describedby="glass-help" className={`toggle-switch ${appearance.glass ? "on" : ""}`} onClick={() => updateAppearance({ glass: !appearance.glass })}><span /></button>
+      </div>
+      <div className={`appearance-strength ${appearance.glass ? "" : "is-disabled"}`}>
+        <label htmlFor="glass-strength-range">毛玻璃强度 <span className="muted">1–100</span></label>
+        <div className="appearance-strength-controls">
+          <input id="glass-strength-range" type="range" min="1" max="100" step="1" disabled={!appearance.glass} value={appearance.glassStrength} onChange={(event) => { setStrengthDraft(null); updateAppearance({ glassStrength: Number(event.target.value) }); }} />
+          <input aria-label="毛玻璃强度数值" type="number" min="1" max="100" step="1" disabled={!appearance.glass} value={strengthDraft ?? String(appearance.glassStrength)} onChange={(event) => {
+            const raw = event.target.value;
+            setStrengthDraft(raw);
+            const value = Number(raw);
+            if (raw !== "" && Number.isFinite(value) && value >= 1 && value <= 100) updateAppearance({ glassStrength: value });
+          }} onBlur={finishStrength} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); finishStrength(); } }} />
+        </div>
+        <p className="hint">{appearance.glass ? "强度越高，背景越通透、模糊越明显；不改变文字透明度。" : "开启毛玻璃后可调整强度，当前数值会保留。"}</p>
+      </div>
+    </section>
   );
 }
 

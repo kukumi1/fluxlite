@@ -1,56 +1,73 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import { glassPresentation, normalizeAppearance, parseAppearance, readPreference, writePreference } from "./lib/appearance";
+import type { Appearance } from "./lib/appearance";
 
 export type Theme = "light" | "dark";
-
 const STORAGE_KEY = "fluxlite-theme";
+const APPEARANCE_KEY = "fluxlite-appearance";
 
-function stored(): Theme | null {
-  const saved = localStorage.getItem(STORAGE_KEY);
+function storedTheme(): Theme | null {
+  const saved = readPreference(STORAGE_KEY);
   return saved === "light" || saved === "dark" ? saved : null;
+}
+
+function storedAppearance(): Appearance {
+  return parseAppearance(readPreference(APPEARANCE_KEY));
 }
 
 function preferred(): Theme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-function paint(theme: Theme) {
+function paintTheme(theme: Theme) {
   document.documentElement.classList.toggle("dark", theme === "dark");
 }
 
-/**
- * 在 React 挂载之前先把主题涂上。
- *
- * 交给 effect 去做会先按亮色渲染一帧，暗色用户每次刷新都要闪一下白屏。
- */
+function paintAppearance(appearance: Appearance) {
+  const root = document.documentElement;
+  const presentation = glassPresentation(appearance.glassStrength);
+  root.classList.toggle("appearance-depth", appearance.depth);
+  root.classList.toggle("appearance-glass", appearance.glass);
+  root.style.setProperty("--glass-blur", `${presentation.blur.toFixed(2)}px`);
+  root.style.setProperty("--glass-opacity", `${presentation.opacity.toFixed(2)}%`);
+}
+
+/** Paint before React mounts so saved appearance never flashes the default theme. */
 export function applyStoredTheme() {
-  paint(stored() ?? preferred());
+  paintTheme(storedTheme() ?? preferred());
+  paintAppearance(storedAppearance());
 }
 
 export interface ThemeState {
   theme: Theme;
   toggle: () => void;
+  appearance: Appearance;
+  updateAppearance: (changes: Partial<Appearance>) => void;
+  preferencesSaved: boolean;
 }
 
-/**
- * 主题只有一份，放在 context 里。
- *
- * 早先每个组件各自 useState 持有一份，读初值时它们碰巧一致，所以看不出问题；
- * 但切换只会更新点击方那一份，别的组件永远停在旧值。终端就是这么变成
- * 「面板已经暗了，它还是白的」——组件各持一份「当前主题」，本身就是错的。
- */
+// One provider owns appearance for all pages; switching tabs never resets it.
 const ThemeContext = createContext<ThemeState | null>(null);
 
 export function useThemeState(): ThemeState {
-  const [theme, setTheme] = useState<Theme>(() => stored() ?? preferred());
+  const [theme, setTheme] = useState<Theme>(() => storedTheme() ?? preferred());
+  const [appearance, setAppearance] = useState<Appearance>(storedAppearance);
+  const [preferencesSaved, setPreferencesSaved] = useState(true);
 
   useEffect(() => {
-    paint(theme);
-    localStorage.setItem(STORAGE_KEY, theme);
-  }, [theme]);
+    paintTheme(theme);
+    paintAppearance(appearance);
+    const themeSaved = writePreference(STORAGE_KEY, theme);
+    const appearanceSaved = writePreference(APPEARANCE_KEY, JSON.stringify(appearance));
+    setPreferencesSaved(themeSaved && appearanceSaved);
+  }, [theme, appearance]);
 
   return {
     theme,
-    toggle: () => setTheme((current) => (current === "dark" ? "light" : "dark")),
+    toggle: () => setTheme((current) => current === "dark" ? "light" : "dark"),
+    appearance,
+    updateAppearance: (changes) => setAppearance((current) => normalizeAppearance({ ...current, ...changes })),
+    preferencesSaved,
   };
 }
 
@@ -58,8 +75,6 @@ export const ThemeProvider = ThemeContext.Provider;
 
 export function useTheme(): ThemeState {
   const state = useContext(ThemeContext);
-  if (!state) {
-    throw new Error("useTheme 必须在 ThemeProvider 内使用");
-  }
+  if (!state) throw new Error("useTheme 必须在 ThemeProvider 内使用");
   return state;
 }

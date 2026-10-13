@@ -1,70 +1,68 @@
-/* 颜色一律用 oklch 而非 hex：下面到处在用 color-mix 掺色，sRGB 空间里掺出来会发灰，
-   oklch 的感知均匀性让掺色后仍保持原有明度关系。 */
+/* Theme tokens shared by the shell, management pages and charts. */
 :root {
-  --radius: 0.625rem;
-
-  --background: oklch(0.98 0.002 260);
-  --foreground: oklch(0.15 0.01 260);
-  --card: oklch(1 0 0);
-  --muted: oklch(0.94 0.008 260);
-  --muted-foreground: oklch(0.48 0.02 260);
-  --primary: oklch(0.18 0.012 260);
-  --primary-foreground: oklch(0.98 0 0);
-  --secondary: oklch(0.94 0.01 260);
-  --secondary-foreground: oklch(0.25 0.015 260);
-  --accent: oklch(0.94 0.01 260);
-  --border: oklch(0.88 0.01 260);
-  --ring: oklch(0.42 0.02 260);
-
-  --ok: oklch(0.56 0.14 165);
-  --warn: oklch(0.68 0.15 75);
-  --err: oklch(0.55 0.22 25);
-
-  --tint-1: oklch(0.56 0.12 170);
-  --tint-2: oklch(0.6 0.18 165);
-  --tint-3: oklch(0.6 0.16 300);
-  --tint-4: oklch(0.65 0.16 80);
-
-  --sidebar: oklch(0.97 0.003 260);
-  --sidebar-foreground: oklch(0.25 0.01 260);
-  --sidebar-accent: oklch(0.93 0.012 260);
-  --sidebar-border: oklch(0.88 0.01 260);
-
-  --panel-glow: 0 18px 60px color-mix(in oklch, var(--foreground) 9%, transparent);
-  --panel-border: color-mix(in oklch, var(--border) 42%, white 58%);
+  color-scheme: light;
+  --radius: 0.75rem;
+  --background: #f3f1f8;
+  --foreground: #282237;
+  --card: #ffffff;
+  --muted: #f2eff8;
+  --muted-foreground: #675e78;
+  --primary: #7154c2;
+  --primary-foreground: #ffffff;
+  --secondary: #f2eff8;
+  --secondary-foreground: #433654;
+  --accent: #eae4f6;
+  --border: #e0dbea;
+  --ring: #7154c2;
+  --ok: #16744e;
+  --warn: #996000;
+  --err: #bd3548;
+  --mint: #15977a;
+  --lavender: #9570d9;
+  --peach: #b9654d;
+  --sky: #397ebc;
+  --tint-1: var(--mint);
+  --tint-2: var(--sky);
+  --tint-3: var(--lavender);
+  --tint-4: var(--peach);
+  --sidebar: #fcfbff;
+  --sidebar-foreground: #433654;
+  --sidebar-accent: #eae4f6;
+  --sidebar-border: #e0dbea;
+  --panel-glow: 0 8px 28px #30204808;
+  --panel-border: var(--border);
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --text: var(--foreground);
+  --surface: var(--card);
 }
 
 .dark {
-  --background: oklch(0.13 0.01 260);
-  --foreground: oklch(0.93 0.005 260);
-  --card: oklch(0.17 0.012 260);
-  --muted: oklch(0.22 0.012 260);
-  --muted-foreground: oklch(0.6 0.02 260);
-  --primary: oklch(0.92 0.004 260);
-  --primary-foreground: oklch(0.14 0.01 260);
-  --secondary: oklch(0.22 0.015 260);
-  --secondary-foreground: oklch(0.85 0.005 260);
-  --accent: oklch(0.24 0.018 260);
-  --border: oklch(0.28 0.015 260);
-  --ring: oklch(0.74 0.02 260);
-
-  --ok: oklch(0.75 0.16 160);
-  --warn: oklch(0.78 0.15 80);
-  --err: oklch(0.68 0.19 25);
-
-  --tint-1: oklch(0.72 0.14 165);
-  --tint-2: oklch(0.75 0.2 155);
-  --tint-3: oklch(0.7 0.15 300);
-  --tint-4: oklch(0.72 0.18 45);
-
-  --sidebar: oklch(0.15 0.012 260);
-  --sidebar-foreground: oklch(0.85 0.005 260);
-  --sidebar-accent: oklch(0.22 0.018 260);
-  --sidebar-border: oklch(0.25 0.015 260);
-
-  --panel-glow: 0 18px 60px color-mix(in oklch, black 36%, transparent);
-  --panel-border: color-mix(in oklch, var(--border) 64%, white 18%);
+  color-scheme: dark;
+  --background: #17171f;
+  --foreground: #f3f0fb;
+  --card: #22232f;
+  --muted: #2a2b3b;
+  --muted-foreground: #b8b3c9;
+  --primary: #bea9ff;
+  --primary-foreground: #25173f;
+  --secondary: #2a2b3b;
+  --secondary-foreground: #ded9ed;
+  --accent: #343346;
+  --border: #38384a;
+  --ring: #bea9ff;
+  --ok: #78dfb1;
+  --warn: #efbd6c;
+  --err: #ff8e9e;
+  --mint: #78dfbf;
+  --lavender: #baa4f8;
+  --peach: #efa68f;
+  --sky: #8cbff2;
+  --sidebar: #1c1c26;
+  --sidebar-foreground: #ded9ed;
+  --sidebar-accent: #343046;
+  --sidebar-border: #38384a;
+  --panel-glow: 0 8px 28px #00000012;
+  --panel-border: var(--border);
 }
 
 * {
@@ -81,14 +79,8 @@ body {
   line-height: 1.6;
   background-color: var(--background);
   background-image:
-    radial-gradient(circle at 18% -10%, color-mix(in oklch, var(--tint-1) 16%, transparent) 0, transparent 34rem),
-    radial-gradient(circle at 92% 8%, color-mix(in oklch, var(--tint-2) 14%, transparent) 0, transparent 30rem),
-    linear-gradient(
-      135deg,
-      color-mix(in oklch, var(--background) 90%, white 10%) 0%,
-      var(--background) 48%,
-      color-mix(in oklch, var(--background) 88%, var(--tint-4) 12%) 100%
-    );
+    radial-gradient(ellipse at 88% 4%, color-mix(in srgb, var(--lavender) 8%, transparent), transparent 45%),
+    radial-gradient(ellipse at 42% 88%, color-mix(in srgb, var(--mint) 4%, transparent), transparent 40%);
   background-attachment: fixed;
 }
 
@@ -407,33 +399,9 @@ h2 {
   border: 1px solid var(--panel-border);
   border-radius: var(--radius);
   color: var(--foreground);
-  background-image: linear-gradient(
-    145deg,
-    color-mix(in oklch, var(--card) 70%, white 30%) 0%,
-    color-mix(in oklch, var(--card) 62%, transparent) 54%,
-    color-mix(in oklch, var(--card) 72%, var(--tint-2) 8%) 100%
-  );
-  box-shadow:
-    inset 0 1px 0 color-mix(in oklch, white 72%, transparent),
-    inset 0 -1px 0 color-mix(in oklch, var(--foreground) 5%, transparent),
-    var(--panel-glow);
-  backdrop-filter: blur(28px) saturate(1.55);
-  -webkit-backdrop-filter: blur(28px) saturate(1.55);
-  transition: border-color 300ms var(--ease-out), box-shadow 300ms var(--ease-out),
-    transform 300ms var(--ease-out);
-}
-
-.dark .card {
-  background-image: linear-gradient(
-    145deg,
-    color-mix(in oklch, var(--card) 72%, white 8%) 0%,
-    color-mix(in oklch, var(--card) 64%, transparent) 54%,
-    color-mix(in oklch, var(--card) 78%, var(--tint-3) 10%) 100%
-  );
-  box-shadow:
-    inset 0 1px 0 color-mix(in oklch, white 18%, transparent),
-    inset 0 -1px 0 color-mix(in oklch, black 22%, transparent),
-    var(--panel-glow);
+  background: var(--card);
+  box-shadow: var(--panel-glow);
+  transition: border-color 180ms var(--ease-out), transform 180ms var(--ease-out);
 }
 
 .card.flush {
@@ -1830,4 +1798,94 @@ tbody tr:last-child td {
 
 @media (min-width: 801px) and (max-width: 1100px) {
   .singbox-stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* ===== Application shell ===== */
+.app { display: flex; flex-direction: row; }
+.sidebar { position: fixed; inset: 0 auto 0 0; width: 224px; height: 100dvh; z-index: 35; padding: 26px 16px 18px; background: var(--sidebar); border-right: 1px solid var(--sidebar-border); border-bottom: 0; backdrop-filter: none; overflow-y: auto; transition: width 180ms var(--ease-out), transform 180ms var(--ease-out); }
+.sidebar-head { padding: 0 10px 22px; }
+.brand { font-size: 25px; gap: 9px; letter-spacing: -1px; }
+.brand-mark { width: 32px; height: 36px; color: #342249; background: linear-gradient(145deg,#d1b6ff,#9e81e4); border-radius: 10px; }
+.brand-dot { color: var(--primary); }
+.workspace-label { display: flex; align-items: center; gap: 10px; padding: 15px 9px; margin: 5px 0 17px; border-block: 1px solid var(--border); }
+.workspace-mark { display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 32px; border: 1px solid var(--border); border-radius: 8px; background: var(--muted); color: var(--lavender); }
+.workspace-copy strong { display: block; font-size: 12px; font-weight: 600; }
+.workspace-copy small { display: block; font-size: 10px; color: var(--muted-foreground); margin-top: 3px; }
+.sidebar-group-label { padding: 12px 11px 9px; font-size: 10px; letter-spacing: 1px; font-weight: 500; }
+.nav { display: grid; gap: 5px; }
+.nav button { padding: 12px; font-size: 13px; gap: 12px; position: relative; }
+.nav button.active { color: var(--primary); background: color-mix(in srgb,var(--primary) 13%,transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--primary) 8%,transparent); }
+.nav button.active::before { content: ""; position: absolute; left: -16px; height: 23px; width: 3px; border-radius: 0 3px 3px 0; background: var(--primary); }
+.nav-icon { width: 18px; height: 18px; }
+.sidebar-footer { padding-top: 24px; }
+.account-link { background: transparent; border-color: transparent; }
+.account-link .avatar { background: color-mix(in srgb,var(--lavender) 22%,var(--card)); color: var(--foreground); border: 1px solid color-mix(in srgb,var(--lavender) 40%,transparent); }
+.main { padding: 0; margin-left: 224px; width: calc(100% - 224px); animation: none; transition: margin-left 180ms var(--ease-out); }
+.main-inner { max-width: 1760px; margin-inline: auto; padding: 30px 36px 48px; }
+.topbar { height: 76px; border-bottom: 1px solid var(--border); padding: 0 36px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.breadcrumb, .topbar-actions { display: flex; align-items: center; gap: 16px; color: var(--muted-foreground); font-size: 12px; }
+.breadcrumb strong { color: var(--foreground); font-weight: 500; }
+.topbar-profile { border: 0; background: transparent; color: var(--foreground); display: flex; align-items: center; gap: 10px; cursor: pointer; font: inherit; font-size: 12px; padding: 4px; border-radius: 8px; }
+.topbar-profile > img, .topbar-profile > span:first-child { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: color-mix(in srgb,var(--lavender) 20%,var(--card)); object-fit: cover; }
+.topbar-username { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.mobile-menu, .mobile-close, .sidebar-scrim { display: none; }
+.sidebar-collapsed .sidebar { width: 78px; padding-inline: 12px; }
+.sidebar-collapsed .main { margin-left: 78px; width: calc(100% - 78px); }
+.sidebar-collapsed .brand-name, .sidebar-collapsed .workspace-copy, .sidebar-collapsed .sidebar-group-label, .sidebar-collapsed .nav-label-text, .sidebar-collapsed .account-meta { display: none; }
+.sidebar-collapsed .sidebar-head { padding-inline: 10px; }
+.sidebar-collapsed .workspace-label, .sidebar-collapsed .nav button { justify-content: center; }
+.sidebar-collapsed .nav button.active::before { left: -12px; }
+.sidebar-collapsed .sidebar-footer > .row { flex-direction: column; }
+.sidebar-collapsed .account-link { padding: 8px; justify-content: center; }
+.sidebar-collapsed .nav + .sidebar-group-label + .nav { margin-top: 22px; }
+.page-header { margin-bottom: 26px; }
+.page-header h1 { font-size: 27px; font-weight: 600; }
+.page-desc { font-size: 12px; margin-top: 7px; }
+.btn { border-radius: 8px; }
+.btn.primary { box-shadow: 0 4px 18px color-mix(in srgb,var(--primary) 10%,transparent); }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.toggle-switch.on { background: var(--primary); }
+.toggle-switch.on span { background: var(--primary-foreground); }
+.node-load { background: var(--card); }
+.node-load:nth-child(4n+1) { border-top: 2px solid var(--mint); }
+.node-load:nth-child(4n+2) { border-top: 2px solid var(--lavender); }
+.node-load:nth-child(4n+3) { border-top: 2px solid var(--peach); }
+.node-load:nth-child(4n+4) { border-top: 2px solid var(--sky); }
+
+/* Native drawers provide browser-managed focus containment and restoration. */
+.drawer { position: fixed; inset: 0 0 0 auto; margin: 0; width: min(640px,100vw); max-width: 100vw; height: 100dvh; max-height: 100dvh; padding: 0; border: 0; border-left: 1px solid var(--border); color: var(--foreground); background: var(--card); box-shadow: -16px 0 60px #0003; overflow-y: auto; }
+.drawer::backdrop { background: #10101999; backdrop-filter: blur(4px); }
+.drawer[open] { animation: drawer-enter 180ms var(--ease-out); }
+.drawer-heading { position: sticky; top: 0; z-index: 1; padding: 25px 26px 20px; display: flex; align-items: center; justify-content: space-between; gap: 14px; background: var(--card); border-bottom: 1px solid var(--border); }
+.drawer-heading h2 { font-size: 20px; margin: 6px 0 0; font-weight: 600; }
+.drawer-eyebrow { font-size: 9px; letter-spacing: 1.5px; color: var(--muted-foreground); }
+.drawer-content { padding: 24px 26px 36px; }
+.drawer-content > form { margin: 0; }
+@keyframes drawer-enter { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@media (max-width: 1150px) {
+  .main-inner { padding: 28px 24px 40px; }
+  .topbar { padding-inline: 24px; }
+}
+@media (max-width: 860px) {
+  .sidebar, .sidebar-collapsed .sidebar { width: 224px; transform: translateX(-100%); padding-inline: 16px; visibility: hidden; }
+  .main, .sidebar-collapsed .main { margin-left: 0; width: 100%; padding: 0; }
+  .mobile-open .sidebar { transform: translateX(0); visibility: visible; }
+  .mobile-open .sidebar-scrim { display: block; position: fixed; inset: 0; border: 0; z-index: 34; background: #0008; }
+  .mobile-menu, .mobile-close { display: inline-flex; }
+  .desktop-collapse { display: none; }
+  .sidebar-collapsed .brand-name, .sidebar-collapsed .workspace-copy, .sidebar-collapsed .sidebar-group-label, .sidebar-collapsed .nav-label-text, .sidebar-collapsed .account-meta { display: block; }
+  .sidebar-collapsed .workspace-label, .sidebar-collapsed .nav button { justify-content: flex-start; }
+  .sidebar-collapsed .sidebar-footer > .row { flex-direction: row; }
+  .sidebar-collapsed .account-link { justify-content: flex-start; }
+  .sidebar-collapsed .nav button.active::before { left: -16px; }
+  .topbar { height: 64px; padding-inline: 18px; }
+  .main-inner { padding: 25px 18px 36px; }
+  .topbar-username { display: none; }
+  .breadcrumb, .topbar-actions { gap: 12px; }
+}
+@media (max-width: 440px) {
+  .breadcrumb-root { display: none; }
+  .drawer-content { padding: 20px 18px 28px; }
+  .drawer-heading { padding: 20px 18px 16px; }
+  .page-header h1 { font-size: 24px; }
 }

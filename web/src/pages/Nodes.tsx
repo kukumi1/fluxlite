@@ -17,6 +17,7 @@ import {
   List,
   Plus,
   Rows3,
+  Search,
   Server,
   TerminalSquare,
 } from "lucide-react";
@@ -30,6 +31,8 @@ import { useConfirm } from "../components/ConfirmDialog";
 import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
+import { Drawer } from "../components/Drawer";
+import "./management-redesign.css";
 import { EnrollDialog } from "./EnrollDialog";
 import { ReinstallDialog } from "./ReinstallDialog";
 
@@ -111,6 +114,8 @@ function uninstallCommand(): string {
 }
 
 export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => void }) {
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [nodes, setNodes] = useState<Node[]>([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -256,10 +261,12 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
     }
   }
 
+  const shownNodes = nodes.filter((node) => `${node.name} ${node.host} ${node.os_id} ${node.arch}`.toLowerCase().includes(search.trim().toLowerCase()) && (statusFilter === "all" || node.status === statusFilter));
+
   return (
-    <div>
+    <div className="management-page machines-management">
       <PageHeader
-        title="节点"
+        title="机器"
         desc="转发链路的组成机器。内网节点需指定跳板，NAT 机器需按实际映射填写端口池。"
         actions={
           <>
@@ -295,6 +302,12 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
       {error && <Banner kind="err">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
 
+      <div className="management-toolbar">
+        <label className="management-search"><Search size={16} /><input aria-label="搜索机器" placeholder="搜索机器名称、地址或系统…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+        <select aria-label="筛选机器状态" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">全部状态</option><option value="online">在线</option><option value="offline">离线</option><option value="unknown">未知</option></select>
+        <span className="management-result-count">{shownNodes.length} / {nodes.length} 台机器</span>
+      </div>
+      {nodes.length > 0 && shownNodes.length === 0 && <Card><p className="muted">没有符合筛选条件的机器。</p></Card>}
       {nodes.length === 0 ? (
         <Card>
           <EmptyState
@@ -329,7 +342,7 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
                 </tr>
               </thead>
               <tbody>
-                {nodes.map((n) => {
+                {shownNodes.map((n) => {
                   const m = metrics[n.id];
                   return (
                     <tr key={n.id}>
@@ -372,7 +385,7 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
         </Card>
       ) : (
         <div className={`node-grid${view === "compact" ? " dense" : ""}`}>
-          {nodes.map((n, cardIndex) => {
+          {shownNodes.map((n, cardIndex) => {
             const m = metrics[n.id];
             const caveat = memCaveat(m);
             return (
@@ -616,12 +629,14 @@ function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
       : emptyInput,
   );
   const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState("");
 
   const set = <K extends keyof NodeInput>(key: K, value: NodeInput[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    setFormError("");
     setBusy(true);
     try {
       if (node) {
@@ -632,13 +647,15 @@ function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
         await onSaved(`节点 ${form.name} 已添加，请执行探测`);
       }
     } catch (err) {
+      setFormError(err instanceof Error ? err.message : "请求失败");
       onError(err);
       setBusy(false);
     }
   }
 
   return (
-    <Modal title={node ? `编辑节点 · ${node.name}` : "添加节点"} onClose={onClose}>
+    <Drawer title={node ? `编辑机器 · ${node.name}` : "添加机器"} onClose={onClose}>
+      {formError && <Banner kind="err">{formError}</Banner>}
       <form onSubmit={submit}>
         <label>
           名称
@@ -773,6 +790,6 @@ function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
           </button>
         </div>
       </form>
-    </Modal>
+    </Drawer>
   );
 }

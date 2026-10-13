@@ -15,7 +15,7 @@ import {
   ipv6DialAddress,
   ipv6Reachable,
 } from "../api";
-import { ArrowDown, ArrowUp, LayoutGrid, List, Plus, Rows3, Waypoints } from "lucide-react";
+import { ArrowDown, ArrowUp, LayoutGrid, List, Plus, Rows3, Search, Waypoints } from "lucide-react";
 import { Banner, Modal } from "../components/Modal";
 import { useConfirm } from "../components/ConfirmDialog";
 import { Card } from "../components/Card";
@@ -23,6 +23,8 @@ import { CopyIconButton } from "../components/CopyButton";
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatCard } from "../components/StatCard";
+import { Drawer } from "../components/Drawer";
+import "./management-redesign.css";
 import { ageOf, describeAge, formatBytes, staleAfterMs } from "../lib/format";
 
 type ViewMode = "card" | "compact" | "list";
@@ -206,6 +208,8 @@ function QuotaBar({ route, state }: { route: Route; state: QuotaState | undefine
 }
 
 export function Routes() {
+  const [search, setSearch] = useState("");
+  const [enabledFilter, setEnabledFilter] = useState("all");
   const [routes, setRoutes] = useState<Route[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [statuses, setStatuses] = useState<RouteStatus[]>([]);
@@ -317,19 +321,20 @@ export function Routes() {
 
   function chainOf(route: Route) {
     return (
-      <div className="chain">
-        {route.hops.map((hop) => {
+      <div className="chain management-chain">
+        {route.hops.map((hop, index) => {
           const state = hopState(route.id, hop.hop_order);
           return (
-            <span key={hop.hop_order} className="chain">
+            <span key={hop.hop_order} className="chain management-chain-leg">
               <span
                 className={`hop ${state.kind === "down" ? "down" : ""} ${
                   state.kind === "stale" ? "unsure" : ""
                 }`}
                 title={hopStateHint(state)}
               >
-                {nodeName(hop.node_id)}
-                <span className="muted"> :{hop.relay_port}</span>
+                <small className="management-hop-label">{index === 0 ? "入口机器" : `中继 ${index}`}</small>
+                <strong>{nodeName(hop.node_id)}</strong>
+                <span className="muted">端口 {hop.relay_port}</span>
                 {state.kind === "down" && <span className="muted"> ✕</span>}
                 {state.kind === "stale" && <span className="muted"> ⚠</span>}
               </span>
@@ -337,7 +342,7 @@ export function Routes() {
             </span>
           );
         })}
-        <span className="hop mono">{route.target}</span>
+        <span className="hop mono management-hop-target"><small className="management-hop-label">落地目标</small><strong>{route.target}</strong></span>
         <ChainTotal hops={route.hops} />
       </div>
     );
@@ -456,13 +461,14 @@ export function Routes() {
 
   // 汇总只统计当前这一族的链路。把两族加在一起，数字既不对应你正在看的列表，
   // 也不对应任何一条真实账单。
-  const shown = routes.filter((r) => (family === "v6" ? r.listen_ipv6 : !r.listen_ipv6));
+  const familyRoutes = routes.filter((r) => (family === "v6" ? r.listen_ipv6 : !r.listen_ipv6));
+  const shown = familyRoutes.filter((route) => `${route.name} ${route.target} ${route.protocol} ${route.hops.map((hop) => nodeName(hop.node_id)).join(" ")}`.toLowerCase().includes(search.trim().toLowerCase()) && (enabledFilter === "all" || route.enabled === (enabledFilter === "enabled")));
   const counted = shown.map((r) => traffic[r.id]).filter((t): t is Traffic => !!t);
   const totalIn = counted.reduce((sum, t) => sum + t.bytes_in, 0);
   const totalOut = counted.reduce((sum, t) => sum + t.bytes_out, 0);
 
   return (
-    <div>
+    <div className="management-page routes-management">
       <PageHeader
         title="链路"
         titleAside={
@@ -516,6 +522,11 @@ export function Routes() {
       {warning && <Banner kind="warn">{warning}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
 
+      <div className="management-toolbar">
+        <label className="management-search"><Search size={16} /><input aria-label="搜索链路" placeholder="搜索链路、机器或落地地址…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+        <select aria-label="筛选链路" value={enabledFilter} onChange={(event) => setEnabledFilter(event.target.value)}><option value="all">全部链路</option><option value="enabled">已启用</option><option value="disabled">已停用</option></select>
+        <span className="management-result-count">{shown.length} / {familyRoutes.length} 条链路</span>
+      </div>
       {shown.length > 0 && (
         <div className="stat-grid">
           <StatCard
@@ -548,9 +559,9 @@ export function Routes() {
         <Card>
           <EmptyState
             icon={<Waypoints size={22} />}
-            title={routes.length === 0 ? "还没有链路" : family === "v6" ? "还没有 IPv6 链路" : "还没有 IPv4 链路"}
+            title={familyRoutes.length > 0 ? "没有符合筛选条件的链路" : routes.length === 0 ? "还没有链路" : family === "v6" ? "还没有 IPv6 链路" : "还没有 IPv4 链路"}
             desc={
-              routes.length === 0
+              familyRoutes.length > 0 ? "试试其他搜索关键词或状态。" : routes.length === 0
                 ? "先在节点页添加并探测节点，再来建第一条转发链路。"
                 : family === "v6"
                   ? "新建链路时勾选「入口监听 IPv6」，或编辑已有链路打开它。首跳节点需要有全局 IPv6 地址。"
@@ -868,6 +879,7 @@ function RouteForm({ nodes, route, family, onClose, onSaved, onError }: RouteFor
   // 新建时跟随标签页：在 IPv6 页面建的就是 IPv6 链路。编辑时以链路自己的值为准。
   const [listenIPv6, setListenIPv6] = useState(route?.listen_ipv6 ?? family === "v6");
   const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState("");
 
   const usable = nodes.filter((n) => n.arch !== "");
   // 只有首跳会绑 [::]：后面的跳点是被上一跳按节点的 v4 地址拨过去的。
@@ -894,6 +906,7 @@ function RouteForm({ nodes, route, family, onClose, onSaved, onError }: RouteFor
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    setFormError("");
     setBusy(true);
     const input: RouteInput = {
       name,
@@ -928,16 +941,18 @@ function RouteForm({ nodes, route, family, onClose, onSaved, onError }: RouteFor
         await onSaved(`链路 ${name} 已创建，请执行下发`);
       }
     } catch (err) {
+      setFormError(err instanceof Error ? err.message : "请求失败");
       onError(err);
       setBusy(false);
     }
   }
 
   return (
-    <Modal
+    <Drawer
       title={route ? `编辑链路 · ${route.name}` : family === "v6" ? "新建 IPv6 链路" : "新建 IPv4 链路"}
       onClose={onClose}
     >
+      {formError && <Banner kind="err">{formError}</Banner>}
       <form onSubmit={submit}>
         <label>
           名称
@@ -1141,6 +1156,6 @@ function RouteForm({ nodes, route, family, onClose, onSaved, onError }: RouteFor
           </button>
         </div>
       </form>
-    </Modal>
+    </Drawer>
   );
 }

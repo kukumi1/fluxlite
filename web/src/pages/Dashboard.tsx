@@ -3,6 +3,7 @@ import {
   ArrowDown,
   ArrowUp,
   CircleCheck,
+  ArrowRight,
   Server,
   TriangleAlert,
   Waypoints,
@@ -26,6 +27,7 @@ import { TrafficTrend } from "../components/TrafficTrend";
 import { Banner } from "../components/Modal";
 import { describeAge, formatBytes, isStale, ageOf, percentOf } from "../lib/format";
 import { memCaveat } from "../lib/metrics";
+import "./dashboard-redesign.css";
 
 const RANK_LIMIT = 6;
 
@@ -66,7 +68,7 @@ function collectIssues(
     if (node.status === "offline") {
       issues.push({
         tone: "err",
-        text: `节点 ${node.name} 离线`,
+        text: `机器 ${node.name} 离线`,
         hint: node.last_seen ? `最后一次连通：${node.last_seen}` : "从未连通过",
       });
     }
@@ -236,211 +238,98 @@ export function Dashboard({ onNavigate }: Props) {
   }
 
   return (
-    <>
-      <PageHeader title="仪表盘" desc="全部链路与节点的当前状况。" />
-
+    <div className="dashboard-redesign">
+      <PageHeader
+        title="仪表盘"
+        desc="掌握机器资源、链路流量与运行状态。"
+        actions={<button className="btn" onClick={() => onNavigate("routes")}>管理链路 <ArrowRight size={15} /></button>}
+      />
       {error && <Banner kind="err">{error}</Banner>}
 
-      <div className="stat-grid">
-        <StatCard
-          index={0}
-          label="转发链路"
-          value={String(routes.length)}
-          sub={`${enabled} 条已启用`}
-          icon={<Waypoints size={17} />}
-        />
-        <StatCard
-          index={1}
-          label="节点"
-          value={nodes.length === 0 ? null : `${online} / ${nodes.length}`}
-          sub={offline === 0 ? "全部在线" : `${offline} 台离线`}
-          icon={<Server size={17} />}
-          tone="cool"
-        />
-        <StatCard
-          index={2}
-          label="累计流量"
-          value={entries.length === 0 ? null : formatBytes(totalIn + totalOut)}
-          sub={
-            entries.length === 0 ? (
-              "还没有任何计数"
-            ) : (
-              <span className="row" style={{ gap: 10 }}>
-                <span>
-                  <ArrowDown size={11} /> {formatBytes(totalIn)}
-                </span>
-                <span>
-                  <ArrowUp size={11} /> {formatBytes(totalOut)}
-                </span>
-              </span>
-            )
-          }
-          icon={<ArrowDown size={17} />}
-          tone="warm"
-        />
+      <div className="dashboard-kpis">
+        <StatCard index={0} label="累计转发流量" value={entries.length === 0 ? null : formatBytes(totalIn + totalOut)}
+          sub={entries.length === 0 ? "等待首次流量计数" : <span className="dashboard-directions"><span><ArrowDown size={12} /> {formatBytes(totalIn)}</span><span><ArrowUp size={12} /> {formatBytes(totalOut)}</span></span>}
+          icon={<ArrowDown size={19} />} />
+        <StatCard index={1} label="机器在线" value={nodes.length === 0 ? null : `${online} / ${nodes.length}`}
+          sub={nodes.length === 0 ? "尚未添加机器" : `${offline} 台离线 · ${nodes.length - online - offline} 台状态未知`}
+          icon={<Server size={19} />} />
+        <StatCard index={2} label="已启用链路" value={`${enabled} / ${routes.length}`}
+          sub="启用状态不代表实际连接状态" icon={<Waypoints size={19} />} />
+        <StatCard index={3} label="待关注事项" value={String(issues.length)}
+          sub={issues.length ? "检查离线、流量额度与采样异常" : "当前已采集数据未发现异常"}
+          icon={<TriangleAlert size={19} />} />
       </div>
 
-      {routes.length === 0 ? (
-        <Card>
-          <EmptyState
-            icon={<Waypoints size={22} />}
-            title="还没有链路"
-            desc="先在节点页添加并探测节点，再回来建第一条转发链路。"
-            action={
-              <button className="btn primary" onClick={() => onNavigate("nodes")}>
-                去添加节点
-              </button>
-            }
-          />
-        </Card>
-      ) : (
-        <Card>
-          <div className="spread">
-            <h2 style={{ margin: 0 }}>需要注意</h2>
-            {issues.length > 0 && (
-              <button className="btn sm" onClick={() => onNavigate("routes")}>
-                去链路页处理
-              </button>
-            )}
-          </div>
-          {issues.length === 0 ? (
-            <div className="row muted" style={{ gap: 8 }}>
-              <CircleCheck size={16} style={{ color: "var(--ok)" }} />
-              没有发现异常。注意：这只覆盖面板测得到的部分。
-            </div>
+      <div className="dashboard-columns">
+        <div className="dashboard-main-column">
+          {routes.length === 0 ? (
+            <Card>
+              <EmptyState icon={<Waypoints size={22} />} title="还没有链路"
+                desc="先添加并探测机器，再创建第一条转发链路。"
+                action={<button className="btn primary" onClick={() => onNavigate("nodes")}>去添加机器</button>} />
+            </Card>
           ) : (
-            <ul className="checks">
-              {issues.map((issue, i) => (
-                <li key={i}>
-                  <div className="row" style={{ gap: 8, alignItems: "flex-start" }}>
-                    <TriangleAlert
-                      size={15}
-                      style={{
-                        color: issue.tone === "err" ? "var(--err)" : "var(--warn)",
-                        flexShrink: 0,
-                        marginTop: 3,
-                      }}
-                    />
-                    <div>
-                      <div>{issue.text}</div>
-                      {issue.hint && (
-                        <div className="muted" style={{ fontSize: 12 }}>
-                          {issue.hint}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <Card className="dashboard-traffic"><TrafficTrend days={daily} /></Card>
           )}
-        </Card>
-      )}
 
-      {routes.length > 0 && (
-        <div className="dash-grid">
-          <Card>
-            <TrafficTrend days={daily} />
-          </Card>
-
-          <Card>
+          <Card className="dashboard-machines">
             <div className="spread">
-              <h2 style={{ margin: 0 }}>流量排行</h2>
-              <span className="muted" style={{ fontSize: 12 }}>累计 · 入+出</span>
+              <div><h2>机器资源</h2><p className="dashboard-caption">{metricsError ? "指标更新失败，暂显示上次采集结果" : "资源使用概况 · 每 5 秒刷新指标"}</p></div>
+              <button className="btn sm" onClick={() => onNavigate("nodes")}>全部机器 <ArrowRight size={14} /></button>
             </div>
-            {rankTop.length === 0 ? (
-              <p className="muted" style={{ marginTop: 12 }}>还没有任何链路记到数。</p>
-            ) : (
-              <ul className="rank-list">
-                {rankTop.map(({ route, t, total }) => (
-                  <li key={route.id}>
-                    <button
-                      className="rank-item"
-                      title={`入 ${formatBytes(t.bytes_in)} · 出 ${formatBytes(t.bytes_out)}`}
-                      onClick={() => onNavigate("routes")}
-                    >
-                      <div className="rank-head">
-                        <span className="rank-name">
-                          {route.name}
-                          {route.listen_ipv6 && (
-                            <span className="tag" style={{ marginLeft: 6 }}>
-                              IPv6
-                            </span>
-                          )}
-                        </span>
-                        <span className="rank-value">{formatBytes(total)}</span>
-                      </div>
-                      <div className="rank-track">
-                        <div
-                          className="rank-fill"
-                          style={{ width: `${rankMax > 0 ? (total / rankMax) * 100 : 0}%` }}
-                        />
-                      </div>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {(ranked.length > RANK_LIMIT || uncounted > 0) && (
-              <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
-                {ranked.length > RANK_LIMIT && `另有 ${ranked.length - RANK_LIMIT} 条未列出。`}
-                {uncounted > 0 && `${uncounted} 条没有计数，不参与排行。`}
-              </p>
+            {nodes.length === 0 ? <p className="muted">尚未添加机器。</p> : (
+              <div className="dashboard-machine-scroll">
+                <table className="dashboard-machine-table">
+                  <thead><tr><th>机器 / 最近采集</th><th>状态</th><th>CPU</th><th>内存</th><th>磁盘</th></tr></thead>
+                  <tbody>{nodes.map((n) => {
+                    const m = metrics[n.id];
+                    const caveat = memCaveat(m);
+                    return <tr key={n.id}>
+                      <td><div className="dashboard-machine-name"><span className="dashboard-machine-icon"><Server size={16} /></span><div><strong>{n.name}</strong><small>{metricAgeLabel(m)}</small></div></div></td>
+                      <td><span className={`tag ${n.status === "online" ? "ok" : n.status === "offline" ? "err" : ""}`}>{n.status === "online" ? "在线" : n.status === "offline" ? "离线" : "未知"}</span></td>
+                      <td><MetricBar label="CPU" percent={m?.cpu_percent ?? null} caveat={caveat} /></td>
+                      <td><MetricBar label="内存" percent={percentOf(m?.mem_used ?? null, m?.mem_total ?? null)} detail={m?.mem_total ? formatBytes(m.mem_total) : undefined} caveat={caveat} /></td>
+                      <td><MetricBar label="磁盘" percent={percentOf(m?.disk_used ?? null, m?.disk_total ?? null)} detail={m?.disk_total ? formatBytes(m.disk_total) : undefined} /></td>
+                    </tr>;
+                  })}</tbody>
+                </table>
+              </div>
             )}
           </Card>
-        </div>
-      )}
 
-      {nodes.length > 0 && (
-        <Card>
-          <div className="spread">
-            <div>
-              <h2 style={{ margin: 0 }}>节点负载</h2>
-              <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
-                {metricsError ? "指标更新失败，暂显示上次采集结果" : "每 5 秒刷新一次"}
-              </p>
+          {routes.length > 0 && <Card className="dashboard-ranking">
+            <div className="spread"><h2>流量排行</h2><span className="dashboard-caption">累计 · 入站 + 出站</span></div>
+            {rankTop.length === 0 ? <p className="muted">还没有任何链路记到数。</p> : (
+              <ul className="rank-list">{rankTop.map(({ route, t, total }, index) => (
+                <li key={route.id}><button className="rank-item" title={`入 ${formatBytes(t.bytes_in)} · 出 ${formatBytes(t.bytes_out)}`} onClick={() => onNavigate("routes")}>
+                  <div className="rank-head"><span className="rank-name"><span className="dashboard-rank-number">{String(index + 1).padStart(2, "0")}</span>{route.name}{route.listen_ipv6 && <span className="tag">IPv6</span>}</span><span className="rank-value">{formatBytes(total)}</span></div>
+                  <div className="rank-track"><div className="rank-fill" style={{ width: `${rankMax > 0 ? (total / rankMax) * 100 : 0}%` }} /></div>
+                </button></li>
+              ))}</ul>
+            )}
+            {(ranked.length > RANK_LIMIT || uncounted > 0) && <p className="dashboard-caption">{ranked.length > RANK_LIMIT && `另有 ${ranked.length - RANK_LIMIT} 条未列出。`}{uncounted > 0 && `${uncounted} 条没有计数，不参与排行。`}</p>}
+          </Card>}
+        </div>
+
+        <aside className="dashboard-side-column" aria-label="运行概况与待关注事项">
+          <Card className="dashboard-health">
+            <div className="spread"><h2>运行概况</h2><Server size={17} /></div>
+            <div className="dashboard-health-gauge">
+              <svg viewBox="0 0 160 140" aria-hidden="true"><path d="M 24 118 A 66 66 0 1 1 136 118" fill="none" stroke="var(--border)" strokeWidth="8" strokeLinecap="round" />{nodes.length > 0 && online > 0 && <path d="M 24 118 A 66 66 0 1 1 136 118" fill="none" stroke="var(--ok)" strokeWidth="8" strokeLinecap="round" pathLength="100" strokeDasharray={`${online / nodes.length * 100} 100`} />}</svg>
+              <div><strong>{nodes.length ? online : "—"}<small> / {nodes.length}</small></strong><span>机器连接正常</span></div>
             </div>
-            <button className="btn sm" onClick={() => onNavigate("nodes")}>
-              去节点页
-            </button>
-          </div>
-          <div className="node-load-grid">
-            {nodes.map((n) => {
-              const m = metrics[n.id];
-              const caveat = memCaveat(m);
-              return (
-                <div className="node-load" key={n.id}>
-                  <div className="spread" style={{ marginBottom: 8 }}>
-                    <div>
-                      <strong>{n.name}</strong>
-                      <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>
-                        {metricAgeLabel(m)}
-                      </div>
-                    </div>
-                    <span
-                      className={`tag ${n.status === "online" ? "ok" : n.status === "offline" ? "err" : ""}`}
-                    >
-                      {n.status === "online" ? "在线" : n.status === "offline" ? "离线" : "未知"}
-                    </span>
-                  </div>
-                  <MetricBar label="CPU" percent={m?.cpu_percent ?? null} caveat={caveat} />
-                  <MetricBar
-                    label="内存"
-                    percent={percentOf(m?.mem_used ?? null, m?.mem_total ?? null)}
-                    detail={m?.mem_total ? formatBytes(m.mem_total) : undefined}
-                    caveat={caveat}
-                  />
-                  <MetricBar
-                    label="磁盘"
-                    percent={percentOf(m?.disk_used ?? null, m?.disk_total ?? null)}
-                    detail={m?.disk_total ? formatBytes(m.disk_total) : undefined}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        </Card>
-      )}
-    </>
+            <div className="dashboard-health-counts"><div><strong>{enabled}</strong><span>启用链路</span></div><div><strong>{offline}</strong><span>离线机器</span></div><div><strong>{nodes.length - online - offline}</strong><span>状态未知</span></div></div>
+            <p className="dashboard-health-note">机器连通与节点客户端在线是不同状态；此处不代表活跃客户端数量。</p>
+          </Card>
+
+          <Card className="dashboard-attention">
+            <div className="spread"><h2>需要注意</h2><span className="tag">{issues.length}</span></div>
+            {issues.length === 0 ? <div className="dashboard-clear"><CircleCheck size={23} /><strong>暂未发现异常</strong><p>仅覆盖当前面板能够采集的数据，不代表未采集部分正常。</p></div> : (
+              <><ul className="dashboard-issues">{issues.map((issue, i) => <li key={i} className={issue.tone}><TriangleAlert size={15} /><div><strong>{issue.text}</strong>{issue.hint && <p>{issue.hint}</p>}</div></li>)}</ul><button className="btn sm" onClick={() => onNavigate("routes")}>去链路页处理 <ArrowRight size={14} /></button></>
+            )}
+          </Card>
+        </aside>
+      </div>
+    </div>
   );
 }

@@ -21,7 +21,7 @@ import {
   Server,
   TerminalSquare,
 } from "lucide-react";
-import { CopyButton } from "../components/CopyButton";
+import { CopyButton, CopyIconButton } from "../components/CopyButton";
 import { MetricBar } from "../components/MetricBar";
 import { formatBytes, formatRate, formatUptime, percentOf } from "../lib/format";
 import { memCaveat } from "../lib/metrics";
@@ -62,7 +62,7 @@ const NODE_VIEW_OPTIONS = [
 
 function storedNodeView(): NodeView {
   const saved = localStorage.getItem(NODE_VIEW_KEY);
-  return saved === "card" || saved === "compact" || saved === "list" ? saved : "card";
+  return saved === "card" || saved === "compact" || saved === "list" ? saved : "list";
 }
 
 function v6Title(n: Node): string {
@@ -96,10 +96,6 @@ function systemCell(n: Node) {
       {n.os_id}/{n.arch} · {n.init_system} · realm {n.realm_version || "未装"}
     </span>
   );
-}
-
-function pctText(value: number | null) {
-  return value === null ? <span className="muted">—</span> : `${value.toFixed(0)}%`;
 }
 
 function ratioText(used: number | null, total: number | null) {
@@ -323,65 +319,40 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
           />
         </Card>
       ) : view === "list" ? (
-        <Card className="flush">
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>名称</th>
-                  <th>地址</th>
-                  <th>状态</th>
-                  <th>CPU</th>
-                  <th>内存</th>
-                  <th>磁盘</th>
-                  <th>系统</th>
-                  <th>端口池</th>
-                  <th>UDP</th>
-                  <th>跳板</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {shownNodes.map((n) => {
-                  const m = metrics[n.id];
-                  return (
-                    <tr key={n.id}>
-                      <td>
-                        <strong>{n.name}</strong>
-                        {m?.container && (
-                          <div className="muted" style={{ fontSize: 11 }}>{m.container}</div>
-                        )}
-                      </td>
-                      <td className="mono nowrap">
-                        {n.ssh_user}@{n.host}:{n.ssh_port}
-                        {ipv6DialAddress(n) && (
-                          <div className="muted" style={{ fontSize: 11 }} title={v6Title(n)}>
-                            {ipv6DialAddress(n)}
-                            {n.ipv6_entry && <span className="tag" style={{ marginLeft: 6 }}>映射</span>}
-                          </div>
-                        )}
-                      </td>
-                      <td>{statusTag(n)}</td>
-                      <td className="nowrap">{pctText(m?.cpu_percent ?? null)}</td>
-                      <td className="nowrap" title={memCaveat(m)}>
-                        {ratioText(m?.mem_used ?? null, m?.mem_total ?? null)}
-                      </td>
-                      <td className="nowrap">
-                        {ratioText(m?.disk_used ?? null, m?.disk_total ?? null)}
-                      </td>
-                      <td className="nowrap">{systemCell(n)}</td>
-                      <td className="mono nowrap">
-                        {n.port_start}-{n.port_end}
-                      </td>
-                      <td>{udpTag(n)}</td>
-                      <td className="muted nowrap">{viaName(n)}</td>
-                      <td>{nodeActions(n)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+        <Card className="flush machine-list-panel">
+          <table className="machine-resource-table">
+            <thead><tr><th>机器</th><th>状态</th><th>CPU</th><th>内存</th><th>磁盘</th><th>操作</th></tr></thead>
+            {shownNodes.map((n) => {
+              const m = metrics[n.id];
+              const caveat = memCaveat(m);
+              const sshAddress = `${n.ssh_user}@${n.host.includes(":") ? `[${n.host}]` : n.host}:${n.ssh_port}`;
+              const ipv6 = ipv6DialAddress(n);
+              return (
+                <tbody key={n.id}>
+                  <tr className="machine-resource-row">
+                    <td className="machine-identity-cell">
+                      <div className="machine-list-identity">
+                        <span className="machine-list-icon"><Server size={18} /></span>
+                        <div><strong>{n.name}</strong><div className="machine-list-system">{systemCell(n)}</div>{m?.container && <span className="tag" title={caveat ?? "运行在容器里"}>{m.container}</span>}</div>
+                      </div>
+                    </td>
+                    <td className="machine-list-status">{statusTag(n)}</td>
+                    <td className="machine-list-resource machine-list-cpu"><MetricBar label="CPU" percent={m?.cpu_percent ?? null} detail={m?.cores ? `${m.cores} 核` : undefined} caveat={caveat} /></td>
+                    <td className="machine-list-resource machine-list-memory"><MetricBar label="内存" percent={percentOf(m?.mem_used ?? null, m?.mem_total ?? null)} detail={ratioText(m?.mem_used ?? null, m?.mem_total ?? null)} caveat={caveat} /></td>
+                    <td className="machine-list-resource machine-list-disk"><MetricBar label="磁盘" percent={percentOf(m?.disk_used ?? null, m?.disk_total ?? null)} detail={ratioText(m?.disk_used ?? null, m?.disk_total ?? null)} /></td>
+                    <td className="machine-list-actions">{nodeActions(n)}</td>
+                  </tr>
+                  <tr className="machine-address-row"><td colSpan={6}>
+                    <div className="machine-addresses">
+                      <span className="machine-address"><span className="machine-address-label">SSH</span><code>{sshAddress}</code><CopyIconButton text={sshAddress} title="复制 SSH 地址" /></span>
+                      {ipv6 && <span className="machine-address" title={v6Title(n)}><span className="machine-address-label">IPv6</span><code>{ipv6}</code><CopyIconButton text={ipv6} title="复制 IPv6 地址" />{n.ipv6_entry && <span className="tag">映射</span>}</span>}
+                    </div>
+                    <div className="machine-address-meta"><span>端口池 <code>{n.port_start}–{n.port_end}</code></span><span>UDP {udpTag(n)}</span><span>跳板 <strong>{viaName(n)}</strong></span></div>
+                  </td></tr>
+                </tbody>
+              );
+            })}
+          </table>
         </Card>
       ) : (
         <div className={`node-grid${view === "compact" ? " dense" : ""}`}>

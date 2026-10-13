@@ -334,7 +334,7 @@ export function Routes() {
               >
                 <small className="management-hop-label">{index === 0 ? "入口机器" : `中继 ${index}`}</small>
                 <strong>{nodeName(hop.node_id)}</strong>
-                <span className="muted">端口 {hop.relay_port}</span>
+                {index === 0 ? <span className="management-hop-address"><code>{entryAddress(route, nodes)}</code><CopyIconButton text={entryAddress(route, nodes)} title="复制入口地址" /></span> : <span className="muted">转发端口 {hop.relay_port}</span>}
                 {state.kind === "down" && <span className="muted"> ✕</span>}
                 {state.kind === "stale" && <span className="muted"> ⚠</span>}
               </span>
@@ -342,7 +342,7 @@ export function Routes() {
             </span>
           );
         })}
-        <span className="hop mono management-hop-target"><small className="management-hop-label">落地目标</small><strong>{route.target}</strong></span>
+        <span className="hop mono management-hop-target"><small className="management-hop-label">落地目标</small><span className="management-hop-address"><strong>{route.target}</strong><CopyIconButton text={route.target} title="复制落地地址" /></span></span>
         <ChainTotal hops={route.hops} />
       </div>
     );
@@ -579,15 +579,13 @@ export function Routes() {
         view === "list" ? (
           <Card className="flush">
             <div className="table-scroll">
-              <table>
+              <table className="route-list-table">
                 <thead>
                   <tr>
                     <th>链路</th>
-                    <th>入口</th>
-                    <th>落地</th>
                     <th>拓扑与延迟</th>
                     <th>流量</th>
-                    <th></th>
+                    <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -603,18 +601,6 @@ export function Routes() {
                           </span>
                         </div>
                         <div className="muted" style={{ fontSize: 12 }}>{route.protocol}</div>
-                      </td>
-                      <td className="mono nowrap">
-                        <div className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
-                          {entryAddress(route, nodes)}
-                          <CopyIconButton text={entryAddress(route, nodes)} title="复制入口地址" />
-                        </div>
-                      </td>
-                      <td className="mono nowrap">
-                        <div className="row" style={{ gap: 4, flexWrap: "nowrap" }}>
-                          {route.target}
-                          <CopyIconButton text={route.target} title="复制落地地址" />
-                        </div>
                       </td>
                       <td>{chainOf(route)}</td>
                       <td className="nowrap">
@@ -643,36 +629,6 @@ export function Routes() {
                   </span>{" "}
                   <span className="tag">{route.protocol}</span>
                 </h2>
-
-                {view === "compact" ? (
-                  <div className="route-line">
-                    <span>{entryAddress(route, nodes)}</span>
-                    <CopyIconButton text={entryAddress(route, nodes)} title="复制入口地址" />
-                    <span className="sep">→</span>
-                    <span>{route.target}</span>
-                    <CopyIconButton text={route.target} title="复制落地地址" />
-                  </div>
-                ) : (
-                  <div className="addr-flow">
-                    <div>
-                      <div className="addr-label">客户端连接</div>
-                      <div className="addr-box">
-                        <span>{entryAddress(route, nodes)}</span>
-                        <CopyIconButton text={entryAddress(route, nodes)} title="复制入口地址" />
-                      </div>
-                    </div>
-                    <div className="addr-arrow">
-                      <ArrowDown size={14} />
-                    </div>
-                    <div>
-                      <div className="addr-label">落地</div>
-                      <div className="addr-box">
-                        <span>{route.target}</span>
-                        <CopyIconButton text={route.target} title="复制落地地址" />
-                      </div>
-                    </div>
-                  </div>
-                )}
 
                 {chainOf(route)}
 

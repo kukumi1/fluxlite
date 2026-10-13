@@ -44,11 +44,11 @@
 .dashboard-redesign .dashboard-machine-table .progress-bar:not(.warn):not(.err){background:var(--mint,#15977a)}
 .dashboard-redesign .dashboard-machine-table td:nth-child(4) .progress-bar:not(.warn):not(.err){background:var(--lavender,#9570d9)}
 .dashboard-redesign .dashboard-machine-table td:nth-child(5) .progress-bar:not(.warn):not(.err){background:var(--sky,#397ebc)}
-.dashboard-redesign .dashboard-ranking .rank-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 28px;margin-top:18px}
+.dashboard-redesign .dashboard-ranking .rank-list{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;margin-top:18px}
 .dashboard-redesign .dashboard-ranking .rank-item{padding:8px 0}
-.dashboard-redesign .dashboard-ranking .rank-head{gap:12px;font-size:12px}
+.dashboard-redesign .dashboard-ranking .rank-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:10px;font-size:12px}
 .dashboard-redesign .dashboard-rank-number{display:inline-block;width:24px;color:var(--muted-foreground);font-size:10px}
-.dashboard-redesign .dashboard-ranking .rank-name{display:flex;align-items:center;gap:5px}
+.dashboard-redesign .dashboard-ranking .rank-name{display:flex;align-items:baseline;gap:5px;min-width:0;white-space:normal;overflow:visible}
 .dashboard-redesign .dashboard-ranking .rank-fill{background:var(--mint,#15977a)}
 .dashboard-redesign .dashboard-ranking li:nth-child(3n+2) .rank-fill{background:var(--lavender,#9570d9)}
 .dashboard-redesign .dashboard-ranking li:nth-child(3n+3) .rank-fill{background:var(--peach,#b9654d)}
@@ -109,4 +109,20 @@
     transform: rotate(-45deg);
     transform-origin: center top;
   }
+}
+
+.dashboard-redesign .dashboard-ranking > .spread {
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.dashboard-redesign .dashboard-ranking .dashboard-rank-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dashboard-redesign .dashboard-ranking .dashboard-rank-number,
+.dashboard-redesign .dashboard-ranking .rank-name .tag {
+  flex-shrink: 0;
+}
+.dashboard-redesign .dashboard-ranking .rank-value {
+  text-align: right;
 }

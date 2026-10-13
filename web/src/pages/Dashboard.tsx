@@ -296,22 +296,9 @@ export function Dashboard({ onNavigate }: Props) {
               </div>
             )}
           </Card>
-
-          {routes.length > 0 && <Card className="dashboard-ranking">
-            <div className="spread"><h2>流量排行</h2><span className="dashboard-caption">累计 · 入站 + 出站</span></div>
-            {rankTop.length === 0 ? <p className="muted">还没有任何链路记到数。</p> : (
-              <ul className="rank-list">{rankTop.map(({ route, t, total }, index) => (
-                <li key={route.id}><button className="rank-item" title={`入 ${formatBytes(t.bytes_in)} · 出 ${formatBytes(t.bytes_out)}`} onClick={() => onNavigate("routes")}>
-                  <div className="rank-head"><span className="rank-name"><span className="dashboard-rank-number">{String(index + 1).padStart(2, "0")}</span>{route.name}{route.listen_ipv6 && <span className="tag">IPv6</span>}</span><span className="rank-value">{formatBytes(total)}</span></div>
-                  <div className="rank-track"><div className="rank-fill" style={{ width: `${rankMax > 0 ? (total / rankMax) * 100 : 0}%` }} /></div>
-                </button></li>
-              ))}</ul>
-            )}
-            {(ranked.length > RANK_LIMIT || uncounted > 0) && <p className="dashboard-caption">{ranked.length > RANK_LIMIT && `另有 ${ranked.length - RANK_LIMIT} 条未列出。`}{uncounted > 0 && `${uncounted} 条没有计数，不参与排行。`}</p>}
-          </Card>}
         </div>
 
-        <aside className="dashboard-side-column" aria-label="运行概况与待关注事项">
+        <aside className="dashboard-side-column" aria-label="运行概况、待关注事项与流量排行">
           <Card className="dashboard-health">
             <div className="spread"><h2>运行概况</h2><Server size={17} /></div>
             <div className="dashboard-health-gauge">
@@ -328,6 +315,18 @@ export function Dashboard({ onNavigate }: Props) {
               <><ul className="dashboard-issues">{issues.map((issue, i) => <li key={i} className={issue.tone}><TriangleAlert size={15} /><div><strong>{issue.text}</strong>{issue.hint && <p>{issue.hint}</p>}</div></li>)}</ul><button className="btn sm" onClick={() => onNavigate("routes")}>去链路页处理 <ArrowRight size={14} /></button></>
             )}
           </Card>
+          {routes.length > 0 && <Card className="dashboard-ranking">
+            <div className="spread"><h2>流量排行</h2><span className="dashboard-caption">累计 · 入站 + 出站</span></div>
+            {rankTop.length === 0 ? <p className="muted">还没有任何链路记到数。</p> : (
+              <ul className="rank-list">{rankTop.map(({ route, t, total }, index) => (
+                <li key={route.id}><button className="rank-item" title={`入 ${formatBytes(t.bytes_in)} · 出 ${formatBytes(t.bytes_out)}`} onClick={() => onNavigate("routes")}>
+                  <div className="rank-head"><span className="rank-name"><span className="dashboard-rank-number">{String(index + 1).padStart(2, "0")}</span><span className="dashboard-rank-title">{route.name}</span>{route.listen_ipv6 && <span className="tag">IPv6</span>}</span><span className="rank-value">{formatBytes(total)}</span></div>
+                  <div className="rank-track"><div className="rank-fill" style={{ width: `${rankMax > 0 ? (total / rankMax) * 100 : 0}%` }} /></div>
+                </button></li>
+              ))}</ul>
+            )}
+            {(ranked.length > RANK_LIMIT || uncounted > 0) && <p className="dashboard-caption">{ranked.length > RANK_LIMIT && `另有 ${ranked.length - RANK_LIMIT} 条未列出。`}{uncounted > 0 && `${uncounted} 条没有计数，不参与排行。`}</p>}
+          </Card>}
         </aside>
       </div>
     </div>

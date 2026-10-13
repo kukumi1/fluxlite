@@ -70,3 +70,87 @@
   .machines-management .node-grid .mono { overflow-wrap:anywhere; }
   .machines-management .node-grid .spread > div { min-width:0; }
 }
+/* Resource-first machine list: addresses live in their own full-width row. */
+.machines-management .machine-resource-table { width:100%; table-layout:fixed; border-collapse:collapse; }
+.machines-management .machine-resource-table th:first-child { width:23%; }
+.machines-management .machine-resource-table th:nth-child(2) { width:9%; }
+.machines-management .machine-resource-table th:nth-child(3),
+.machines-management .machine-resource-table th:nth-child(4),
+.machines-management .machine-resource-table th:nth-child(5) { width:15%; }
+.machines-management .machine-resource-table th:last-child { width:23%; }
+.machines-management .machine-resource-table th,
+.machines-management .machine-resource-row > td { padding:16px 14px; }
+.machines-management .machine-resource-row > td { border-bottom:0; vertical-align:middle; }
+.machines-management .machine-list-identity { display:flex; align-items:flex-start; gap:10px; min-width:0; }
+.machines-management .machine-list-identity > div { min-width:0; }
+.machines-management .machine-list-identity strong { display:block; font-size:14px; overflow-wrap:anywhere; }
+.machines-management .machine-list-system { margin-top:5px; font-size:11px; line-height:1.6; overflow-wrap:anywhere; }
+.machines-management .machine-list-icon { width:34px; height:34px; flex:0 0 34px; display:grid; place-items:center; border-radius:8px; color:var(--mint); border:1px solid color-mix(in srgb,var(--mint) 28%,var(--border)); background:color-mix(in srgb,var(--mint) 10%,var(--card)); }
+.machines-management .machine-resource-table tbody:nth-of-type(4n+2) .machine-list-icon { color:var(--lavender); border-color:color-mix(in srgb,var(--lavender) 28%,var(--border)); background:color-mix(in srgb,var(--lavender) 10%,var(--card)); }
+.machines-management .machine-resource-table tbody:nth-of-type(4n+3) .machine-list-icon { color:var(--peach); border-color:color-mix(in srgb,var(--peach) 28%,var(--border)); background:color-mix(in srgb,var(--peach) 10%,var(--card)); }
+.machines-management .machine-resource-table tbody:nth-of-type(4n+4) .machine-list-icon { color:var(--sky); border-color:color-mix(in srgb,var(--sky) 28%,var(--border)); background:color-mix(in srgb,var(--sky) 10%,var(--card)); }
+.machines-management .machine-list-resource .metric { margin:0; }
+.machines-management .machine-list-resource .metric-head { display:block; margin-bottom:7px; }
+.machines-management .machine-list-resource .metric-label { display:none; }
+.machines-management .machine-list-resource .metric-detail { font-size:11px; line-height:1.6; overflow-wrap:anywhere; }
+.machines-management .machine-list-resource .progress { height:4px; }
+.machines-management .machine-list-cpu .progress-bar:not(.err):not(.warn) { background:var(--mint); }
+.machines-management .machine-list-memory .progress-bar:not(.err):not(.warn) { background:var(--lavender); }
+.machines-management .machine-list-disk .progress-bar:not(.err):not(.warn) { background:var(--sky); }
+.machines-management .machine-list-actions .row { flex-wrap:wrap; gap:5px; justify-content:flex-end; }
+.machines-management .machine-list-actions .btn { font-size:11px; padding:5px 8px; }
+.machines-management .machine-address-row > td { padding:0 14px 16px; border-bottom:1px solid var(--border); }
+.machines-management .machine-resource-table tbody:last-child .machine-address-row > td { border-bottom:0; }
+.machines-management .machine-addresses { display:flex; flex-wrap:wrap; gap:8px 24px; padding-top:10px; border-top:1px dashed var(--border); }
+.machines-management .machine-address { display:flex; align-items:center; gap:8px; min-width:0; max-width:100%; font-size:11px; }
+.machines-management .machine-address code { min-width:0; overflow-wrap:anywhere; white-space:normal; }
+.machines-management .machine-address-label { flex-shrink:0; color:var(--muted-foreground); font-size:10px; }
+.machines-management .machine-address button { flex-shrink:0; }
+.machines-management .machine-address-meta { display:flex; flex-wrap:wrap; align-items:center; gap:8px 20px; margin-top:8px; color:var(--muted-foreground); font-size:10px; }
+.machines-management .machine-address-meta > span { display:inline-flex; align-items:center; gap:6px; min-width:0; }
+.machines-management .machine-address-meta strong { font-weight:500; overflow-wrap:anywhere; }
+.routes-management .management-hop-address { display:flex; align-items:center; gap:7px; width:100%; min-width:0; font-size:11px; }
+.routes-management .management-hop-address > code,
+.routes-management .management-hop-address > strong { flex:1; min-width:0; white-space:normal; overflow-wrap:anywhere; }
+.routes-management .management-hop-address > button { flex-shrink:0; }
+@media(max-width:1100px) {
+  .machines-management .machine-resource-table th,
+  .machines-management .machine-resource-row > td { padding:14px 9px; }
+  .machines-management .machine-list-icon { width:28px; height:28px; flex-basis:28px; }
+  .machines-management .machine-list-identity { gap:7px; }
+}
+@media(max-width:760px) {
+  .machines-management .machine-resource-table,
+  .machines-management .machine-resource-table tbody { display:block; width:100%; }
+  .machines-management .machine-resource-table thead { display:none; }
+  .machines-management .machine-resource-table tbody { border-bottom:1px solid var(--border); }
+  .machines-management .machine-resource-table tbody:last-child { border-bottom:0; }
+  .machines-management .machine-resource-row { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px 10px; padding:16px; }
+  .machines-management .machine-resource-row > td { display:block; min-width:0; padding:0; border:0; }
+  .machines-management .machine-identity-cell { grid-column:span 2; }
+  .machines-management .machine-list-status { justify-self:end; }
+  .machines-management .machine-list-resource .metric-label { display:block; font-size:11px; margin-bottom:4px; }
+  .machines-management .machine-list-actions { grid-column:1/-1; }
+  .machines-management .machine-list-actions .row { justify-content:flex-start; }
+  .machines-management .machine-address-row { display:block; }
+  .machines-management .machine-address-row > td { display:block; padding:0 16px 16px; border:0; }
+  .machines-management .machine-addresses { display:grid; gap:10px; }
+}
+
+/* Bound the route list to the workspace; mobile scroll stays inside the table. */
+.routes-management .route-list-table { width:100%; min-width:820px; table-layout:fixed; }
+.routes-management .route-list-table th:nth-child(1) { width:18%; }
+.routes-management .route-list-table th:nth-child(2) { width:44%; }
+.routes-management .route-list-table th:nth-child(3) { width:18%; }
+.routes-management .route-list-table th:nth-child(4) { width:20%; }
+.routes-management .route-list-table th,
+.routes-management .route-list-table td { padding:14px 12px; white-space:normal; overflow-wrap:anywhere; }
+.routes-management .route-list-table td > .row { flex-wrap:wrap; gap:6px; }
+.routes-management .route-list-table td > .row > strong { min-width:0; }
+.routes-management .route-list-table td:last-child .row.nowrap { flex-wrap:wrap; gap:6px; }
+.routes-management .route-list-table td:last-child .btn { padding:5px 8px; font-size:11px; }
+.routes-management .route-list-table .management-chain { min-width:0; gap:6px; }
+.routes-management .route-list-table .management-chain .hop { min-width:110px; flex:1 1 110px; }
+.routes-management .route-list-table .management-chain .arrow { flex-shrink:0; }
+.routes-management .route-list-table .management-chain .management-hop-address { min-width:0; }
+.routes-management .route-list-table .spread { flex-wrap:wrap; gap:4px; }

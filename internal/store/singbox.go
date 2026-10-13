@@ -118,16 +118,27 @@ func scanSingBoxUser(row rowScanner) (*model.SingBoxUser, error) {
 }
 
 func (s *Store) UpdateSingBoxUser(ctx context.Context, u *model.SingBoxUser) error {
+	return s.updateSingBoxUser(ctx, u, false)
+}
+
+// UpdateSingBoxUserWithConfig is reserved for initial creation and adoption.
+// Ordinary polling/quota/status writes must not overwrite client preferences
+// from a stale record snapshot.
+func (s *Store) UpdateSingBoxUserWithConfig(ctx context.Context, u *model.SingBoxUser) error {
+	return s.updateSingBoxUser(ctx, u, true)
+}
+
+func (s *Store) updateSingBoxUser(ctx context.Context, u *model.SingBoxUser, writeConfig bool) error {
 	if err := u.Validate(); err != nil {
 		return err
 	}
 	u.UpdatedAt = time.Now().UTC()
 	res, err := s.db.ExecContext(ctx, `UPDATE singbox_users SET name=?, protocol=?, port=?,
 		enabled=?, source=?, status=?, service_name=?, config_path=?, external_path=?,
-		config_blob=?, base_quota_bytes=?, top_up_bytes=?, used_in=?, used_out=?, raw_in=?, raw_out=?, period_started_at=?,
+		config_blob=CASE WHEN ? THEN ? ELSE config_blob END, base_quota_bytes=?, top_up_bytes=?, used_in=?, used_out=?, raw_in=?, raw_out=?, period_started_at=?,
 		period_ends_at=?, period_days=?, expires_at=?, quota_paused_at=?, updated_at=? WHERE id=?`,
 		u.Name, u.Protocol, u.Port, u.Enabled, u.Source, u.Status, u.ServiceName,
-		u.ConfigPath, u.ExternalPath, u.ConfigBlob, u.BaseQuotaBytes, u.TopUpBytes, u.UsedIn, u.UsedOut, u.RawIn, u.RawOut,
+		u.ConfigPath, u.ExternalPath, writeConfig, u.ConfigBlob, u.BaseQuotaBytes, u.TopUpBytes, u.UsedIn, u.UsedOut, u.RawIn, u.RawOut,
 		u.PeriodStartedAt, u.PeriodEndsAt, u.PeriodDays, nullableExpiry(u.ExpiresAt), u.QuotaPausedAt, u.UpdatedAt, u.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -136,6 +147,23 @@ func (s *Store) UpdateSingBoxUser(ctx context.Context, u *model.SingBoxUser) err
 		return fmt.Errorf("update sing-box user: %w", err)
 	}
 	return checkAffected(res, "sing-box user", u.ID)
+}
+
+// CompareAndSwapSingBoxConfig updates only the encrypted configuration and
+// rejects stale client-preference edits without clobbering live usage/status.
+func (s *Store) CompareAndSwapSingBoxConfig(ctx context.Context, id int64, previous, next []byte) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE singbox_users SET config_blob=?, updated_at=? WHERE id=? AND source='managed' AND config_blob=?`, next, time.Now().UTC(), id, previous)
+	if err != nil {
+		return fmt.Errorf("update sing-box client parameters: %w", err)
+	}
+	count, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return fmt.Errorf("节点配置已变化，请重新读取后重试: %w", ErrConflict)
+	}
+	return nil
 }
 
 func (s *Store) DeleteSingBoxUser(ctx context.Context, id int64) error {

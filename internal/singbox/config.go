@@ -18,11 +18,12 @@ import (
 // contains the literal HOST placeholder and is only returned by an explicit
 // export operation.
 type Bundle struct {
-	Config       json.RawMessage       `json:"config"`
-	Protocol     model.SingBoxProtocol `json:"protocol"`
-	Name         string                `json:"name"`
-	Port         int                   `json:"port"`
-	LinkTemplate string                `json:"link_template"`
+	Config           json.RawMessage       `json:"config"`
+	Protocol         model.SingBoxProtocol `json:"protocol"`
+	Name             string                `json:"name"`
+	Port             int                   `json:"port"`
+	LinkTemplate     string                `json:"link_template"`
+	ClientParameters *ClientParameters     `json:"client_parameters,omitempty"`
 }
 
 const DefaultSNI = "developer.apple.com"

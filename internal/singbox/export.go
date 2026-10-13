@@ -233,6 +233,11 @@ func exportHost(host string) (string, error) {
 }
 
 func (b *Bundle) exportTLS(in *exportInbound, out map[string]any, query url.Values) error {
+	if b.ClientParameters != nil {
+		if err := b.ValidateClientParameters(*b.ClientParameters); err != nil {
+			return err
+		}
+	}
 	tls := in.TLS
 	if tls == nil || !tls.Enabled {
 		if in.Type == "anytls" || in.Type == "trojan" || in.Type == "hysteria2" || in.Type == "tuic" {
@@ -254,6 +259,9 @@ func (b *Bundle) exportTLS(in *exportInbound, out map[string]any, query url.Valu
 	}
 	clientTLS := map[string]any{"enabled": true}
 	sni := tls.ServerName
+	if b.ClientParameters != nil && b.ClientParameters.SNI != "" {
+		sni = b.ClientParameters.SNI
+	}
 	reality := tls.Reality != nil && tls.Reality.Enabled
 	if sni == "" && reality {
 		sni = tls.Reality.Handshake.Server
@@ -309,6 +317,13 @@ func (b *Bundle) exportTLS(in *exportInbound, out map[string]any, query url.Valu
 		// A legacy certificate_path alone does not establish a self-signed
 		// certificate: adopted nodes keep certificate verification enabled.
 		insecure := templateInsecure(b.LinkTemplate)
+		if b.ClientParameters != nil {
+			insecure = b.ClientParameters.Insecure
+			if fp := b.ClientParameters.Fingerprint; fp != "" {
+				clientTLS["utls"] = map[string]any{"enabled": true, "fingerprint": fp}
+				query.Set("fp", fp)
+			}
+		}
 		clientTLS["insecure"] = insecure
 		if in.Type == "vless" || in.Type == "trojan" {
 			query.Set("security", "tls")
@@ -454,6 +469,9 @@ func vmessShare(out map[string]any, user exportUser, query url.Values, name stri
 			share["alpn"] = alpn
 		}
 		share["allowInsecure"] = tls["insecure"]
+		if fp := query.Get("fp"); fp != "" {
+			share["fp"] = fp
+		}
 	}
 	raw, err := json.Marshal(share)
 	if err != nil {

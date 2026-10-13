@@ -178,6 +178,16 @@
 .singbox-qr-modal .banner { margin:0; overflow-wrap:anywhere; }
 .singbox-qr-modal .code-block { box-sizing:border-box; width:100%; margin:0; padding:14px; max-height:320px; overflow:auto; white-space:pre; border:1px solid var(--border); border-radius:10px; background:var(--muted); font-size:12px; line-height:1.6; }
 .singbox-qr-modal .code-block:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.modal:has(.singbox-client-parameters) { max-width:640px; min-width:0; overflow-x:hidden; }
+.singbox-client-parameters { margin-top:20px; min-width:0; }
+.singbox-client-parameters .banner { overflow-wrap:anywhere; }
+.singbox-client-parameter-fields { display:grid; grid-template-columns:minmax(0,1fr); gap:16px; }
+.singbox-client-parameter-fields label, .singbox-client-link-import label, .singbox-adoption-client-link label { min-width:0; }
+.singbox-client-parameter-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:10px; }
+.singbox-client-parameter-actions .btn { white-space:normal; }
+.singbox-client-link-import { margin-top:24px; padding-top:20px; border-top:1px solid var(--border); }
+.singbox-client-link-import .muted, .singbox-adoption-client-link .muted { font-size:12px; line-height:1.7; }
+.singbox-adoption-client-link { margin-top:16px; }
 @media(max-width:560px) {
   .modal:has(.singbox-qr-modal) { padding:18px; }
   .singbox-export-heading { align-items:flex-start; flex-direction:column; }

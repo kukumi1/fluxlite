@@ -277,8 +277,13 @@ func (s *Service) CreateSingBoxUser(ctx context.Context, in SingBoxUserInput) (*
 		_ = s.store.DeleteSingBoxUser(ctx, u.ID)
 		return nil, err
 	}
+	previousConfig := u.ConfigBlob
 	u.ConfigBlob, err = s.sealer.Seal(mustJSON(bundle))
 	if err != nil {
+		_ = s.store.DeleteSingBoxUser(ctx, u.ID)
+		return nil, err
+	}
+	if err := s.store.CompareAndSwapSingBoxConfig(ctx, u.ID, previousConfig, u.ConfigBlob); err != nil {
 		_ = s.store.DeleteSingBoxUser(ctx, u.ID)
 		return nil, err
 	}
@@ -299,6 +304,23 @@ func (s *Service) CreateSingBoxUser(ctx context.Context, in SingBoxUserInput) (*
 // installer service into the per-user namespace. The shared service is stopped
 // only if it was running; failures restore its fragment and prior running state.
 func (s *Service) AdoptSingBoxUser(ctx context.Context, id int64, quota int64) error {
+	return s.AdoptSingBoxUserWithClientParameters(ctx, id, quota, SingBoxClientParametersInput{})
+}
+
+func (s *Service) AdoptSingBoxUserWithClientParameters(ctx context.Context, id int64, quota int64, in SingBoxClientParametersInput) error {
+	if in.OriginalLink != nil {
+		if err := singbox.ValidateOriginalAnyTLSLink(*in.OriginalLink); err != nil {
+			return err
+		}
+	}
+	if in.Parameters != nil && in.OriginalLink != nil {
+		return singbox.ErrClientExport
+	}
+	if in.Parameters != nil {
+		if err := in.Parameters.Validate(); err != nil {
+			return err
+		}
+	}
 	release, err := s.lockSingBoxAdoption(ctx)
 	if err != nil {
 		return err
@@ -331,6 +353,17 @@ func (s *Service) AdoptSingBoxUser(ctx context.Context, id int64, quota int64) e
 	if res.ExitCode != 0 {
 		return fmt.Errorf("read external sing-box fragment: %s", strings.TrimSpace(res.Stderr))
 	}
+	bundle := &singbox.Bundle{Config: json.RawMessage(res.Stdout), Protocol: u.Protocol, Name: u.Name, Port: u.Port}
+	if in.Parameters != nil || in.OriginalLink != nil {
+		parameters, err := chooseClientParameters(bundle, node, in)
+		if err != nil {
+			return err
+		}
+		bundle.ClientParameters = parameters
+		if _, _, err := bundle.ExportClient(singBoxExportHost(node)); err != nil {
+			return err
+		}
+	}
 	now := time.Now().UTC()
 	u.Source = model.SingBoxManaged
 	u.Enabled = true
@@ -341,7 +374,6 @@ func (s *Service) AdoptSingBoxUser(ctx context.Context, id int64, quota int64) e
 	u.TopUpBytes, u.UsedIn, u.UsedOut, u.RawIn, u.RawOut = 0, 0, 0, 0, 0
 	u.PeriodStartedAt, u.PeriodEndsAt = now, now.Add(time.Duration(u.PeriodDays)*24*time.Hour)
 	u.ExpiresAt = now.Add(365 * 24 * time.Hour)
-	bundle := &singbox.Bundle{Config: json.RawMessage(res.Stdout), Protocol: u.Protocol, Name: u.Name, Port: u.Port}
 	u.ConfigBlob, err = s.sealer.Seal(mustJSON(bundle))
 	if err != nil {
 		return err
@@ -355,7 +387,7 @@ func (s *Service) AdoptSingBoxUser(ctx context.Context, id int64, quota int64) e
 		func(ctx context.Context) error { return s.rollbackAdoptedSingBoxUser(ctx, node, u) },
 		func(ctx context.Context) error {
 			u.Status = model.SingBoxStatusStopped
-			return s.store.UpdateSingBoxUser(ctx, u)
+			return s.store.UpdateSingBoxUserWithConfig(ctx, u)
 		})
 }
 
@@ -527,7 +559,7 @@ func (s *Service) ExportSingBoxBundle(ctx context.Context, id int64, host string
 			break
 		}
 	}
-	if bundle.LinkTemplate == "" {
+	if bundle.LinkTemplate == "" && (bundle.ClientParameters == nil || bundle.ClientParameters.SNI == "") {
 		var original struct {
 			Inbounds []struct {
 				Port int `json:"listen_port"`
@@ -546,7 +578,7 @@ func (s *Service) ExportSingBoxBundle(ctx context.Context, id int64, host string
 		for _, inbound := range original.Inbounds {
 			if inbound.Port == u.Port && inbound.TLS.Enabled && inbound.TLS.ServerName == "" && !inbound.TLS.Reality.Enabled {
 				warnings, _ := result["warnings"].([]string)
-				result["warnings"] = append(warnings, "原节点未指定 TLS 服务器名称，客户端默认按入口地址校验证书。若导入后出现证书错误，请确认正确的 SNI 和证书信任配置；面板不会根据证书文件路径自动关闭校验。")
+				result["warnings"] = append(warnings, "服务端配置未提供可恢复的客户端 SNI，原客户端链接可能单独设置了 SNI。请导入原链接或保存客户端参数；未设置时默认按入口地址校验证书，面板不会根据证书文件路径自动关闭校验。")
 				break
 			}
 		}

@@ -7,6 +7,16 @@ export type SingBoxSource = "managed" | "external";
 export type SingBoxStatus = "unknown" | "running" | "stopped" | "exhausted" | "expired" | "error";
 export type SingBoxCipher = "2022-blake3-aes-128-gcm" | "2022-blake3-aes-256-gcm" | "2022-blake3-chacha20-poly1305";
 
+export interface SingBoxClientParameters {
+  sni: string;
+  insecure: boolean;
+  fingerprint: string;
+}
+
+export type SingBoxClientParametersInput =
+  | { parameters: SingBoxClientParameters }
+  | { original_link: string };
+
 export interface SingBoxUser {
   id: number;
   node_id: number;
@@ -417,7 +427,12 @@ export const api = {
     reduceSingBoxQuota: (id: number, bytes: number) => post<{ ok: boolean }>(`/singbox/users/${id}/reduce`, { bytes }),
   resetSingBoxUser: (id: number) => post<{ ok: boolean }>(`/singbox/users/${id}/reset`),
   setSingBoxExpiry: (id: number, expiresAt: string | null) => post<{ ok: boolean }>(`/singbox/users/${id}/expiry`, { expires_at: expiresAt }),
-  adoptSingBoxUser: (id: number, quotaBytes: number) => post<{ ok: boolean }>(`/singbox/users/${id}/adopt`, { bytes: quotaBytes }),
+  adoptSingBoxUser: (id: number, quotaBytes: number, client?: { original_link?: string; client_parameters?: SingBoxClientParameters }) =>
+    post<{ ok: boolean }>(`/singbox/users/${id}/adopt`, { bytes: quotaBytes, ...client }),
+  getSingBoxClientParameters: (id: number) => request<{ parameters: SingBoxClientParameters | null; effective_parameters: SingBoxClientParameters }>(`/singbox/users/${id}/client-parameters`),
+  setSingBoxClientParameters: (id: number, input: SingBoxClientParametersInput) =>
+    post<{ ok: boolean }>(`/singbox/users/${id}/client-parameters`, input),
+  resetSingBoxClientParameters: (id: number) => request<{ ok: boolean }>(`/singbox/users/${id}/client-parameters`, { method: "DELETE" }),
   exportSingBoxUser: (id: number) => request<{ protocol: SingBoxProtocol; name: string; port: number; config: unknown; link: string; qr_data_url?: string; qr_error?: string; warnings?: string[] }>(`/singbox/users/${id}/export`),
   deleteSingBoxUser: (id: number) => request<{ ok: boolean }>(`/singbox/users/${id}`, { method: "DELETE" }),
   audit: (limit = 100) => request<AuditEntry[] | null>(`/audit?limit=${limit}`),

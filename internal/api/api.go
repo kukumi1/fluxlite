@@ -150,6 +150,9 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/singbox/users/{id}/expiry", s.handleExtendSingBoxExpiry)
 			r.Post("/singbox/users/{id}/adopt", s.handleAdoptSingBoxUser)
 			r.Get("/singbox/users/{id}/export", s.handleExportSingBoxUser)
+			r.Get("/singbox/users/{id}/client-parameters", s.handleGetSingBoxClientParameters)
+			r.Post("/singbox/users/{id}/client-parameters", s.handleSetSingBoxClientParameters)
+			r.Delete("/singbox/users/{id}/client-parameters", s.handleResetSingBoxClientParameters)
 			r.Delete("/singbox/users/{id}", s.handleDeleteSingBoxUser)
 			r.Get("/audit", s.handleAudit)
 

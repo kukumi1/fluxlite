@@ -157,16 +157,18 @@ function Shell() {
     };
 
     const onPointerMove = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
       const effectsDisabled =
         event.pointerType === "touch" ||
         !hasFinePointer.matches ||
         prefersReducedMotion.matches ||
-        !root.classList.contains("appearance-depth");
+        !root.classList.contains("appearance-depth") ||
+        Boolean(target?.closest(".dashboard-traffic"));
       pointerX = event.clientX;
       pointerY = event.clientY;
-      pendingSurface = effectsDisabled || !(event.target instanceof Element)
+      pendingSurface = effectsDisabled || !target
         ? null
-        : event.target.closest<HTMLElement>(surfaceSelector);
+        : target.closest<HTMLElement>(surfaceSelector);
       if (!frame) frame = window.requestAnimationFrame(paintPointerGlow);
     };
 

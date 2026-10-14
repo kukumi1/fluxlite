@@ -2229,6 +2229,61 @@ html.dark.appearance-depth :is(
   filter: drop-shadow(0 0 7px color-mix(in srgb, var(--primary) 52%, transparent));
 }
 
+/* The traffic chart owns a dense hover interaction and tooltip. Keep its card
+   styling static so decorative liquid layers never compete with chart hit
+   testing or repaint the plot while the pointer crosses adjacent columns. */
+html.appearance-depth .dashboard-traffic,
+html.appearance-depth .dashboard-traffic :is(.stagger-card, .tag.ok, .toggle-switch.on) {
+  animation: none;
+}
+
+html.appearance-depth :is(
+  .dashboard-traffic,
+  .dashboard-traffic :is(
+    .card,
+    .singbox-user-card,
+    .node-load,
+    .singbox-stat,
+    .btn,
+    .icon-btn,
+    .topbar-profile,
+    .account-link,
+    .toggle-switch
+  )
+)::before,
+html.appearance-depth :is(
+  .dashboard-traffic,
+  .dashboard-traffic :is(
+    .card,
+    .singbox-user-card,
+    .node-load,
+    .singbox-stat,
+    .btn,
+    .icon-btn,
+    .topbar-profile,
+    .account-link,
+    .toggle-switch
+  )
+)::after {
+  content: none;
+  animation: none;
+}
+
+html.appearance-depth .dashboard-traffic:hover,
+html.appearance-depth .dashboard-traffic :is(
+  .card.interactive,
+  .singbox-user-card,
+  .node-load,
+  .singbox-stat,
+  .btn,
+  .icon-btn,
+  .topbar-profile,
+  .account-link,
+  .toggle-switch
+):hover {
+  transform: none;
+}
+
 @keyframes liquid-border-orbit {
   to { --liquid-border-angle: 360deg; }
 }

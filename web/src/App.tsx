@@ -118,20 +118,55 @@ function Shell() {
     }
 
     const root = document.documentElement;
+    const surfaceSelector = [
+      ".card",
+      ".singbox-user-card",
+      ".node-load",
+      ".singbox-stat",
+      ".btn",
+      ".icon-btn",
+      ".topbar-profile",
+      ".account-link",
+      ".toggle-switch",
+    ].join(",");
     let frame = 0;
     let pointerX = 0;
     let pointerY = 0;
+    let activeSurface: HTMLElement | null = null;
+    let pendingSurface: HTMLElement | null = null;
+
+    const clearPointerGlow = (surface: HTMLElement | null) => {
+      surface?.style.removeProperty("--liquid-pointer-x");
+      surface?.style.removeProperty("--liquid-pointer-y");
+    };
 
     const paintPointerGlow = () => {
       frame = 0;
-      root.style.setProperty("--liquid-cursor-x", `${pointerX}px`);
-      root.style.setProperty("--liquid-cursor-y", `${pointerY}px`);
+      if (activeSurface !== pendingSurface) {
+        clearPointerGlow(activeSurface);
+        activeSurface = pendingSurface;
+      }
+      if (!activeSurface?.isConnected) {
+        activeSurface = null;
+        return;
+      }
+
+      const bounds = activeSurface.getBoundingClientRect();
+      activeSurface.style.setProperty("--liquid-pointer-x", `${pointerX - bounds.left}px`);
+      activeSurface.style.setProperty("--liquid-pointer-y", `${pointerY - bounds.top}px`);
     };
 
     const onPointerMove = (event: PointerEvent) => {
-      if (!hasFinePointer.matches || prefersReducedMotion.matches || !root.classList.contains("appearance-depth")) return;
+      const effectsDisabled =
+        event.pointerType === "touch" ||
+        !hasFinePointer.matches ||
+        prefersReducedMotion.matches ||
+        !root.classList.contains("appearance-depth");
       pointerX = event.clientX;
       pointerY = event.clientY;
+      pendingSurface = effectsDisabled || !(event.target instanceof Element)
+        ? null
+        : event.target.closest<HTMLElement>(surfaceSelector);
       if (!frame) frame = window.requestAnimationFrame(paintPointerGlow);
     };
 
@@ -139,8 +174,7 @@ function Shell() {
     return () => {
       window.removeEventListener("pointermove", onPointerMove);
       if (frame) window.cancelAnimationFrame(frame);
-      root.style.removeProperty("--liquid-cursor-x");
-      root.style.removeProperty("--liquid-cursor-y");
+      clearPointerGlow(activeSurface);
     };
   }, []);
 

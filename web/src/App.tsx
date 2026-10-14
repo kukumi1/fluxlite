@@ -110,6 +110,40 @@ function Shell() {
     };
   }, [mobileOpen]);
 
+  useEffect(() => {
+    const hasFinePointer = window.matchMedia("(pointer: fine)");
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (!hasFinePointer.matches || prefersReducedMotion.matches) {
+      return;
+    }
+
+    const root = document.documentElement;
+    let frame = 0;
+    let pointerX = 0;
+    let pointerY = 0;
+
+    const paintPointerGlow = () => {
+      frame = 0;
+      root.style.setProperty("--liquid-cursor-x", `${pointerX}px`);
+      root.style.setProperty("--liquid-cursor-y", `${pointerY}px`);
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (!hasFinePointer.matches || prefersReducedMotion.matches || !root.classList.contains("appearance-depth")) return;
+      pointerX = event.clientX;
+      pointerY = event.clientY;
+      if (!frame) frame = window.requestAnimationFrame(paintPointerGlow);
+    };
+
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      if (frame) window.cancelAnimationFrame(frame);
+      root.style.removeProperty("--liquid-cursor-x");
+      root.style.removeProperty("--liquid-cursor-y");
+    };
+  }, []);
+
   function openConsole(nodeID: number) {
     setConsoleNode(nodeID);
     navigate("console");

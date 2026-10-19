@@ -205,6 +205,9 @@ func (s *Server) handleRevokeSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.telegram.mu.Lock()
+	s.telegram.revoke()
+	s.telegram.mu.Unlock()
 	s.audit(r, "auth.sessions_revoked", u.Username, "other sessions revoked")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

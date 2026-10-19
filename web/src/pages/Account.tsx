@@ -6,6 +6,7 @@ import { Upload } from "lucide-react";
 import { AVATAR_SIZE, toAvatarPNG } from "../lib/avatar";
 import { useTheme } from "../theme";
 import { normalizeGlassStrength } from "../lib/appearance";
+import { TelegramSettings } from "./TelegramSettings";
 import { RecoverySettings } from "./RecoverySettings";
 import { authErrorMessage } from "../lib/auth-errors";
 
@@ -54,7 +55,7 @@ export function Account({ onUsernameChanged, onAvatarChanged, onSignedOut }: Pro
 
   return (
     <>
-      <PageHeader title="个人中心" desc="外观偏好、账号与登录保护。" />
+      <PageHeader title="个人中心" />
 
       {error && <Banner kind="err">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
@@ -106,6 +107,8 @@ export function Account({ onUsernameChanged, onAvatarChanged, onSignedOut }: Pro
 
       <RecoverySettings enrolled={me.totp_enrolled} onDone={announce} onError={report} />
 
+      <TelegramSettings enrolled={me.totp_enrolled} />
+
       <TwoFactorCard
         enrolled={me.totp_enrolled}
         onDone={async (msg) => {
@@ -118,8 +121,7 @@ export function Account({ onUsernameChanged, onAvatarChanged, onSignedOut }: Pro
       <div className="card">
         <h2 style={{ marginTop: 0 }}>登录会话</h2>
         <p className="muted" style={{ marginTop: 0 }}>
-          踢掉除当前浏览器以外的所有登录。怀疑在别处登录过、或用完公共电脑后可以点这里。
-          修改密码时会自动执行一次。
+          退出其他设备，保留当前会话。
         </p>
         <button
           className="btn"
@@ -167,15 +169,15 @@ function AppearanceCard() {
   return (
     <section className="card appearance-settings" aria-labelledby="appearance-title">
       <div className="appearance-settings-heading">
-        <div><h2 id="appearance-title">外观设置</h2><p className="hint">即时生效并自动保存在当前浏览器，不同步到服务器或其他设备。</p></div>
+        <div><h2 id="appearance-title">外观设置</h2><p className="hint">仅保存在当前浏览器。</p></div>
         <span className={`tag ${preferencesSaved ? "ok" : "warn"}`} role="status">{preferencesSaved ? "已保存到此浏览器" : "浏览器禁止保存，仅本次有效"}</span>
       </div>
       <div className="appearance-option">
-        <div><strong id="depth-label">轻微立体效果</strong><p id="depth-help">柔和阴影与边缘高光，让卡片更有层次，不增加晃动动画。</p></div>
+        <div><strong id="depth-label">轻微立体效果</strong><p id="depth-help">卡片阴影与高光。</p></div>
         <button type="button" role="switch" aria-checked={appearance.depth} aria-labelledby="depth-label" aria-describedby="depth-help" className={`toggle-switch ${appearance.depth ? "on" : ""}`} onClick={() => updateAppearance({ depth: !appearance.depth })}><span /></button>
       </div>
       <div className="appearance-option">
-        <div><strong id="glass-label">毛玻璃效果</strong><p id="glass-help">为面板与导航增加半透明模糊；关闭时保留清晰、低开销的实色背景。</p></div>
+        <div><strong id="glass-label">毛玻璃效果</strong><p id="glass-help">半透明背景与模糊。</p></div>
         <button type="button" role="switch" aria-checked={appearance.glass} aria-labelledby="glass-label" aria-describedby="glass-help" className={`toggle-switch ${appearance.glass ? "on" : ""}`} onClick={() => updateAppearance({ glass: !appearance.glass })}><span /></button>
       </div>
       <div className={`appearance-strength ${appearance.glass ? "" : "is-disabled"}`}>
@@ -189,7 +191,7 @@ function AppearanceCard() {
             if (raw !== "" && Number.isFinite(value) && value >= 1 && value <= 100) updateAppearance({ glassStrength: value });
           }} onBlur={finishStrength} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); finishStrength(); } }} />
         </div>
-        <p className="hint">{appearance.glass ? "强度越高，背景越通透、模糊越明显；不改变文字透明度。" : "开启毛玻璃后可调整强度，当前数值会保留。"}</p>
+        <p className="hint">{appearance.glass ? "强度越高，背景越通透、模糊越明显。" : "开启后可调整，当前数值保留。"}</p>
       </div>
     </section>
   );
@@ -242,7 +244,6 @@ function UsernameCard({
           />
         </label>
       </div>
-      <p className="hint">改名需要密码：能改名的人也能把你锁在账号外面。</p>
       <button className="btn primary" disabled={busy || next === current}>
         {busy ? "保存中…" : "保存"}
       </button>
@@ -319,7 +320,7 @@ function PasswordCard({
         </label>
       </div>
       {mismatch && <Banner kind="err">两次输入的新密码不一致</Banner>}
-      <p className="hint">至少 12 位。改完后其他浏览器上的登录会立刻失效，当前这个不受影响。</p>
+      <p className="hint">至少 12 位；修改后其他登录立即失效，当前会话保留。</p>
       <button className="btn primary" disabled={busy || mismatch}>
         {busy ? "保存中…" : "修改密码"}
       </button>
@@ -364,8 +365,7 @@ function TwoFactorCard({
           两步验证 <span className="tag ok">已开启</span>
         </h2>
         <p className="hint" style={{ marginTop: 0 }}>
-          关掉之后，密码就是进入面板的唯一凭据 —— 而面板持有全部节点的 root 权限。
-          关闭需要密码加一个当前验证码：光有一个被盗用的浏览器会话，不该能卸掉这道锁。
+          关闭后仅凭密码即可登录。需输入密码和当前验证码。
         </p>
         <div className="grid2">
           <label>
@@ -404,8 +404,7 @@ function TwoFactorCard({
       {!pending ? (
         <>
           <p className="hint" style={{ marginTop: 0 }}>
-            开启后登录需要密码加一个动态验证码。密码泄露时，这是唯一还挡在攻击者和全部节点
-            root 权限之间的东西。
+            开启后，登录需输入密码和动态验证码。
           </p>
           <button
             className="btn primary"
@@ -442,8 +441,7 @@ function TwoFactorCard({
           }}
         >
           <p className="hint" style={{ marginTop: 0 }}>
-            把下面的密钥加进 Authenticator，再输入它生成的验证码确认。确认之前不会生效，
-            所以中途放弃也不会把你挡在门外。
+            将密钥添加至验证器，输入验证码后生效。
           </p>
           <label>
             密钥
@@ -557,8 +555,7 @@ function AvatarCard({
             )}
           </div>
           <p className="hint" style={{ marginBottom: 0 }}>
-            会在浏览器里居中裁成方形并缩到 {AVATAR_SIZE}px 再上传，所以多大的原图都行。
-            重新编码顺带去掉了原文件里的 EXIF（可能含拍摄地点）。
+            居中裁剪为 {AVATAR_SIZE}px 方形，并移除 EXIF 信息。
           </p>
         </div>
       </div>

@@ -263,27 +263,36 @@ func (w *Watcher) trafficLoop(ctx context.Context) {
 // collectTraffic folds every node's byte counters into the stored totals and
 // applies quotas. It reports whether any capped route is near its limit.
 func (w *Watcher) collectTraffic(ctx context.Context) bool {
-	deadline, cancel := context.WithTimeout(ctx, w.traffic)
-	defer cancel()
-
-	if err := w.svc.CollectTraffic(deadline); err != nil {
-		// An unreachable node is ordinary and already visible as its status.
+	// Each phase owns its deadline. An offline Realm node cannot starve sing-box,
+	// and slow subscription stops cannot consume Realm's enforcement budget.
+	realmCtx, realmCancel := context.WithTimeout(ctx, w.traffic)
+	if err := w.svc.CollectTraffic(realmCtx); err != nil {
 		w.log.Debug("traffic collection incomplete", "error", err)
 	}
-	if err := w.svc.CollectSingBoxTraffic(deadline); err != nil {
-		w.log.Debug("sing-box traffic collection incomplete", "error", err)
-	}
-
-	// Enforcement runs even when collection was partial: the routes that were
-	// measured deserve their quota applied, and the ones that were not are
-	// skipped by EnforceQuotas anyway.
-	near, err := w.svc.EnforceQuotas(deadline)
+	realmCancel()
+	enforceCtx, enforceCancel := context.WithTimeout(ctx, w.traffic)
+	near, err := w.svc.EnforceQuotas(enforceCtx)
+	enforceCancel()
 	if err != nil {
 		w.log.Error("quota enforcement incomplete", "error", err)
 	}
+	sampleCtx, sampleCancel := context.WithTimeout(ctx, w.traffic)
+	if err := w.svc.CollectSubscriptionTraffic(sampleCtx); err != nil {
+		w.log.Debug("subscription traffic collection incomplete", "error", err)
+	}
+	sampleCancel()
+	subscriptionCtx, subscriptionCancel := context.WithTimeout(ctx, w.traffic)
+	if err := w.svc.ReconcileSubscriptions(subscriptionCtx); err != nil {
+		w.log.Debug("subscription enforcement incomplete", "error", err)
+	}
+	subscriptionCancel()
+	standaloneCtx, standaloneCancel := context.WithTimeout(ctx, w.traffic)
+	if err := w.svc.CollectSingBoxTraffic(standaloneCtx); err != nil {
+		w.log.Debug("sing-box traffic collection incomplete", "error", err)
+	}
+	standaloneCancel()
 	return near
 }
-
 func (w *Watcher) reconcile(ctx context.Context) {
 	if err := w.store.PurgeExpiredSessions(ctx); err != nil {
 		w.log.Error("purge expired sessions", "error", err)

@@ -1266,13 +1266,16 @@ tbody tr:last-child td {
 /* ===== 弹窗 ===== */
 
 .modal-backdrop {
+  --modal-gutter-top: max(20px, env(safe-area-inset-top, 0px));
+  --modal-gutter-bottom: max(20px, env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
   position: fixed;
   inset: 0;
   z-index: 50;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: var(--modal-gutter-top) max(20px, env(safe-area-inset-right, 0px)) var(--modal-gutter-bottom) max(20px, env(safe-area-inset-left, 0px));
   background: color-mix(in oklch, oklch(0.15 0.02 260) 45%, transparent);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
@@ -1286,11 +1289,15 @@ tbody tr:last-child td {
 }
 
 .modal {
+  box-sizing: border-box;
+  min-width: 0;
   width: 100%;
   max-width: 520px;
-  max-height: 88vh;
+  max-height: calc(100vh - var(--modal-gutter-top, 20px) - var(--modal-gutter-bottom, 20px));
+  max-height: calc(var(--tg-viewport-height, 100dvh) - var(--modal-gutter-top, 20px) - var(--modal-gutter-bottom, 20px));
   padding: 24px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--panel-border);
   border-radius: 14px;
   background-color: var(--card);
@@ -1893,399 +1900,25 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 :root {
   --glass-blur: 11.22px;
   --glass-opacity: 85.11%;
-  --depth-highlight: #ffffffb3;
-  --depth-shade: #32223f12;
-  --liquid-specular: #ffffffd1;
-  --liquid-edge: color-mix(in srgb, var(--lavender) 22%, var(--border));
-  --liquid-glow: color-mix(in srgb, var(--lavender) 18%, transparent);
-  --liquid-shadow: #382d5517;
-  --liquid-shadow-deep: #382d5524;
+  --depth-shadow: 0 2px 8px #18202e0a, 0 1px 2px #18202e08;
+  --depth-overlay-shadow: 0 12px 32px #18202e1f;
 }
 .dark {
-  --depth-highlight: #ffffff12;
-  --depth-shade: #00000038;
-  --liquid-specular: #ffffff24;
-  --liquid-edge: color-mix(in srgb, var(--lavender) 26%, var(--border));
-  --liquid-glow: color-mix(in srgb, var(--lavender) 21%, transparent);
-  --liquid-shadow: #00000045;
-  --liquid-shadow-deep: #00000075;
+  --depth-shadow: 0 2px 8px #00000024, 0 1px 2px #00000018;
+  --depth-overlay-shadow: 0 12px 32px #00000052;
 }
-html.appearance-depth :is(.card, .singbox-user-card, .node-load, .singbox-stat, .modal, .drawer) {
-  border-color: var(--liquid-edge);
-  background-image:
-    radial-gradient(ellipse 85% 52% at 14% 0%, color-mix(in srgb, var(--liquid-specular) 32%, transparent), transparent 68%),
-    linear-gradient(145deg, color-mix(in srgb, var(--card) 94%, white 6%), color-mix(in srgb, var(--card) 97%, var(--lavender) 3%));
-  box-shadow:
-    inset 0 1px 0 var(--liquid-specular),
-    inset 1px 0 0 color-mix(in srgb, white 30%, transparent),
-    inset 0 -1px 0 var(--depth-shade),
-    0 4px 10px var(--liquid-shadow),
-    0 18px 44px var(--liquid-shadow-deep),
-    0 0 28px var(--liquid-glow);
+html.appearance-depth :is(.card, .singbox-user-card, .node-load, .singbox-stat) {
+  box-shadow: var(--depth-shadow);
 }
-html.dark.appearance-depth :is(.card, .singbox-user-card, .node-load, .singbox-stat, .modal, .drawer) {
-  background-image:
-    radial-gradient(ellipse 85% 52% at 14% 0%, color-mix(in srgb, var(--liquid-specular) 36%, transparent), transparent 68%),
-    linear-gradient(145deg, color-mix(in srgb, var(--card) 95%, white 5%), color-mix(in srgb, var(--card) 96%, var(--lavender) 4%));
-}
-html.appearance-depth .sidebar {
-  border-right-color: var(--liquid-edge);
-  background-image: linear-gradient(110deg, color-mix(in srgb, var(--sidebar) 94%, white 6%), var(--sidebar));
-  box-shadow: inset -1px 0 0 var(--liquid-specular), 8px 0 28px var(--liquid-shadow-deep);
+html.appearance-depth :is(.modal, .drawer) {
+  background-image: none;
+  box-shadow: var(--depth-overlay-shadow);
 }
 html.appearance-depth .topbar {
-  border-bottom-color: var(--liquid-edge);
-  background-image: linear-gradient(180deg, color-mix(in srgb, var(--card) 92%, white 8%), color-mix(in srgb, var(--card) 96%, transparent));
-  box-shadow: inset 0 1px 0 var(--liquid-specular), inset 0 -1px 0 var(--depth-shade), 0 8px 26px var(--liquid-shadow);
+  box-shadow: 0 1px 3px #00000006;
 }
-html.appearance-depth .dashboard-redesign .dashboard-kpis .card {
-  box-shadow: inset 0 1px 0 #ffffffa0, inset 0 -1px 0 #35304018, 0 7px 18px var(--liquid-shadow), 0 16px 36px var(--liquid-shadow-deep);
-}
-html.appearance-depth .card.interactive:hover {
-  border-color: color-mix(in srgb, var(--primary) 46%, var(--border));
-  animation: liquid-card-shimmer 420ms var(--ease-out) both;
-  box-shadow:
-    inset 0 1px 0 var(--liquid-specular),
-    inset 0 -1px 0 var(--depth-shade),
-    0 8px 18px var(--liquid-shadow),
-    0 22px 48px var(--liquid-shadow-deep),
-    0 0 32px color-mix(in srgb, var(--primary) 18%, transparent);
-}
-
-/* Motion is tied to intent: surfaces settle once, then only respond to direct
-   interaction. Transform-only movement avoids reflow and preserves hit areas. */
-html.appearance-depth .main-inner {
-  animation: liquid-page-enter 360ms var(--ease-out) both;
-}
-html.appearance-depth .stagger-card {
-  animation-name: liquid-card-enter;
-  animation-duration: 420ms;
-}
-html.appearance-depth :is(.card.interactive, .singbox-user-card, .node-load, .singbox-stat) {
-  transition: transform 200ms var(--ease-out), border-color 200ms var(--ease-out), box-shadow 240ms var(--ease-out);
-}
-html.appearance-depth :is(.singbox-user-card, .node-load, .singbox-stat):hover {
-  border-color: color-mix(in srgb, var(--primary) 30%, var(--liquid-edge));
-  box-shadow:
-    inset 0 1px 0 var(--liquid-specular),
-    inset 0 -1px 0 var(--depth-shade),
-    0 7px 16px var(--liquid-shadow),
-    0 20px 42px var(--liquid-shadow-deep),
-    0 0 24px var(--liquid-glow);
-}
-html.appearance-depth .card.interactive:active {
-  transform: translateY(0) scale(0.995);
-}
-html.appearance-depth :is(.card.interactive, .singbox-user-card, .node-load, .singbox-stat):focus-within {
-  border-color: color-mix(in srgb, var(--ring) 48%, var(--liquid-edge));
-  box-shadow:
-    inset 0 1px 0 var(--liquid-specular),
-    0 0 0 3px color-mix(in srgb, var(--ring) 14%, transparent),
-    0 12px 32px var(--liquid-shadow-deep);
-}
-
-@keyframes liquid-page-enter {
-  from { opacity: 0; transform: translateY(7px); }
-}
-@keyframes liquid-card-enter {
-  from { opacity: 0; transform: translateY(9px) scale(0.99); }
-}
-@keyframes liquid-card-shimmer {
-  42% {
-    box-shadow:
-      inset 0 1px 0 color-mix(in srgb, white 88%, var(--liquid-specular)),
-      inset 0 -1px 0 var(--depth-shade),
-      0 9px 20px var(--liquid-shadow),
-      0 23px 50px var(--liquid-shadow-deep),
-      0 0 36px color-mix(in srgb, var(--primary) 22%, transparent);
-  }
-}
-
-/* Liquid controls keep the highlight inside the component, so no decorative
-   layer can overlap labels, values or hit targets. */
-html.appearance-depth :is(.btn, .icon-btn, .topbar-profile, .account-link) {
-  border-color: color-mix(in srgb, var(--liquid-edge) 80%, transparent);
-  background-image:
-    radial-gradient(circle at 20% 0%, color-mix(in srgb, var(--liquid-specular) 42%, transparent), transparent 55%),
-    linear-gradient(155deg, color-mix(in srgb, var(--card) 88%, white 12%), color-mix(in srgb, var(--muted) 86%, transparent));
-  box-shadow: inset 0 1px 0 var(--liquid-specular), inset 0 -1px 0 var(--depth-shade), 0 4px 10px var(--liquid-shadow);
-  transition: transform 160ms var(--ease-out), border-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out), color 160ms var(--ease-out);
-}
-html.appearance-depth :is(.btn, .icon-btn, .topbar-profile, .account-link):hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--primary) 38%, var(--border));
-  box-shadow: inset 0 1px 0 var(--liquid-specular), 0 6px 14px var(--liquid-shadow-deep), 0 0 18px var(--liquid-glow);
-}
-html.appearance-depth :is(.btn, .icon-btn, .topbar-profile, .account-link):active:not(:disabled) {
-  transform: translateY(1px) scale(0.985);
-  box-shadow: inset 0 2px 5px var(--depth-shade), inset 0 1px 0 color-mix(in srgb, white 24%, transparent), 0 2px 5px var(--liquid-shadow);
-}
-html.appearance-depth :is(.btn, .icon-btn, .topbar-profile, .account-link):focus-visible {
-  box-shadow: inset 0 1px 0 var(--liquid-specular), 0 0 0 3px color-mix(in srgb, var(--ring) 18%, transparent), 0 6px 16px var(--liquid-shadow-deep);
-}
-html.appearance-depth .btn.primary {
-  background-image:
-    radial-gradient(circle at 25% -20%, #ffffff6b, transparent 48%),
-    linear-gradient(145deg, color-mix(in srgb, var(--primary) 82%, white), var(--primary) 58%, color-mix(in srgb, var(--primary) 82%, #301c50));
-  box-shadow: inset 0 1px 0 #ffffff80, inset 0 -2px 3px #2c174b28, 0 7px 16px color-mix(in srgb, var(--primary) 28%, transparent);
-}
-html.appearance-depth .btn.destructive {
-  background-image: radial-gradient(circle at 25% -20%, #ffffff66, transparent 48%), linear-gradient(145deg, color-mix(in srgb, var(--err) 84%, white), var(--err));
-}
-html.appearance-depth :is(.btn, .icon-btn):disabled {
-  transform: none;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 25%, transparent);
-}
-
-html.appearance-depth .toggle-switch {
-  border: 1px solid color-mix(in srgb, #7b8492 72%, var(--border));
-  background-image: linear-gradient(180deg, #8f98a6, #aab1bc);
-  box-shadow: inset 0 2px 5px #31374355, inset 0 -1px 0 #ffffff70, 0 3px 8px var(--liquid-shadow);
-  transition: background 180ms var(--ease-out), border-color 180ms var(--ease-out), box-shadow 180ms var(--ease-out), transform 160ms var(--ease-out);
-}
-html.appearance-depth .toggle-switch span {
-  top: 2px;
-  left: 2px;
-  background-image: radial-gradient(circle at 35% 22%, white 0 22%, #f0edf7 60%, #c7bfd8 100%);
-  box-shadow: inset 0 1px 1px #ffffff, inset 0 -1px 2px #7f748c38, 0 3px 7px #20233155;
-  transition: transform 220ms var(--ease-out), box-shadow 220ms var(--ease-out);
-}
-html.appearance-depth .toggle-switch:hover:not(:disabled) {
-  box-shadow: inset 0 2px 5px #31374355, inset 0 -1px 0 #ffffff70, 0 0 0 3px var(--liquid-glow), 0 4px 10px var(--liquid-shadow-deep);
-}
-html.appearance-depth .toggle-switch:active:not(:disabled) { transform: scale(0.96); }
-html.appearance-depth .toggle-switch.on {
-  animation: liquid-switch-glow 360ms var(--ease-out);
-  border-color: color-mix(in srgb, var(--primary) 78%, white);
-  background-image: linear-gradient(145deg, color-mix(in srgb, var(--primary) 75%, white), var(--primary));
-  box-shadow: inset 0 1px 3px #3c276755, inset 0 -1px 0 #ffffff5c, 0 0 0 1px color-mix(in srgb, var(--primary) 15%, transparent), 0 4px 14px color-mix(in srgb, var(--primary) 38%, transparent);
-}
-html.appearance-depth .toggle-switch.on span {
-  transform: translateX(18px);
-  box-shadow: inset 0 1px 1px #ffffff, 0 3px 9px color-mix(in srgb, var(--primary) 45%, #17121f);
-}
-html.appearance-depth .toggle-switch:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 3px;
-  box-shadow: inset 0 2px 5px #31374355, 0 0 0 3px color-mix(in srgb, var(--ring) 18%, transparent), 0 4px 12px var(--liquid-shadow-deep);
-}
-
-html.appearance-depth .tag.ok {
-  animation: liquid-online-breathe 4.8s ease-in-out infinite;
-}
-
-@keyframes liquid-online-breathe {
-  50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 7%, transparent), 0 0 12px color-mix(in srgb, var(--ok) 12%, transparent); }
-}
-
-@keyframes liquid-switch-glow {
-  50% {
-    box-shadow:
-      inset 0 1px 3px #3c276755,
-      inset 0 -1px 0 #ffffff5c,
-      0 0 0 4px color-mix(in srgb, var(--primary) 12%, transparent),
-      0 5px 18px color-mix(in srgb, var(--primary) 44%, transparent);
-  }
-}
-
-html.appearance-depth :is(input, select, textarea) {
-  border-color: color-mix(in srgb, var(--liquid-edge) 72%, var(--border));
-  background-image: linear-gradient(180deg, color-mix(in srgb, var(--card) 86%, transparent), color-mix(in srgb, var(--muted) 62%, transparent));
-  box-shadow: inset 0 2px 5px var(--depth-shade), inset 0 -1px 0 color-mix(in srgb, white 34%, transparent), 0 2px 6px color-mix(in srgb, var(--liquid-shadow) 60%, transparent);
-}
-html.appearance-depth :is(input, select, textarea):focus {
-  box-shadow: inset 0 2px 5px var(--depth-shade), 0 0 0 3px color-mix(in srgb, var(--ring) 18%, transparent), 0 5px 15px var(--liquid-glow);
-}
-
-html.appearance-depth .nav button.active {
-  background-image: linear-gradient(105deg, color-mix(in srgb, var(--primary) 22%, transparent), color-mix(in srgb, var(--lavender) 10%, transparent));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 52%, transparent), inset 0 -1px 0 color-mix(in srgb, var(--primary) 20%, transparent), 0 5px 14px var(--liquid-shadow);
-}
-
-/* A continuously travelling specular edge keeps the liquid treatment visible
-   at rest. Pointer coordinates live on only the nearest hovered surface, which
-   keeps cursor-driven paint work local without triggering React renders. */
-@property --liquid-border-angle {
-  syntax: "<angle>";
-  inherits: false;
-  initial-value: 0deg;
-}
-
-html.appearance-depth :is(
-  .card,
-  .singbox-user-card,
-  .node-load,
-  .singbox-stat,
-  .btn,
-  .icon-btn,
-  .topbar-profile,
-  .account-link,
-  .toggle-switch
-) {
-  --liquid-pointer-x: 50%;
-  --liquid-pointer-y: 50%;
-  position: relative;
-  isolation: isolate;
-}
-
-html.appearance-depth :is(
-  .card,
-  .singbox-user-card,
-  .node-load,
-  .singbox-stat,
-  .btn,
-  .icon-btn,
-  .topbar-profile,
-  .account-link,
-  .toggle-switch
-)::before {
-  content: "";
-  position: absolute;
-  z-index: 1;
-  inset: -2px;
-  padding: 3px;
-  border-radius: inherit;
-  pointer-events: none;
-  background: conic-gradient(
-    from var(--liquid-border-angle),
-    transparent 0deg 28deg,
-    color-mix(in srgb, var(--primary) 58%, transparent) 66deg,
-    color-mix(in srgb, var(--liquid-specular) 92%, white) 96deg,
-    color-mix(in srgb, var(--lavender) 88%, white) 126deg,
-    transparent 170deg 226deg,
-    color-mix(in srgb, #63e6d1 48%, transparent) 266deg,
-    color-mix(in srgb, var(--primary) 68%, transparent) 302deg,
-    color-mix(in srgb, var(--liquid-specular) 90%, white) 330deg,
-    transparent 360deg
-  );
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  opacity: 0.82;
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--primary) 32%, transparent));
-  animation: liquid-border-orbit 2.6s linear infinite;
-}
-
-html.appearance-depth :is(
-  .card,
-  .singbox-user-card,
-  .node-load,
-  .singbox-stat,
-  .btn,
-  .icon-btn,
-  .topbar-profile,
-  .account-link,
-  .toggle-switch
-)::after {
-  content: "";
-  position: absolute;
-  z-index: 2;
-  inset: -3px;
-  padding: 4px;
-  border-radius: inherit;
-  pointer-events: none;
-  opacity: 0;
-  background: radial-gradient(
-    circle 190px at var(--liquid-pointer-x) var(--liquid-pointer-y),
-    white 0,
-    color-mix(in srgb, #78f4dd 78%, white) 16%,
-    color-mix(in srgb, var(--primary) 84%, transparent) 44%,
-    transparent 72%
-  );
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  filter: drop-shadow(0 0 11px color-mix(in srgb, var(--primary) 62%, transparent));
-  transition: opacity 120ms var(--ease-out);
-}
-
-html.appearance-depth :is(
-  .card,
-  .singbox-user-card,
-  .node-load,
-  .singbox-stat,
-  .btn,
-  .icon-btn,
-  .topbar-profile,
-  .account-link,
-  .toggle-switch
-):hover::after {
-  opacity: 1;
-}
-
-html.dark.appearance-depth :is(
-  .card,
-  .singbox-user-card,
-  .node-load,
-  .singbox-stat,
-  .btn,
-  .icon-btn,
-  .topbar-profile,
-  .account-link,
-  .toggle-switch
-)::before {
-  opacity: 0.94;
-  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--primary) 52%, transparent));
-}
-
-/* The traffic chart owns a dense hover interaction and tooltip. Keep its card
-   styling static so decorative liquid layers never compete with chart hit
-   testing or repaint the plot while the pointer crosses adjacent columns. */
-html.appearance-depth .dashboard-traffic,
-html.appearance-depth .dashboard-traffic :is(.stagger-card, .tag.ok, .toggle-switch.on) {
-  animation: none;
-}
-
-html.appearance-depth :is(
-  .dashboard-traffic,
-  .dashboard-traffic :is(
-    .card,
-    .singbox-user-card,
-    .node-load,
-    .singbox-stat,
-    .btn,
-    .icon-btn,
-    .topbar-profile,
-    .account-link,
-    .toggle-switch
-  )
-)::before,
-html.appearance-depth :is(
-  .dashboard-traffic,
-  .dashboard-traffic :is(
-    .card,
-    .singbox-user-card,
-    .node-load,
-    .singbox-stat,
-    .btn,
-    .icon-btn,
-    .topbar-profile,
-    .account-link,
-    .toggle-switch
-  )
-)::after {
-  content: none;
-  animation: none;
-}
-
-html.appearance-depth .dashboard-traffic:hover,
-html.appearance-depth .dashboard-traffic :is(
-  .card.interactive,
-  .singbox-user-card,
-  .node-load,
-  .singbox-stat,
-  .btn,
-  .icon-btn,
-  .topbar-profile,
-  .account-link,
-  .toggle-switch
-):hover {
-  transform: none;
-}
-
-@keyframes liquid-border-orbit {
-  to { --liquid-border-angle: 360deg; }
+html.appearance-depth .btn:not(.ghost) {
+  box-shadow: 0 1px 2px #0000000d;
 }
 
 /* Only opt into translucent surfaces when real backdrop blur is supported.
@@ -2308,45 +1941,6 @@ html.appearance-depth .dashboard-traffic :is(
   }
 }
 
-html.appearance-depth .modal-backdrop,
-html.appearance-depth .drawer::backdrop {
-  background: color-mix(in srgb, #17131f 58%, transparent);
-  -webkit-backdrop-filter: blur(8px) saturate(1.1);
-  backdrop-filter: blur(8px) saturate(1.1);
-}
-html.appearance-depth .modal-backdrop { animation-duration: 200ms; }
-html.appearance-depth .modal { animation: liquid-modal-enter 280ms var(--ease-out) both; }
-html.appearance-depth .drawer[open] { animation: liquid-drawer-enter 260ms var(--ease-out) both; }
-
-@keyframes liquid-modal-enter {
-  from { opacity: 0; transform: translateY(12px) scale(0.985); }
-}
-@keyframes liquid-drawer-enter {
-  from { opacity: 0; transform: translateX(20px) scale(0.995); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  html.appearance-depth :is(.main-inner, .stagger-card, .modal-backdrop, .modal, .drawer[open], .tag.ok, .card.interactive:hover, .toggle-switch.on) {
-    animation: none;
-  }
-
-  html.appearance-depth :is(.card.interactive, .singbox-user-card, .node-load, .singbox-stat, .btn, .icon-btn, .topbar-profile, .account-link, .toggle-switch, .toggle-switch span) {
-    transition: none;
-  }
-
-  html.appearance-depth :is(.card.interactive, .singbox-user-card, .node-load, .singbox-stat, .btn, .icon-btn, .topbar-profile, .account-link, .toggle-switch):is(:hover, :active) {
-    transform: none;
-  }
-
-  html.appearance-depth :is(.card, .singbox-user-card, .node-load, .singbox-stat, .btn, .icon-btn, .topbar-profile, .account-link, .toggle-switch)::before {
-    animation: none;
-  }
-
-  html.appearance-depth :is(.card, .singbox-user-card, .node-load, .singbox-stat, .btn, .icon-btn, .topbar-profile, .account-link, .toggle-switch)::after {
-    display: none;
-  }
-}
-
 .appearance-settings-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; }
 .appearance-settings-heading h2 { margin:0; }
 .appearance-settings-heading .hint { margin-bottom:0; }
@@ -2362,3 +1956,28 @@ html.appearance-depth .drawer[open] { animation: liquid-drawer-enter 260ms var(-
 .appearance-strength-controls input[type="number"] { flex:0 0 86px; width:86px; margin:0; text-align:center; }
 .appearance-strength.is-disabled input { opacity:.5; cursor:not-allowed; }
 @media (max-width:600px) { .appearance-option { gap:16px; } .appearance-settings-heading { gap:10px; } }
+
+/* Telegram reuses the pages without exposing the desktop administration shell. */
+.telegram-entry { max-width: 620px; margin: 10vh auto; padding: 24px; }
+.telegram-app { min-height: var(--tg-viewport-stable-height, 100dvh); padding: max(12px, env(safe-area-inset-top), var(--tg-content-safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+.telegram-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 4px; }
+.telegram-nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 8px 0 20px; }
+.telegram-nav .btn { justify-content: center; min-height: 44px; padding: 10px 6px; }
+.telegram-content { max-width: 1440px; margin: auto; min-width: 0; }
+.telegram-settings-actions, .telegram-binding { display: flex; flex-wrap: wrap; gap: 10px; }
+.telegram-enable-button { max-width: 100%; }
+.telegram-binding { margin-top: 16px; align-items: center; }
+.telegram-binding p { flex-basis: 100%; margin-bottom: 0; }
+@media (max-width: 600px) {
+  .telegram-nav .btn { flex-direction: column; font-size: 12px; gap: 4px; }
+  .telegram-content .grid2 { grid-template-columns: 1fr; }
+  .telegram-app .page-header { flex-wrap: wrap; }
+  .telegram-app .modal, .telegram-app .drawer { max-width: calc(100vw - 24px); }
+  .telegram-app .modal { max-height: calc(var(--tg-viewport-height, 100dvh) - 32px); }
+}
+
+/* Existing-node subscription selection: keep checkboxes out of full-width form rules. */
+.subscription-node-choice { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 10px; margin-bottom: 6px; color: var(--foreground); cursor: pointer; }
+.subscription-node-choice input[type="checkbox"] { width: 18px; height: 18px; flex: 0 0 18px; margin: 0; padding: 0; accent-color: var(--primary); cursor: inherit; }
+.subscription-node-choice-text { min-width: 0; overflow-wrap: anywhere; }
+.subscription-node-choice.is-occupied { opacity: .75; cursor: not-allowed; }

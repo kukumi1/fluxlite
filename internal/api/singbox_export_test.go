@@ -41,7 +41,7 @@ func exportHTTPFixture(t *testing.T, passwords ...string) (http.Handler, int64, 
 		t.Fatal(err)
 	}
 	srv.svc = service.New(st, sealer, nil, nil, nil, nil, slog.Default())
-	node := &model.Node{Name: "export-test", Host: "203.0.113.11", SSHPort: 22, SSHUser: "root", AuthType: model.AuthPassword, AuthSecret: []byte("test"), PortStart: 21000, PortEnd: 21999}
+	node := &model.Node{Name: "export-test", Host: "203.0.113.11", IPv6Address: "2001:db8::11", SSHPort: 22, SSHUser: "root", AuthType: model.AuthPassword, AuthSecret: []byte("test"), PortStart: 21000, PortEnd: 21999}
 	if err := st.CreateNode(ctx, node); err != nil {
 		t.Fatal(err)
 	}
@@ -124,5 +124,75 @@ func TestExportAmbiguousNodeHTTPReturnsUsefulError(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "private-one") || strings.Contains(w.Body.String(), "private-two") || strings.Contains(w.Body.String(), `"config"`) {
 		t.Fatal("error response exposes server credentials")
+	}
+}
+
+func TestExportAddressFamiliesStaySynchronized(t *testing.T) {
+	h, id, token := exportHTTPFixture(t, "synthetic-secret")
+	var previousQR string
+	for _, tc := range []struct{ query, family, host string }{
+		{"", "ipv4", "203.0.113.11"},
+		{"?address_family=ipv6", "ipv6", "2001:db8::11"},
+		{"?address_family=ipv4", "ipv4", "203.0.113.11"},
+	} {
+		r := httptest.NewRequest("GET", "/api/singbox/users/"+strconv.FormatInt(id, 10)+"/export"+tc.query, nil)
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != 200 {
+			t.Fatalf("export family: %d", w.Code)
+		}
+		var out struct {
+			Link      string   `json:"link"`
+			QR        string   `json:"qr_data_url"`
+			Family    string   `json:"address_family"`
+			Available []string `json:"available_families"`
+			Config    struct {
+				Outbounds []struct {
+					Server string `json:"server"`
+				} `json:"outbounds"`
+			} `json:"config"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		if out.Family != tc.family || len(out.Available) != 2 || !strings.Contains(out.Link, tc.host) || len(out.Config.Outbounds) != 1 || out.Config.Outbounds[0].Server != tc.host {
+			t.Fatal("link/config/family mismatch")
+		}
+		qr, err := qrDataURL(out.Link)
+		if err != nil || qr != out.QR || out.QR == previousQR {
+			t.Fatal("QR did not match changed link")
+		}
+		previousQR = out.QR
+	}
+	r := httptest.NewRequest("GET", "/api/singbox/users/"+strconv.FormatInt(id, 10)+"/export?address_family=invalid", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 400 {
+		t.Fatal("invalid family accepted")
+	}
+}
+
+func TestSingBoxExportAddressSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		node                  model.Node
+		request, host, family string
+		bad                   bool
+	}{
+		{"dual defaults v4", model.Node{Host: "192.0.2.1", IPv6Address: "2001:db8::1"}, "", "192.0.2.1", "ipv4", false},
+		{"explicit entry wins", model.Node{Host: "192.0.2.1", IPv6Address: "2001:db8::1", IPv6Entry: "2001:db8::2"}, "ipv6", "2001:db8::2", "ipv6", false},
+		{"no v6", model.Node{Host: "192.0.2.1"}, "ipv6", "", "", true},
+		{"v6 only", model.Node{Host: "[2001:db8::1]"}, "", "2001:db8::1", "ipv6", false},
+		{"no v4", model.Node{Host: "2001:db8::1"}, "ipv4", "", "", true},
+		{"primary hostname", model.Node{Host: "node.example.com", IPv6Address: "2001:db8::1"}, "", "node.example.com", "ipv4", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			host, family, _, err := singBoxExportAddress(&tc.node, tc.request)
+			if (err != nil) != tc.bad || host != tc.host || family != tc.family {
+				t.Fatalf("selection mismatch: %s %s %v", host, family, err)
+			}
+		})
 	}
 }

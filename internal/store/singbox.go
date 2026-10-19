@@ -167,11 +167,16 @@ func (s *Store) CompareAndSwapSingBoxConfig(ctx context.Context, id int64, previ
 }
 
 func (s *Store) DeleteSingBoxUser(ctx context.Context, id int64) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM singbox_users WHERE id=?`, id)
-	if err != nil {
-		return fmt.Errorf("delete sing-box user: %w", err)
-	}
-	return checkAffected(res, "sing-box user", id)
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM subscription_members WHERE user_id=? AND subscription_id IN (SELECT id FROM subscriptions WHERE mode='collection')`, id); err != nil {
+			return err
+		}
+		res, err := tx.ExecContext(ctx, `DELETE FROM singbox_users WHERE id=?`, id)
+		if err != nil {
+			return fmt.Errorf("delete sing-box user: %w", err)
+		}
+		return checkAffected(res, "sing-box user", id)
+	})
 }
 
 func (s *Store) AddSingBoxTopUp(ctx context.Context, id, bytes int64) error {

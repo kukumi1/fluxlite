@@ -1,6 +1,6 @@
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, ReactNode, HTMLAttributes } from "react";
 
-interface CardProps {
+interface CardProps extends HTMLAttributes<HTMLDivElement> {
   children: ReactNode;
   className?: string;
   style?: CSSProperties;
@@ -11,13 +11,14 @@ interface CardProps {
 const STAGGER_STEP_MS = 45;
 const STAGGER_MAX_ITEMS = 12;
 
-export function Card({ children, className = "", style, index }: CardProps) {
+export function Card({ children, className = "", style, index, ...props }: CardProps) {
   // 超过十来张之后再逐个延迟，最后一张要等半秒才出现，反而像卡顿。
   const delay =
     index === undefined ? undefined : Math.min(index, STAGGER_MAX_ITEMS) * STAGGER_STEP_MS;
 
   return (
     <div
+      {...props}
       className={`card${index === undefined ? "" : " stagger-card"} ${className}`.trim()}
       style={
         delay === undefined

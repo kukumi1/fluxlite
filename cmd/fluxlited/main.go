@@ -123,6 +123,7 @@ func run() error {
 		TrafficInterval: *trafficPoll,
 	})
 	go w.Run(ctx)
+	go srv.RunTelegram(ctx)
 
 	httpServer := &http.Server{
 		Addr:              *listen,

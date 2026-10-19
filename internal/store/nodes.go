@@ -107,9 +107,9 @@ func (s *Store) NodeByName(ctx context.Context, name string) (*model.Node, error
 	return n, nil
 }
 
-// ListNodes returns all nodes ordered by name.
+// ListNodes returns manual order, falling back to name for unsorted nodes.
 func (s *Store) ListNodes(ctx context.Context) ([]*model.Node, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+nodeColumns+` FROM nodes ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+nodeColumns+` FROM nodes ORDER BY sort_order IS NULL, sort_order, name, id`)
 	if err != nil {
 		return nil, fmt.Errorf("query nodes: %w", err)
 	}
@@ -157,14 +157,19 @@ func (s *Store) UpdateNode(ctx context.Context, n *model.Node) error {
 // DeleteNode removes a node. The schema refuses deletion while routes still
 // reference it, surfacing a clear conflict instead of orphaning hops.
 func (s *Store) DeleteNode(ctx context.Context, id int64) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM nodes WHERE id = ?`, id)
-	if err != nil {
-		if isForeignKeyViolation(err) {
-			return fmt.Errorf("node %d is still used by a route or as a jump host: %w", id, ErrConflict)
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM subscription_members WHERE node_id=? AND subscription_id IN (SELECT id FROM subscriptions WHERE mode='collection')`, id); err != nil {
+			return err
 		}
-		return fmt.Errorf("delete node: %w", err)
-	}
-	return checkAffected(res, "node", id)
+		res, err := tx.ExecContext(ctx, `DELETE FROM nodes WHERE id = ?`, id)
+		if err != nil {
+			if isForeignKeyViolation(err) {
+				return fmt.Errorf("node %d is still used by a route or as a jump host: %w", id, ErrConflict)
+			}
+			return fmt.Errorf("delete node: %w", err)
+		}
+		return checkAffected(res, "node", id)
+	})
 }
 
 // SetNodeHostKey records a host key learned on first connect.

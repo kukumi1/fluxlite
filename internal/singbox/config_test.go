@@ -1,8 +1,12 @@
 package singbox
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"golang.org/x/crypto/curve25519"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/kukumi1/fluxlite/internal/model"
@@ -38,5 +42,47 @@ func TestGenerateSupportsEveryProtocol(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Reality uses the URL-safe unpadded alphabet on both ends. The generic
+// export decoder deliberately accepts legacy alphabets, so test the strict
+// sing-box decoder separately instead of relying on a round trip through it.
+func TestRealityGeneratedKeysUseURLSafeEncoding(t *testing.T) {
+	for i := 0; i < 64; i++ {
+		bundle, err := Generate(model.SingBoxVLESSReality, "Reality test", 23456, "/tmp/test-reality", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg struct {
+			Inbounds []struct {
+				TLS struct {
+					Reality struct {
+						PrivateKey string `json:"private_key"`
+					} `json:"reality"`
+				} `json:"tls"`
+			} `json:"inbounds"`
+		}
+		if err := json.Unmarshal(bundle.Config, &cfg); err != nil {
+			t.Fatal(err)
+		}
+		key := cfg.Inbounds[0].TLS.Reality.PrivateKey
+		private, err := base64.RawURLEncoding.DecodeString(key)
+		if err != nil || len(private) != 32 || strings.ContainsAny(key, "+/=") {
+			t.Fatal("Reality private key is not unpadded base64url")
+		}
+		link, err := url.Parse(bundle.Link("192.0.2.1"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded := link.Query().Get("pbk")
+		public, err := base64.RawURLEncoding.DecodeString(encoded)
+		if err != nil || len(public) != 32 || strings.ContainsAny(encoded, "+/= ") {
+			t.Fatal("Reality link public key is not unpadded base64url")
+		}
+		want, err := curve25519.X25519(private, curve25519.Basepoint)
+		if err != nil || !bytes.Equal(want, public) {
+			t.Fatal("Reality public/private key pair mismatch")
+		}
 	}
 }

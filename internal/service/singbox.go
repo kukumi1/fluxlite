@@ -19,14 +19,16 @@ import (
 )
 
 type SingBoxUserInput struct {
-	NodeID     int64                 `json:"node_id"`
-	Name       string                `json:"name"`
-	Protocol   model.SingBoxProtocol `json:"protocol"`
-	Port       int                   `json:"port"`
-	QuotaBytes int64                 `json:"quota_bytes"`
-	Cipher     string                `json:"cipher"`
-	AccessDays int                   `json:"access_days"`
-	ExpiresAt  time.Time             `json:"expires_at"`
+	// Internal ownership is reserved durably before any remote deployment.
+	subscriptionID int64
+	NodeID         int64                 `json:"node_id"`
+	Name           string                `json:"name"`
+	Protocol       model.SingBoxProtocol `json:"protocol"`
+	Port           int                   `json:"port"`
+	QuotaBytes     int64                 `json:"quota_bytes"`
+	Cipher         string                `json:"cipher"`
+	AccessDays     int                   `json:"access_days"`
+	ExpiresAt      time.Time             `json:"expires_at"`
 }
 
 type SingBoxUserUpdate struct {
@@ -38,6 +40,9 @@ type SingBoxUserUpdate struct {
 }
 
 func (s *Service) UpdateSingBoxUser(ctx context.Context, id int64, in SingBoxUserUpdate) error {
+	if err := s.subscriptionIndependentOnly(ctx, id); err != nil {
+		return err
+	}
 	u, err := s.store.SingBoxUserByID(ctx, id)
 	if err != nil {
 		return err
@@ -92,6 +97,9 @@ var ErrSingBoxQuotaExhausted = errors.New("sing-box user quota is exhausted; add
 var ErrSingBoxExpired = errors.New("sing-box user connection validity has expired")
 
 func (s *Service) SetSingBoxExpiry(ctx context.Context, id int64, expiresAt time.Time) error {
+	if err := s.subscriptionIndependentOnly(ctx, id); err != nil {
+		return err
+	}
 	expiresAt = expiresAt.UTC()
 	if !expiresAt.IsZero() && !expiresAt.After(time.Now().UTC()) {
 		return fmt.Errorf("connection expiry must be in the future")
@@ -102,6 +110,9 @@ func (s *Service) SetSingBoxExpiry(ctx context.Context, id int64, expiresAt time
 	}
 	if u.Source != model.SingBoxManaged {
 		return ErrSingBoxNotManaged
+	}
+	if u.Status == model.SingBoxStatusError {
+		return errors.New("incomplete deployment must be deleted before recreation")
 	}
 	u.ExpiresAt = expiresAt
 	if !u.Enabled {
@@ -209,6 +220,21 @@ func (s *Service) ScanSingBox(ctx context.Context, nodeID int64) ([]SingBoxDisco
 }
 
 func (s *Service) CreateSingBoxUser(ctx context.Context, in SingBoxUserInput) (*model.SingBoxUser, error) {
+	return s.createSingBoxUser(ctx, in, singBoxCreateOps{
+		ports: func(ctx context.Context, node *model.Node) (map[int]bool, error) {
+			return s.newLiveLookup(nil).UsedPortsOnNode(ctx, node.ID, nil)
+		},
+		deploy: s.deploySingBoxUser, cleanup: s.removeSingBoxUser,
+	})
+}
+
+func (s *Service) createSingBoxUser(ctx context.Context, in SingBoxUserInput, ops singBoxCreateOps) (*model.SingBoxUser, error) {
+	// Serialize allocation and reservation with other creates and adoptions.
+	release, err := s.lockSingBoxAdoption(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	node, err := s.store.NodeByID(ctx, in.NodeID)
 	if err != nil {
 		return nil, err
@@ -223,35 +249,20 @@ func (s *Service) CreateSingBoxUser(ctx context.Context, in SingBoxUserInput) (*
 	if !expiresAt.IsZero() && !expiresAt.After(time.Now().UTC()) {
 		return nil, fmt.Errorf("connection expiry must be in the future")
 	}
-	port := in.Port
-	if port == 0 {
-		for candidate := node.PortStart; candidate <= node.PortEnd; candidate++ {
-			claimed, err := s.store.PortClaimed(ctx, node.ID, candidate, 0)
-			if err != nil {
-				return nil, err
-			}
-			if !claimed {
-				port = candidate
-				break
-			}
-		}
-	}
-	if port == 0 {
-		return nil, fmt.Errorf("no free port on node %s", node.Name)
-	}
-	claimed, err := s.store.PortClaimed(ctx, node.ID, port, 0)
+	used, err := ops.ports(ctx, node)
 	if err != nil {
 		return nil, err
 	}
-	if claimed {
-		return nil, fmt.Errorf("port %d is already claimed on %s", port, node.Name)
+	port, err := selectSingBoxPort(ctx, node, in.Port, used, func(ctx context.Context, port int) (bool, error) { return s.store.PortClaimed(ctx, node.ID, port, 0) })
+	if err != nil {
+		return nil, err
 	}
 
 	periodStart := time.Now().UTC()
 	u := &model.SingBoxUser{
 		NodeID: node.ID, Name: strings.TrimSpace(in.Name), Protocol: in.Protocol,
-		Port: port, Enabled: true, Source: model.SingBoxManaged,
-		Status: model.SingBoxStatusUnknown, BaseQuotaBytes: in.QuotaBytes, PeriodDays: 30,
+		Port: port, Enabled: false, Source: model.SingBoxManaged,
+		Status: model.SingBoxStatusError, BaseQuotaBytes: in.QuotaBytes, PeriodDays: 30,
 		PeriodStartedAt: periodStart, PeriodEndsAt: periodStart.Add(30 * 24 * time.Hour), ExpiresAt: expiresAt,
 		ServiceName: "pending", ConfigPath: "pending",
 	}
@@ -270,33 +281,63 @@ func (s *Service) CreateSingBoxUser(ctx context.Context, in SingBoxUserInput) (*
 	if err := s.store.CreateSingBoxUser(ctx, u); err != nil {
 		return nil, err
 	}
+	// The ID now belongs to this operation. A failed INSERT must never
+	// trigger cleanup of another user's existing reservation.
+	remoteTouched := false
+	rollback := func(cause error) (*model.SingBoxUser, error) {
+		removed := false
+		err := rollbackSingBoxCreation(ctx, cause, remoteTouched,
+			func(ctx context.Context) error { return ops.cleanup(ctx, node, u) },
+			func(ctx context.Context) error {
+				var err error
+				if in.subscriptionID > 0 {
+					err = s.store.DeleteSubscriptionMemberAndUser(ctx, u.ID)
+				} else {
+					err = s.store.DeleteSingBoxUser(ctx, u.ID)
+				}
+				removed = err == nil
+				return err
+			},
+			func(ctx context.Context) error {
+				u.Enabled, u.Status = false, model.SingBoxStatusError
+				return s.store.UpdateSingBoxUser(ctx, u)
+			})
+		if !removed {
+			return u, err
+		}
+		return nil, err
+	}
 	u.ServiceName = fmt.Sprintf("fluxlite-singbox-%d", u.ID)
 	u.ConfigPath = fmt.Sprintf("/etc/fluxlite/singbox/%d/config.json", u.ID)
 	bundle, err = singbox.Generate(u.Protocol, u.Name, u.Port, fmt.Sprintf("/etc/fluxlite/singbox/%d", u.ID), in.Cipher)
 	if err != nil {
-		_ = s.store.DeleteSingBoxUser(ctx, u.ID)
-		return nil, err
+		return rollback(err)
 	}
 	previousConfig := u.ConfigBlob
 	u.ConfigBlob, err = s.sealer.Seal(mustJSON(bundle))
 	if err != nil {
-		_ = s.store.DeleteSingBoxUser(ctx, u.ID)
-		return nil, err
+		return rollback(err)
 	}
 	if err := s.store.CompareAndSwapSingBoxConfig(ctx, u.ID, previousConfig, u.ConfigBlob); err != nil {
-		_ = s.store.DeleteSingBoxUser(ctx, u.ID)
-		return nil, err
+		return rollback(err)
 	}
 	if err := s.store.UpdateSingBoxUser(ctx, u); err != nil {
-		_ = s.store.DeleteSingBoxUser(ctx, u.ID)
-		return nil, err
+		return rollback(err)
 	}
-	if err := s.deploySingBoxUser(ctx, node, u, bundle); err != nil {
-		_ = s.store.DeleteSingBoxUser(ctx, u.ID)
-		return nil, err
+	if in.subscriptionID > 0 {
+		if err := s.store.AddSubscriptionMember(ctx, in.subscriptionID, store.SubscriptionMember{UserID: u.ID, NodeID: u.NodeID, Protocol: string(u.Protocol)}); err != nil {
+			return rollback(err)
+		}
 	}
-	u.Status = model.SingBoxStatusStopped
-	_ = s.store.UpdateSingBoxUser(ctx, u)
+	remoteTouched = true // Even a failed SSH write may have reached the node.
+	if err := ops.deploy(ctx, node, u, bundle); err != nil {
+		return rollback(err)
+	}
+	u.Enabled, u.Status = true, model.SingBoxStatusStopped
+	if err := s.store.UpdateSingBoxUser(ctx, u); err != nil {
+		return rollback(err)
+	}
+
 	return u, nil
 }
 
@@ -365,9 +406,34 @@ func (s *Service) AdoptSingBoxUser(ctx context.Context, id int64, quota int64) e
 }
 
 func (s *Service) SetSingBoxEnabled(ctx context.Context, id int64, enabled bool) error {
+	ctx, cancel := context.WithTimeout(ctx, subscriptionMutationTimeout)
+	defer cancel()
+	owner, err := s.store.SubscriptionForUser(ctx, id)
+	if err != nil {
+		return err
+	}
+	if owner != nil && owner.Mode != "collection" {
+		release, err := s.lockSubscription(ctx, owner.ID)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+	return s.setSingBoxEnabled(ctx, id, enabled)
+}
+func (s *Service) setSingBoxEnabled(ctx context.Context, id int64, enabled bool) error {
+	if enabled {
+		if err := s.subscriptionStartAllowed(ctx, id); err != nil {
+			return err
+		}
+	}
+
 	u, err := s.store.SingBoxUserByID(ctx, id)
 	if err != nil {
 		return err
+	}
+	if enabled && u.Status == model.SingBoxStatusError {
+		return errors.New("incomplete deployment must be deleted before recreation")
 	}
 	if u.Source != model.SingBoxManaged {
 		return ErrSingBoxNotManaged
@@ -400,6 +466,9 @@ func (s *Service) SetSingBoxEnabled(ctx context.Context, id int64, enabled bool)
 }
 
 func (s *Service) DeleteSingBoxUser(ctx context.Context, id int64) error {
+	if err := s.subscriptionIndependentOnly(ctx, id); err != nil {
+		return err
+	}
 	u, err := s.store.SingBoxUserByID(ctx, id)
 	if err != nil {
 		return err
@@ -417,6 +486,9 @@ func (s *Service) DeleteSingBoxUser(ctx context.Context, id int64) error {
 }
 
 func (s *Service) AddSingBoxTopUp(ctx context.Context, id, bytes int64) error {
+	if err := s.subscriptionIndependentOnly(ctx, id); err != nil {
+		return err
+	}
 	u, err := s.store.SingBoxUserByID(ctx, id)
 	if err != nil {
 		return err
@@ -438,6 +510,9 @@ func (s *Service) AddSingBoxTopUp(ctx context.Context, id, bytes int64) error {
 }
 
 func (s *Service) ReduceSingBoxQuota(ctx context.Context, id, bytes int64) error {
+	if err := s.subscriptionIndependentOnly(ctx, id); err != nil {
+		return err
+	}
 	u, err := s.store.SingBoxUserByID(ctx, id)
 	if err != nil {
 		return err
@@ -467,6 +542,9 @@ func (s *Service) ReduceSingBoxQuota(ctx context.Context, id, bytes int64) error
 }
 
 func (s *Service) ResetSingBoxUsage(ctx context.Context, id int64) error {
+	if err := s.subscriptionIndependentOnly(ctx, id); err != nil {
+		return err
+	}
 	u, err := s.store.SingBoxUserByID(ctx, id)
 	if err != nil {
 		return err
@@ -481,6 +559,10 @@ func (s *Service) ResetSingBoxUsage(ctx context.Context, id int64) error {
 }
 
 func (s *Service) ExportSingBoxBundle(ctx context.Context, id int64, host string) (map[string]any, error) {
+	if err := s.subscriptionStartAllowed(ctx, id); err != nil {
+		return nil, err
+	}
+
 	u, err := s.store.SingBoxUserByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -559,95 +641,132 @@ func (s *Service) ExportSingBoxBundle(ctx context.Context, id int64, host string
 	return result, nil
 }
 
+type singBoxTrafficOps struct {
+	unit     func(context.Context, *model.Node, *model.SingBoxUser, string) error
+	counters func(context.Context, *model.Node, int64) ([2]int64, error)
+	online   func(context.Context, *model.Node, *model.SingBoxUser) (bool, error)
+}
+
 func (s *Service) CollectSingBoxTraffic(ctx context.Context) error {
+	return s.collectSingBoxTraffic(ctx, singBoxTrafficOps{unit: s.remoteUnit, counters: s.readSingBoxCounters, online: s.singBoxUserOnline})
+}
+
+// Each member gets an independent bounded deadline. An unreachable machine or
+// failed stop must not starve another node's quota and expiry enforcement.
+func (s *Service) collectSingBoxTraffic(ctx context.Context, ops singBoxTrafficOps) error {
 	users, err := s.store.ListSingBoxUsers(ctx)
 	if err != nil {
 		return err
 	}
-	now := time.Now().UTC()
+	ids := make([]int64, 0, len(users))
 	for _, u := range users {
-		if !u.ExpiresAt.IsZero() && !now.Before(u.ExpiresAt) {
-			if u.Source == model.SingBoxManaged && u.Enabled {
-				node, err := s.store.NodeByID(ctx, u.NodeID)
-				if err != nil {
-					return err
-				}
-				if err := s.remoteUnit(ctx, node, u, "stop"); err != nil {
-					return err
-				}
+		ids = append(ids, u.ID)
+	}
+	return runSubscriptionMembers(ctx, ids, func(child context.Context, id int64) error {
+		u, err := s.store.SingBoxUserByID(child, id)
+		if err != nil {
+			return err
+		}
+		return s.collectSingBoxUserTraffic(child, u, time.Now().UTC(), ops)
+	})
+}
+
+func (s *Service) collectSingBoxUserTraffic(ctx context.Context, u *model.SingBoxUser, now time.Time, ops singBoxTrafficOps) error {
+	owner, ownerErr := s.store.SubscriptionForUser(ctx, u.ID)
+	if ownerErr != nil {
+		return ownerErr
+	}
+	if owner != nil && owner.Mode != "collection" {
+		return nil
+	}
+
+	if u.Status == model.SingBoxStatusError {
+		return nil
+	}
+
+	if !u.ExpiresAt.IsZero() && !now.Before(u.ExpiresAt) {
+		if u.Source == model.SingBoxManaged && u.Enabled {
+			node, err := s.store.NodeByID(ctx, u.NodeID)
+			if err != nil {
+				return err
 			}
-			if u.Enabled || u.Status != model.SingBoxStatusExpired {
-				u.Enabled, u.Status = false, model.SingBoxStatusExpired
+			if err := ops.unit(ctx, node, u, "stop"); err != nil {
+				return err
+			}
+		}
+		if u.Enabled || u.Status != model.SingBoxStatusExpired {
+			u.Enabled, u.Status = false, model.SingBoxStatusExpired
+			if err := s.store.UpdateSingBoxUser(ctx, u); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if !now.Before(u.PeriodEndsAt) {
+		wasQuotaPaused := u.QuotaPausedAt != nil
+		if err := s.store.RollSingBoxPeriod(ctx, u, now); err != nil {
+			return err
+		}
+		if wasQuotaPaused && u.Source == model.SingBoxManaged && s.subscriptionStartAllowed(ctx, u.ID) == nil {
+			node, err := s.store.NodeByID(ctx, u.NodeID)
+			if err != nil {
+				return err
+			}
+			if err := ops.unit(ctx, node, u, "start"); err != nil {
+				return err
+			}
+			u.Enabled, u.Status = true, model.SingBoxStatusStopped
+			if err := s.store.UpdateSingBoxUser(ctx, u); err != nil {
+				return err
+			}
+		}
+	}
+	if u.Source != model.SingBoxManaged {
+		return nil
+	}
+	node, err := s.store.NodeByID(ctx, u.NodeID)
+	if err != nil {
+		return err
+	}
+	counters, err := ops.counters(ctx, node, u.ID)
+	if err != nil {
+		return fmt.Errorf("sample sing-box user %d: %w", u.ID, err)
+	}
+	if u.Enabled && u.QuotaPausedAt == nil {
+		online, statusErr := ops.online(ctx, node, u)
+		if statusErr == nil {
+			// A packet seen since the previous counter sample also counts as
+			// activity. This covers UDP clients on hosts without conntrack.
+			recentActivity := counters[0] > u.RawIn || counters[1] > u.RawOut
+			desired := model.SingBoxStatusStopped
+			if online || recentActivity {
+				desired = model.SingBoxStatusRunning
+			}
+			if u.Status != desired {
+				u.Status = desired
 				if err := s.store.UpdateSingBoxUser(ctx, u); err != nil {
 					return err
 				}
 			}
-			continue
+		} else {
+			s.log.Debug("sing-box online probe failed", "user", u.Name, "error", statusErr)
 		}
-		if !now.Before(u.PeriodEndsAt) {
-			wasQuotaPaused := u.QuotaPausedAt != nil
-			if err := s.store.RollSingBoxPeriod(ctx, u, now); err != nil {
-				return err
-			}
-			if wasQuotaPaused && u.Source == model.SingBoxManaged {
-				node, err := s.store.NodeByID(ctx, u.NodeID)
-				if err != nil {
-					return err
-				}
-				if err := s.remoteUnit(ctx, node, u, "start"); err != nil {
-					return err
-				}
-				u.Enabled, u.Status = true, model.SingBoxStatusStopped
-				if err := s.store.UpdateSingBoxUser(ctx, u); err != nil {
-					return err
-				}
-			}
-		}
-		if u.Source != model.SingBoxManaged {
-			continue
-		}
-		node, err := s.store.NodeByID(ctx, u.NodeID)
-		if err != nil {
+	}
+	if err := s.store.RecordSubscriptionCounters(ctx, u.ID, counters[0], counters[1]); err != nil {
+		return err
+	}
+	updated, err := s.store.RecordSingBoxTraffic(ctx, u.ID, counters[0], counters[1])
+	if err != nil {
+		return err
+	}
+	if updated.QuotaPausedAt != nil && updated.Enabled {
+		if err := ops.unit(ctx, node, updated, "stop"); err != nil {
 			return err
 		}
-		counters, err := s.readSingBoxCounters(ctx, node, u.ID)
-		if err != nil {
-			s.log.Debug("sing-box traffic sample failed", "user", u.Name, "error", err)
-			continue
-		}
-		if u.Enabled && u.QuotaPausedAt == nil {
-			online, statusErr := s.singBoxUserOnline(ctx, node, u)
-			if statusErr == nil {
-				// A packet seen since the previous counter sample also counts as
-				// activity. This covers UDP clients on hosts without conntrack.
-				recentActivity := counters[0] > u.RawIn || counters[1] > u.RawOut
-				desired := model.SingBoxStatusStopped
-				if online || recentActivity {
-					desired = model.SingBoxStatusRunning
-				}
-				if u.Status != desired {
-					u.Status = desired
-					if err := s.store.UpdateSingBoxUser(ctx, u); err != nil {
-						return err
-					}
-				}
-			} else {
-				s.log.Debug("sing-box online probe failed", "user", u.Name, "error", statusErr)
-			}
-		}
-		updated, err := s.store.RecordSingBoxTraffic(ctx, u.ID, counters[0], counters[1])
-		if err != nil {
+		updated.Enabled = false
+		updated.Status = model.SingBoxStatusExhausted
+		if err := s.store.UpdateSingBoxUser(ctx, updated); err != nil {
 			return err
-		}
-		if updated.QuotaPausedAt != nil && updated.Enabled {
-			if err := s.remoteUnit(ctx, node, updated, "stop"); err != nil {
-				return err
-			}
-			updated.Enabled = false
-			updated.Status = model.SingBoxStatusExhausted
-			if err := s.store.UpdateSingBoxUser(ctx, updated); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
@@ -775,44 +894,37 @@ func (s *Service) deploySingBoxUser(ctx context.Context, node *model.Node, u *mo
 }
 
 func (s *Service) remoteUnit(ctx context.Context, node *model.Node, u *model.SingBoxUser, action string) error {
-	client, err := s.pool.Get(ctx, node)
+	cmd, err := singBoxUnitCommand(node.InitSystem, u, action)
 	if err != nil {
 		return err
 	}
-	cmd := ""
-	if node.InitSystem == model.InitSystemd {
-		cmd = "systemctl " + action + " " + shellQuote(u.ServiceName) + ".service"
+	client, err := s.pool.Get(ctx, node)
+	if err != nil {
+		return &singBoxOperationError{"connect for sing-box availability change failed", err}
 	}
-	if node.InitSystem == model.InitOpenRC {
-		cmd = "rc-service " + shellQuote(u.ServiceName) + " " + action
+	if _, err := sshx.RunCheck(ctx, client.Client, cmd); err != nil {
+		return &singBoxOperationError{"sing-box availability change or verification failed", err}
 	}
-	if cmd == "" {
-		return fmt.Errorf("unsupported init system %q on %s", node.InitSystem, node.Name)
+	return nil
+}
+
+func (s *Service) removeSingBoxUser(ctx context.Context, node *model.Node, u *model.SingBoxUser) error {
+	cmd, err := singBoxRemovalCommand(node.InitSystem, u)
+	if err != nil {
+		return err
+	}
+	client, err := s.pool.Get(ctx, node)
+	if err != nil {
+		return err
 	}
 	_, err = sshx.RunCheck(ctx, client.Client, cmd)
 	return err
 }
 
-func (s *Service) removeSingBoxUser(ctx context.Context, node *model.Node, u *model.SingBoxUser) error {
-	client, err := s.pool.Get(ctx, node)
-	if err != nil {
-		return err
-	}
-	serviceStop := "systemctl disable --now " + shellQuote(u.ServiceName) + ".service 2>/dev/null || true"
-	if node.InitSystem == model.InitOpenRC {
-		serviceStop = "rc-service " + shellQuote(u.ServiceName) + " stop 2>/dev/null || true; rc-update del " + shellQuote(u.ServiceName) + " default 2>/dev/null || true"
-	}
-	cmd := serviceStop + "; rm -rf " + shellQuote("/etc/fluxlite/singbox/"+strconv.FormatInt(u.ID, 10)) + " /var/lib/fluxlite-singbox/" + strconv.FormatInt(u.ID, 10) + "; for bin in iptables ip6tables; do if command -v $bin >/dev/null 2>&1; then $bin -S FLUXLITE_SB_ACCT 2>/dev/null | grep 'fluxlite-sb:" + strconv.FormatInt(u.ID, 10) + ":' | sed 's/^-A /-D /' | while read -r rule; do eval \"$bin $rule\" >/dev/null 2>&1 || true; done; fi; done"
-	if _, err := sshx.Run(ctx, client.Client, cmd); err != nil {
-		return err
-	}
-	return nil
-}
-
 func (s *Service) ensureSingBoxAccounting(ctx context.Context, client *ssh.Client, id int64, port int) error {
 	for _, bin := range []string{"iptables", "ip6tables"} {
-		cmd := fmt.Sprintf("if command -v %s >/dev/null 2>&1; then %s -N FLUXLITE_SB_ACCT 2>/dev/null || true; %s -C INPUT -j FLUXLITE_SB_ACCT 2>/dev/null || %s -I INPUT 1 -j FLUXLITE_SB_ACCT; %s -C OUTPUT -j FLUXLITE_SB_ACCT 2>/dev/null || %s -I OUTPUT 1 -j FLUXLITE_SB_ACCT; for p in tcp udp; do %s -C FLUXLITE_SB_ACCT -p $p --dport %d -m comment --comment 'fluxlite-sb:%d:in' 2>/dev/null || %s -A FLUXLITE_SB_ACCT -p $p --dport %d -m comment --comment 'fluxlite-sb:%d:in'; %s -C FLUXLITE_SB_ACCT -p $p --sport %d -m comment --comment 'fluxlite-sb:%d:out' 2>/dev/null || %s -A FLUXLITE_SB_ACCT -p $p --sport %d -m comment --comment 'fluxlite-sb:%d:out'; done; fi", bin, bin, bin, bin, bin, bin, bin, port, id, bin, port, id, bin, port, id, bin, port, id)
-		if _, err := sshx.Run(ctx, client, cmd); err != nil {
+		cmd := fmt.Sprintf("command -v %s >/dev/null 2>&1 || exit 1; %s -N FLUXLITE_SB_ACCT 2>/dev/null || true; %s -C INPUT -j FLUXLITE_SB_ACCT 2>/dev/null || %s -I INPUT 1 -j FLUXLITE_SB_ACCT; %s -C OUTPUT -j FLUXLITE_SB_ACCT 2>/dev/null || %s -I OUTPUT 1 -j FLUXLITE_SB_ACCT; for p in tcp udp; do %s -C FLUXLITE_SB_ACCT -p $p --dport %d -m comment --comment 'fluxlite-sb:%d:in' 2>/dev/null || %s -A FLUXLITE_SB_ACCT -p $p --dport %d -m comment --comment 'fluxlite-sb:%d:in'; %s -C FLUXLITE_SB_ACCT -p $p --sport %d -m comment --comment 'fluxlite-sb:%d:out' 2>/dev/null || %s -A FLUXLITE_SB_ACCT -p $p --sport %d -m comment --comment 'fluxlite-sb:%d:out'; done", bin, bin, bin, bin, bin, bin, bin, port, id, bin, port, id, bin, port, id, bin, port, id)
+		if _, err := sshx.RunCheck(ctx, client, "set -e\n"+cmd); err != nil {
 			return err
 		}
 	}
@@ -824,28 +936,26 @@ var singBoxCounterLine = regexp.MustCompile(`\s+\d+\s+(\d+).*fluxlite-sb:(\d+):(
 func (s *Service) readSingBoxCounters(ctx context.Context, node *model.Node, id int64) ([2]int64, error) {
 	client, err := s.pool.Get(ctx, node)
 	if err != nil {
-		return [2]int64{}, err
+		return [2]int64{}, errors.New("accounting connection unavailable")
 	}
 	var out [2]int64
 	for _, bin := range []string{"iptables", "ip6tables"} {
-		res, err := sshx.Run(ctx, client.Client, bin+" -nvxL FLUXLITE_SB_ACCT 2>/dev/null || true")
+		command := bin + " -C INPUT -j FLUXLITE_SB_ACCT && " + bin + " -C OUTPUT -j FLUXLITE_SB_ACCT && " + bin + " -nvxL FLUXLITE_SB_ACCT"
+		res, err := sshx.RunCheck(ctx, client.Client, command)
+		if err != nil {
+			return out, errors.New("accounting chain unavailable")
+		}
+		v, err := parseSingBoxCounters(res, id)
 		if err != nil {
 			return out, err
 		}
-		for _, line := range strings.Split(res.Stdout, "\n") {
-			m := singBoxCounterLine.FindStringSubmatch(line)
-			if len(m) != 4 || m[2] != strconv.FormatInt(id, 10) {
-				continue
+		for i := range out {
+			if v[i] > (1<<63-1)-out[i] {
+				return out, errors.New("accounting counter overflow")
 			}
-			bytes, _ := strconv.ParseInt(m[1], 10, 64)
-			if m[3] == "in" {
-				out[0] += bytes
-			} else {
-				out[1] += bytes
-			}
+			out[i] += v[i]
 		}
 	}
 	return out, nil
 }
-
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }

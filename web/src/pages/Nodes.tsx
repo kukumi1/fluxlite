@@ -1,3 +1,4 @@
+import { SortHandle, useManualOrder } from "../components/ManualOrder";
 import { useEffect, useId, useState } from "react";
 import {
   api,
@@ -110,7 +111,7 @@ function uninstallCommand(): string {
   return `curl -fsSL ${window.location.origin}/uninstall.sh | sh`;
 }
 
-export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => void }) {
+export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onCreateDraftConsumed }: { onOpenConsole?: (nodeID: number) => void; telegram?: boolean; initialCreateInput?: NodeInput; onCreateDraftConsumed?: () => void }) {
   const detailsPrefix = useId();
   const [expandedDetails, setExpandedDetails] = useState<Record<number, boolean>>({});
   const [search, setSearch] = useState("");
@@ -119,7 +120,8 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<Node | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(!!initialCreateInput);
+  const [createInput, setCreateInput] = useState(initialCreateInput);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [probe, setProbe] = useState<{ node: string; result: ProbeResult } | null>(null);
   const [enrolling, setEnrolling] = useState(false);
@@ -128,6 +130,11 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
   const [metrics, setMetrics] = useState<Record<string, NodeMetrics>>({});
   const [view, setView] = useState<NodeView>(storedNodeView);
   const [confirm, confirmDialog] = useConfirm();
+
+  const order = useManualOrder({
+    items: nodes, setItems: setNodes, save: api.reorderNodes, reload: api.listNodes, onError: setError,
+    disabled: busyId !== null || creating || !!editing || enrolling || !!reinstalling,
+  });
 
   function chooseView(next: NodeView) {
     setView(next);
@@ -141,17 +148,17 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
     n.via_node_id ? nodes.find((x) => x.id === n.via_node_id)?.name ?? n.via_node_id : "直连";
 
   function nodeActions(n: Node) {
-    const busy = busyId === n.id;
+    const busy = busyId === n.id || order.pending;
     return (
       <div className="row nowrap">
-        <button className="btn sm" title="在浏览器里打开这台机器的 SSH" onClick={() => onOpenConsole(n.id)}>
+        {onOpenConsole && <button className="btn sm" title="在浏览器里打开这台机器的 SSH" onClick={() => onOpenConsole(n.id)}>
           <TerminalSquare size={13} />
           终端
-        </button>
+        </button>}
         <button className="btn sm" disabled={busy} onClick={() => void runProbe(n)}>
-          {busy ? "探测中…" : "探测"}
+          {busyId === n.id ? "探测中…" : "探测"}
         </button>
-        {n.arch !== "" && !n.realm_version && (
+        {!telegram && n.arch !== "" && !n.realm_version && (
           <button
             className="btn sm"
             disabled={busy}
@@ -161,16 +168,16 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
             装内核
           </button>
         )}
-        <button className="btn sm" onClick={() => setEditing(n)}>
+        <button className="btn sm" disabled={order.pending} onClick={() => setEditing(n)}>
           编辑
         </button>
-        <button
+        {!telegram && <button
           className="btn sm"
           title="机器重装过系统？在这里拿一条命令重新接管，链路不用重建"
-          onClick={() => setReinstalling(n)}
+          disabled={order.pending} onClick={() => setReinstalling(n)}
         >
           重装
-        </button>
+        </button>}
         <button className="btn sm danger" disabled={busy} onClick={() => void remove(n)}>
           删除
         </button>
@@ -179,9 +186,10 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
   }
 
   async function load() {
+    const version = order.readVersion();
     try {
       const [list, snapshot] = await Promise.all([api.listNodes(), api.metrics()]);
-      setNodes(list ?? []);
+      if (order.acceptsRead(version)) setNodes(list ?? []);
       setMetrics(snapshot ?? {});
     } catch (err) {
       fail(err);
@@ -237,7 +245,7 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
   async function remove(node: Node) {
     const ok = await confirm({
       title: `删除节点 ${node.name}？`,
-      body: "面板只删除自己这边的记录。机器上的 realm、转发服务和面板的登录公钥不会被清理，删除后会给出卸载命令。",
+      body: "将删除面板机器记录及其托管的 sing-box 服务和配置；仅扫描的外部配置不受影响。链路或跳板仍引用此机器时无法删除。realm 和面板登录公钥不会被清理，删除后会给出卸载命令。",
       confirmLabel: "删除节点",
       danger: true,
     });
@@ -261,12 +269,12 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
   }
 
   const shownNodes = nodes.filter((node) => `${node.name} ${node.host} ${node.os_id} ${node.arch}`.toLowerCase().includes(search.trim().toLowerCase()) && (statusFilter === "all" || node.status === statusFilter));
+  const visibleIDs = shownNodes.map(item => item.id);
 
   return (
     <div className="management-page machines-management">
       <PageHeader
         title="机器"
-        desc="转发链路的组成机器。内网节点需指定跳板，NAT 机器需按实际映射填写端口池。"
         actions={
           <>
             {nodes.length > 0 && (
@@ -287,13 +295,13 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
                 })}
               </div>
             )}
-            <button className="btn" onClick={() => setCreating(true)}>
+            <button className="btn" disabled={order.pending} onClick={() => setCreating(true)}>
               手动添加
             </button>
-            <button className="btn primary" onClick={() => setEnrolling(true)}>
+            {!telegram && <button className="btn primary" disabled={order.pending} onClick={() => setEnrolling(true)}>
               <Plus size={15} />
               一键注册
-            </button>
+            </button>}
           </>
         }
       />
@@ -311,12 +319,12 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
         <Card>
           <EmptyState
             icon={<Server size={22} />}
-            title="还没有节点"
-            desc="先添加一台机器，再做能力探测，之后才能用它组链路。"
+            title="还没有机器"
+            desc="添加并探测机器后，即可创建链路。"
             action={
-              <button className="btn primary" onClick={() => setEnrolling(true)}>
+              <button className="btn primary" onClick={() => telegram ? setCreating(true) : setEnrolling(true)}>
                 <Plus size={15} />
-                一键注册
+                {telegram ? "添加机器" : "一键注册"}
               </button>
             }
           />
@@ -331,10 +339,11 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
               const sshAddress = `${n.ssh_user}@${n.host.includes(":") ? `[${n.host}]` : n.host}:${n.ssh_port}`;
               const ipv6 = ipv6DialAddress(n);
               return (
-                <tbody key={n.id} data-details-expanded={!!expandedDetails[n.id]}>
+                <tbody key={n.id} {...order.targetProps(n.id, visibleIDs)} data-details-expanded={!!expandedDetails[n.id]}>
                   <tr className="machine-resource-row">
                     <td className="machine-identity-cell">
                       <div className="machine-list-identity">
+                        <SortHandle {...order.handleProps(n.id, n.name, visibleIDs)} />
                         <span className="machine-list-icon"><Server size={18} /></span>
                         <div><div className="machine-list-name"><strong>{n.name}</strong><button type="button" className="machine-detail-toggle" aria-expanded={!!expandedDetails[n.id]} aria-controls={`${detailsPrefix}-${n.id}`} aria-label={`${expandedDetails[n.id] ? "收起" : "展开"} ${n.name} 连接详情`} title="连接详情" onClick={() => setExpandedDetails((current) => ({ ...current, [n.id]: !current[n.id] }))}><ChevronDown size={15} /></button></div><div className="machine-list-system">{systemCell(n)}</div>{m?.container && <span className="tag" title={caveat ?? "运行在容器里"}>{m.container}</span>}</div>
                       </div>
@@ -363,10 +372,10 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
             const m = metrics[n.id];
             const caveat = memCaveat(m);
             return (
-              <Card index={cardIndex} key={n.id}>
+              <Card index={cardIndex} key={n.id} {...order.targetProps(n.id, visibleIDs)}>
                 <div className="spread" style={{ marginBottom: 8 }}>
                   <div style={{ minWidth: 0 }}>
-                    <h2 style={{ marginBottom: 2 }}>{n.name}</h2>
+                    <h2 className="sortable-title" style={{ marginBottom: 2 }}><SortHandle {...order.handleProps(n.id, n.name, visibleIDs)} />{n.name}</h2>
                     <div className="mono muted" style={{ fontSize: 12 }}>
                       {n.ssh_user}@{n.host}:{n.ssh_port}
                     </div>
@@ -477,7 +486,7 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
       {removed && (
         <Modal title={`节点 ${removed} 已从面板删除`} onClose={() => setRemoved(null)}>
           <Banner kind="warn">
-            机器上还留着 realm、转发服务，以及面板的登录公钥 —— 面板已经管不到它了，
+            托管的 sing-box 服务和配置已删除；仅扫描的外部配置不受影响。机器上仍可能留有 realm 和面板登录公钥，面板已不再管理此机器，
             需要在那台机器上执行卸载。
           </Banner>
           <p className="hint" style={{ marginTop: 0 }}>
@@ -494,7 +503,7 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
         </Modal>
       )}
 
-      {reinstalling && (
+      {!telegram && reinstalling && (
         <ReinstallDialog
           node={reinstalling}
           onClose={() => setReinstalling(null)}
@@ -502,7 +511,7 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
         />
       )}
 
-      {enrolling && (
+      {!telegram && enrolling && (
         <EnrollDialog
           nodes={nodes}
           onClose={() => setEnrolling(false)}
@@ -514,12 +523,17 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
         <NodeForm
           nodes={nodes}
           node={editing}
+          initialInput={createInput}
           onClose={() => {
             setCreating(false);
+            setCreateInput(undefined);
+            onCreateDraftConsumed?.();
             setEditing(null);
           }}
           onSaved={async (msg) => {
             setCreating(false);
+            setCreateInput(undefined);
+            onCreateDraftConsumed?.();
             setEditing(null);
             setNotice(msg);
             await load();
@@ -564,7 +578,7 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
           )}
           {(!probe.result.udp || probe.result.udp.Supported === null) && (
             <Banner kind="warn">
-              未能判定 UDP 能力，已保持原值而非武断标记为不通。
+              UDP 能力未知，保留原值。
               {probe.result.udp ? `原因：${probe.result.udp.Detail}` : ""}
             </Banner>
           )}
@@ -579,12 +593,13 @@ export function Nodes({ onOpenConsole }: { onOpenConsole: (nodeID: number) => vo
 interface NodeFormProps {
   nodes: Node[];
   node: Node | null;
+  initialInput?: NodeInput;
   onClose: () => void;
   onSaved: (message: string) => Promise<void>;
   onError: (err: unknown) => void;
 }
 
-function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
+function NodeForm({ nodes, node, initialInput, onClose, onSaved, onError }: NodeFormProps) {
   const [form, setForm] = useState<NodeInput>(
     node
       ? {
@@ -600,7 +615,7 @@ function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
           skip_udp_probe: node.skip_udp_probe,
           ipv6_entry: node.ipv6_entry,
         }
-      : emptyInput,
+      : { ...(initialInput ?? emptyInput), secret: "" },
   );
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
@@ -704,9 +719,7 @@ function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
           </label>
         </div>
         <p className="hint">
-          分配时会从起始端口向上取第一个空闲端口，并自动跳过节点上已被占用的端口。
-          起始端口默认避开 1-9999。
-          NAT 机器只能填服务商实际映射到本机的端口范围。
+          自动分配池内空闲端口；NAT 机器仅填写实际映射端口。
         </p>
 
         <label>
@@ -725,7 +738,7 @@ function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
               ))}
           </select>
         </label>
-        <p className="hint">仅对控制器无法直连的内网节点设置，下发时会自动经跳板。</p>
+        <p className="hint">仅内网机器需要跳板。</p>
 
         <label>
           IPv6 入口地址（选填）
@@ -737,10 +750,7 @@ function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
           />
         </label>
         <p className="hint">
-          只有 NAT 机器需要：服务商给了一个公网 IPv6「入口」，而机器自己身上只有内网
-          v6（fd 开头之类）。填上后，这台机器作为 IPv6 链路的入口时会按 IPv4 监听——
-          这类服务商是把 v6 流量转进机器的 IPv4 的。自己持有公网 IPv6 的机器留空，
-          探测会自动识别。
+          仅填写服务商映射到本机 IPv4 的公网 IPv6 入口。原生 IPv6 留空。
         </p>
 
         <label style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
@@ -752,7 +762,7 @@ function NodeForm({ nodes, node, onClose, onSaved, onError }: NodeFormProps) {
           />
           <span>跳过 UDP 检测</span>
         </label>
-        <p className="hint">多数 NAT 机器只映射 TCP，不跑 UDP 链路可勾选，每次探测省十几秒。</p>
+        <p className="hint">不使用 UDP 链路时可跳过。</p>
 
 
         <div className="row" style={{ justifyContent: "flex-end", marginTop: 8 }}>

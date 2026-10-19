@@ -153,7 +153,7 @@ func TestRecoveryMigrationFrom43(t *testing.T) {
 	}
 	defer st.Close()
 	var version int
-	if err := st.db.QueryRow(`SELECT version FROM schema_version`).Scan(&version); err != nil || version != 44 {
+	if err := st.db.QueryRow(`SELECT version FROM schema_version`).Scan(&version); err != nil || version != len(migrations) {
 		t.Fatalf("migration version %d: %v", version, err)
 	}
 	current, err := st.UserByID(ctx, u.ID)

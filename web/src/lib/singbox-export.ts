@@ -1,4 +1,8 @@
+export type SingBoxAddressFamily = "ipv4" | "ipv6";
+
 export interface SingBoxExportView {
+  addressFamily: SingBoxAddressFamily;
+  availableFamilies: SingBoxAddressFamily[];
   link: string;
   config: string;
   qr?: string;
@@ -25,7 +29,15 @@ export function normalizeSingBoxExport(value: unknown): SingBoxExportView {
   const qr = typeof value.qr_data_url === "string" && /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(value.qr_data_url)
     ? value.qr_data_url : undefined;
   const qrReason = typeof value.qr_error === "string" && value.qr_error.trim() ? `（${value.qr_error.trim()}）` : "";
+  // Older servers have no family metadata: expose only the address actually exported.
+  const server = value.config.outbounds.find((outbound) => typeof outbound.server === "string")?.server;
+  const addressFamily: SingBoxAddressFamily = value.address_family === "ipv4" || value.address_family === "ipv6"
+    ? value.address_family : typeof server === "string" && server.includes(":") ? "ipv6" : "ipv4";
+  const availableFamilies = Array.isArray(value.available_families)
+    ? value.available_families.filter((family): family is SingBoxAddressFamily => family === "ipv4" || family === "ipv6") : [];
   return {
+    addressFamily,
+    availableFamilies: [...new Set([...availableFamilies, addressFamily])].sort(),
     link,
     config: JSON.stringify(value.config, null, 2),
     qr,

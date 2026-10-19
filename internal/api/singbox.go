@@ -5,14 +5,17 @@ import (
 	"encoding/base64"
 	"errors"
 	"image/png"
+	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/boombuler/barcode"
 	"github.com/boombuler/barcode/qr"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/kukumi1/fluxlite/internal/model"
 	"github.com/kukumi1/fluxlite/internal/service"
 	"github.com/kukumi1/fluxlite/internal/singbox"
 )
@@ -205,11 +208,10 @@ func (s *Server) handleExportSingBoxUser(w http.ResponseWriter, r *http.Request)
 		writeError(w, statusForError(err), err.Error())
 		return
 	}
-	host := node.Host
-	if node.IPv6Entry != "" {
-		host = "[" + node.IPv6Entry + "]"
-	} else if node.IPv6Address != "" {
-		host = "[" + node.IPv6Address + "]"
+	host, family, available, err := singBoxExportAddress(node, r.URL.Query().Get("address_family"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	export, err := s.svc.ExportSingBoxBundle(r.Context(), id, host)
 	if err != nil {
@@ -220,6 +222,8 @@ func (s *Server) handleExportSingBoxUser(w http.ResponseWriter, r *http.Request)
 		writeError(w, status, err.Error())
 		return
 	}
+	export["address_family"] = family
+	export["available_families"] = available
 	if link, ok := export["link"].(string); ok && link != "" {
 		if qrURL, err := qrDataURL(link); err == nil {
 			export["qr_data_url"] = qrURL
@@ -258,4 +262,51 @@ func (s *Server) handleDeleteSingBoxUser(w http.ResponseWriter, r *http.Request)
 	}
 	s.audit(r, "singbox.delete", strconv.FormatInt(id, 10), "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// Address selection affects client exports only; never mutate the server bind
+// address, credentials or an existing node. Primary host remains the default.
+func singBoxExportAddress(node *model.Node, requested string) (string, string, []string, error) {
+	primary := strings.Trim(strings.TrimSpace(node.Host), "[]")
+	v4 := primary
+	ip := net.ParseIP(primary)
+	if ip != nil && ip.To4() == nil {
+		v4 = ""
+	}
+	v6 := strings.Trim(strings.TrimSpace(node.IPv6DialAddress()), "[]")
+	if v6 == "" && ip != nil && ip.To4() == nil {
+		v6 = primary
+	}
+	if parsed := net.ParseIP(v6); parsed == nil || parsed.To4() != nil {
+		v6 = ""
+	}
+	available := []string{}
+	if v4 != "" {
+		available = append(available, "ipv4")
+	}
+	if v6 != "" {
+		available = append(available, "ipv6")
+	}
+	family := requested
+	if family == "" {
+		if v4 != "" {
+			family = "ipv4"
+		} else {
+			family = "ipv6"
+		}
+	}
+	switch family {
+	case "ipv4":
+		if v4 != "" {
+			return v4, family, available, nil
+		}
+		return "", "", nil, errors.New("该机器没有可导出的 IPv4 主机地址")
+	case "ipv6":
+		if v6 != "" {
+			return v6, family, available, nil
+		}
+		return "", "", nil, errors.New("该机器没有可导出的 IPv6 地址")
+	default:
+		return "", "", nil, errors.New("地址类型必须为 ipv4 或 ipv6")
+	}
 }

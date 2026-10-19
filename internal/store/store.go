@@ -388,6 +388,17 @@ var migrations = []string{
 		answer_hash TEXT NOT NULL,
 		code_hash   BLOB NOT NULL CHECK(length(code_hash) = 32)
 	)`,
+	`CREATE TABLE IF NOT EXISTS telegram_integration (id INTEGER PRIMARY KEY CHECK(id=1), config BLOB NOT NULL)`,
+}
+
+func init() {
+	migrations = append(migrations,
+		`CREATE TABLE IF NOT EXISTS subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,enabled INTEGER NOT NULL,status TEXT NOT NULL,quota_bytes INTEGER NOT NULL CHECK(quota_bytes>=0),used_bytes INTEGER NOT NULL DEFAULT 0,expires_at DATETIME,created_at DATETIME NOT NULL,token_hash BLOB NOT NULL UNIQUE CHECK(length(token_hash)=32))`,
+		`CREATE TABLE IF NOT EXISTS subscription_members (subscription_id INTEGER NOT NULL REFERENCES subscriptions(id) ON DELETE RESTRICT,user_id INTEGER PRIMARY KEY REFERENCES singbox_users(id) ON DELETE RESTRICT,node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT,protocol TEXT NOT NULL,last_in INTEGER NOT NULL DEFAULT 0,last_out INTEGER NOT NULL DEFAULT 0)`,
+		`ALTER TABLE subscriptions ADD COLUMN token_secret BLOB`,
+		`ALTER TABLE subscriptions ADD COLUMN mode TEXT NOT NULL DEFAULT 'owned'; UPDATE subscriptions SET mode='collection' WHERE enabled=1 AND status='active' AND quota_bytes=0 AND expires_at IS NULL`,
+		`ALTER TABLE nodes ADD COLUMN sort_order INTEGER`,
+		`ALTER TABLE routes ADD COLUMN sort_order INTEGER`)
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -409,6 +420,30 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 
 	for i := current; i < len(migrations); i++ {
+		// Mode conversion and version publication must commit together: a crash
+		// cannot leave an added column with the data conversion silently skipped.
+		if i == 48 {
+			hasMode, err := s.hasColumn(ctx, "subscriptions", "mode")
+			if err != nil {
+				return err
+			}
+			err = s.inTx(ctx, func(tx *sql.Tx) error {
+				if !hasMode {
+					if _, err := tx.ExecContext(ctx, `ALTER TABLE subscriptions ADD COLUMN mode TEXT NOT NULL DEFAULT 'owned'`); err != nil {
+						return err
+					}
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE subscriptions SET mode='collection' WHERE mode='owned' AND enabled=1 AND status='active' AND quota_bytes=0 AND expires_at IS NULL`); err != nil {
+					return err
+				}
+				_, err := tx.ExecContext(ctx, `UPDATE schema_version SET version=49`)
+				return err
+			})
+			if err != nil {
+				return fmt.Errorf("apply migration 49: %w", err)
+			}
+			continue
+		}
 		done, err := s.alreadyApplied(ctx, migrations[i])
 		if err != nil {
 			return err

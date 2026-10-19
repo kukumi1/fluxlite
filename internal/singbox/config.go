@@ -164,7 +164,8 @@ func realityKeypair() (string, string, error) {
 	if err != nil {
 		return "", "", fmt.Errorf("reality keypair: %w", err)
 	}
-	return base64.RawStdEncoding.EncodeToString(private[:]), base64.RawStdEncoding.EncodeToString(public), nil
+	// sing-box Reality decodes raw base64url; standard base64 can contain + or /.
+	return base64.RawURLEncoding.EncodeToString(private[:]), base64.RawURLEncoding.EncodeToString(public), nil
 }
 
 func (b *Bundle) Link(host string) string {

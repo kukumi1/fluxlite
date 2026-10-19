@@ -44,6 +44,8 @@ type Service struct {
 	// Adoption briefly stops a node's shared service. This low-frequency
 	// operation is serialized across the panel rather than keeping unbounded
 	// per-node locks, so both duplicate users and different fragments are safe.
+	subscriptionLocksMu sync.Mutex
+	subscriptionLocks   map[int64]*subscriptionLock
 	singBoxAdoptionOnce sync.Once
 	singBoxAdoptionGate chan struct{}
 }
@@ -230,6 +232,16 @@ func (s *Service) UpdateNode(ctx context.Context, id int64, in NodeInput) (*mode
 
 // DeleteNode removes a node once nothing references it.
 func (s *Service) DeleteNode(ctx context.Context, id int64) error {
+	members, guardErr := s.store.ListSingBoxUsersOnNode(ctx, id)
+	if guardErr != nil {
+		return guardErr
+	}
+	for _, u := range members {
+		if guardErr = s.subscriptionIndependentOnly(ctx, u.ID); guardErr != nil {
+			return guardErr
+		}
+	}
+
 	routes, err := s.store.RoutesOnNode(ctx, id)
 	if err != nil {
 		return err

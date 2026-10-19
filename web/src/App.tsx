@@ -16,7 +16,8 @@ import {
   Waypoints,
   Zap,
 } from "lucide-react";
-import { api } from "./api";
+import { api, isTelegramMode } from "./api";
+import { TelegramApp } from "./pages/TelegramApp";
 import { readPreference, writePreference } from "./lib/appearance";
 import { ThemeProvider, useTheme, useThemeState } from "./theme";
 import { Login } from "./pages/Login";
@@ -27,11 +28,12 @@ import { Routes } from "./pages/Routes";
 import { Audit } from "./pages/Audit";
 import { Account } from "./pages/Account";
 import { SingBox } from "./pages/SingBox";
+import { Subscriptions } from "./pages/Subscriptions";
 
 // 终端页连同 xterm 一起单独打包：不开终端的人不该为它下载一份终端模拟器。
 const Console = lazy(() => import("./pages/Console").then((m) => ({ default: m.Console })));
 
-type Tab = "dashboard" | "routes" | "nodes" | "singbox" | "console" | "audit" | "account";
+type Tab = "dashboard" | "routes" | "nodes" | "singbox" | "subscriptions" | "console" | "audit" | "account";
 type AuthState = "checking" | "in" | "out";
 
 const MAIN_NAV = [
@@ -39,6 +41,7 @@ const MAIN_NAV = [
   { id: "routes", label: "链路", icon: Waypoints },
   { id: "nodes", label: "机器", icon: Server },
   { id: "singbox", label: "节点", icon: Network },
+  { id: "subscriptions", label: "订阅", icon: ScrollText },
   { id: "console", label: "终端", icon: TerminalSquare },
 ] as const;
 
@@ -48,7 +51,7 @@ export function App() {
   const theme = useThemeState();
   return (
     <ThemeProvider value={theme}>
-      <Shell />
+      {isTelegramMode() ? <TelegramApp /> : <Shell />}
     </ThemeProvider>
   );
 }
@@ -109,76 +112,6 @@ function Shell() {
       window.removeEventListener("resize", onResize);
     };
   }, [mobileOpen]);
-
-  useEffect(() => {
-    const hasFinePointer = window.matchMedia("(pointer: fine)");
-    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    if (!hasFinePointer.matches || prefersReducedMotion.matches) {
-      return;
-    }
-
-    const root = document.documentElement;
-    const surfaceSelector = [
-      ".card",
-      ".singbox-user-card",
-      ".node-load",
-      ".singbox-stat",
-      ".btn",
-      ".icon-btn",
-      ".topbar-profile",
-      ".account-link",
-      ".toggle-switch",
-    ].join(",");
-    let frame = 0;
-    let pointerX = 0;
-    let pointerY = 0;
-    let activeSurface: HTMLElement | null = null;
-    let pendingSurface: HTMLElement | null = null;
-
-    const clearPointerGlow = (surface: HTMLElement | null) => {
-      surface?.style.removeProperty("--liquid-pointer-x");
-      surface?.style.removeProperty("--liquid-pointer-y");
-    };
-
-    const paintPointerGlow = () => {
-      frame = 0;
-      if (activeSurface !== pendingSurface) {
-        clearPointerGlow(activeSurface);
-        activeSurface = pendingSurface;
-      }
-      if (!activeSurface?.isConnected) {
-        activeSurface = null;
-        return;
-      }
-
-      const bounds = activeSurface.getBoundingClientRect();
-      activeSurface.style.setProperty("--liquid-pointer-x", `${pointerX - bounds.left}px`);
-      activeSurface.style.setProperty("--liquid-pointer-y", `${pointerY - bounds.top}px`);
-    };
-
-    const onPointerMove = (event: PointerEvent) => {
-      const target = event.target instanceof Element ? event.target : null;
-      const effectsDisabled =
-        event.pointerType === "touch" ||
-        !hasFinePointer.matches ||
-        prefersReducedMotion.matches ||
-        !root.classList.contains("appearance-depth") ||
-        Boolean(target?.closest(".dashboard-traffic"));
-      pointerX = event.clientX;
-      pointerY = event.clientY;
-      pendingSurface = effectsDisabled || !target
-        ? null
-        : target.closest<HTMLElement>(surfaceSelector);
-      if (!frame) frame = window.requestAnimationFrame(paintPointerGlow);
-    };
-
-    window.addEventListener("pointermove", onPointerMove, { passive: true });
-    return () => {
-      window.removeEventListener("pointermove", onPointerMove);
-      if (frame) window.cancelAnimationFrame(frame);
-      clearPointerGlow(activeSurface);
-    };
-  }, []);
 
   function openConsole(nodeID: number) {
     setConsoleNode(nodeID);
@@ -297,6 +230,7 @@ function Shell() {
           {tab === "routes" && <Routes />}
           {tab === "nodes" && <Nodes onOpenConsole={openConsole} />}
           {tab === "singbox" && <SingBox />}
+          {tab === "subscriptions" && <Subscriptions />}
           {tab === "console" && (
             <Suspense fallback={<p className="muted">正在载入终端…</p>}>
               <Console initialNode={consoleNode} />

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,12 +34,13 @@ const userContextKey contextKey = "user"
 
 // Server wires the API handlers together.
 type Server struct {
-	auth    *auth.Service
-	svc     *service.Service
-	log     *slog.Logger
-	static  http.Handler
-	secure  bool
-	limiter *rateLimiter
+	auth     *auth.Service
+	svc      *service.Service
+	log      *slog.Logger
+	static   http.Handler
+	secure   bool
+	limiter  *rateLimiter
+	telegram *telegramState
 }
 
 // Config configures the HTTP server.
@@ -54,12 +56,13 @@ type Config struct {
 
 func NewServer(cfg Config) *Server {
 	return &Server{
-		auth:    cfg.Auth,
-		svc:     cfg.Service,
-		log:     cfg.Logger,
-		static:  cfg.Static,
-		secure:  cfg.SecureCookies,
-		limiter: newRateLimiter(10, time.Minute),
+		auth:     cfg.Auth,
+		svc:      cfg.Service,
+		log:      cfg.Logger,
+		static:   cfg.Static,
+		secure:   cfg.SecureCookies,
+		limiter:  newRateLimiter(10, time.Minute),
+		telegram: newTelegramState(cfg.Service),
 	}
 }
 
@@ -81,12 +84,19 @@ func (s *Server) Handler() http.Handler {
 			writeError(w, http.StatusMethodNotAllowed, r.Method+" is not allowed on "+r.URL.Path)
 		})
 
+		r.With(s.recoveryNoStore, s.rateLimit).Post("/telegram/auth", s.handleTelegramAuth)
+		r.With(s.recoveryNoStore, s.requireAuth).Get("/telegram/machine-draft", s.handleTelegramMachineDraft)
+		r.With(s.recoveryNoStore, s.requireAuth).Get("/account/telegram", s.handleTelegramStatus)
+		r.With(s.recoveryNoStore, s.requireAuth, s.rateLimit).Put("/account/telegram", s.handleTelegramConfig)
+		r.With(s.recoveryNoStore, s.requireAuth, s.rateLimit).Post("/account/telegram/bind", s.handleTelegramBind)
+		r.With(s.recoveryNoStore, s.requireAuth, s.rateLimit).Delete("/account/telegram/bind", s.handleTelegramBind)
 		r.Get("/setup/status", s.handleSetupStatus)
 		r.With(s.rateLimit).Post("/setup", s.handleSetup)
 		r.With(s.rateLimit).Post("/setup/confirm", s.handleSetupConfirm)
 		r.With(s.rateLimit).Post("/login", s.handleLogin)
 		r.With(s.recoveryNoStore, s.rateLimit).Post("/recovery/question", s.handleRecoveryQuestion)
 		r.With(s.recoveryNoStore, s.rateLimit).Post("/recovery/reset", s.handleRecoveryReset)
+		r.With(s.recoveryNoStore, s.requireAuth).Get("/subscriptions/{id}/link", s.handleSubscriptionLink)
 		r.With(s.recoveryNoStore, s.requireAuth).Get("/account/recovery", s.handleRecoveryStatus)
 		r.With(s.recoveryNoStore, s.requireAuth, s.rateLimit).Post("/account/recovery", s.handleConfigureRecovery)
 		r.With(s.recoveryNoStore, s.requireAuth, s.rateLimit).Delete("/account/recovery", s.handleDisableRecovery)
@@ -100,6 +110,7 @@ func (s *Server) Handler() http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
 
+			s.registerSubscriptions(r)
 			r.Post("/logout", s.handleLogout)
 			r.Get("/me", s.handleMe)
 			r.Post("/password", s.handleChangePassword)
@@ -115,6 +126,7 @@ func (s *Server) Handler() http.Handler {
 
 			r.Get("/nodes", s.handleListNodes)
 			r.Post("/nodes", s.handleCreateNode)
+			r.Put("/nodes/order", s.handleReorderNodes)
 			r.Get("/nodes/{id}", s.handleGetNode)
 			r.Put("/nodes/{id}", s.handleUpdateNode)
 			r.Delete("/nodes/{id}", s.handleDeleteNode)
@@ -125,6 +137,7 @@ func (s *Server) Handler() http.Handler {
 
 			r.Get("/routes", s.handleListRoutes)
 			r.Post("/routes", s.handleCreateRoute)
+			r.Put("/routes/order", s.handleReorderRoutes)
 			r.Get("/routes/{id}", s.handleGetRoute)
 			r.Put("/routes/{id}", s.handleUpdateRoute)
 			r.Delete("/routes/{id}", s.handleDeleteRoute)
@@ -169,6 +182,7 @@ func (s *Server) Handler() http.Handler {
 		})
 	})
 
+	r.With(s.recoveryNoStore, s.rateLimit).Get("/sub/{token}", s.handleSubscriptionDownload)
 	r.Get("/enroll.sh", s.handleEnrollScript)
 	r.Get("/uninstall.sh", s.handleUninstallScript)
 
@@ -188,6 +202,10 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
+		if r.URL.Path == "/telegram" || r.URL.Path == "/telegram/" {
+			h.Del("X-Frame-Options")
+			h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors https://web.telegram.org https://*.telegram.org")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -195,6 +213,10 @@ func securityHeaders(next http.Handler) http.Handler {
 // requireAuth rejects requests without a valid session.
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			s.authenticateTelegram(w, r, next)
+			return
+		}
 		cookie, err := r.Cookie(sessionCookie)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "not authenticated")
@@ -313,6 +335,9 @@ func (s *Server) audit(r *http.Request, action, target, detail string) {
 	actor := "anonymous"
 	if u := userFrom(r.Context()); u != nil {
 		actor = u.Username
+	}
+	if actorID, ok := r.Context().Value(telegramActorKey).(int64); ok {
+		actor = "telegram:" + strconv.FormatInt(actorID, 10) + ":" + actor
 	}
 	entry := &model.AuditLog{
 		Actor:  actor,

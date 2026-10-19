@@ -5,6 +5,25 @@ import { normalizeSingBoxExport } from "../src/lib/singbox-export.ts";
 const config = { outbounds: [{ type: "anytls", server: "example.com", server_port: 443, password: "test-only" }] };
 const valid = { link: "anytls://test-only@example.com:443", config };
 
+test("normalizes address families without advertising invalid or duplicate choices", () => {
+  const result = normalizeSingBoxExport({ ...valid, address_family: "ipv6", available_families: ["ipv6", "invalid", null, "ipv4", "ipv6"] });
+  assert.equal(result.addressFamily, "ipv6");
+  assert.deepEqual(result.availableFamilies, ["ipv4", "ipv6"]);
+  assert.deepEqual(normalizeSingBoxExport({ ...valid, address_family: "ipv6", available_families: [] }).availableFamilies, ["ipv6"]);
+});
+
+test("legacy responses expose only the exported address family", () => {
+  for (const server of ["example.com", "192.0.2.1", "2001:db8::1", "[2001:db8::1]"]) {
+    const result = normalizeSingBoxExport({ ...valid, config: { outbounds: [{ ...config.outbounds[0], server }] } });
+    const family = server.includes(":") ? "ipv6" : "ipv4";
+    assert.equal(result.addressFamily, family);
+    assert.deepEqual(result.availableFamilies, [family]);
+  }
+  const result = normalizeSingBoxExport({ ...valid, address_family: "invalid", available_families: "ipv6" });
+  assert.equal(result.addressFamily, "ipv4");
+  assert.deepEqual(result.availableFamilies, ["ipv4"]);
+});
+
 test("rejects missing or blank links before showing export controls", () => {
   for (const link of [undefined, null, 42, "", "   "]) {
     assert.throws(() => normalizeSingBoxExport({ ...valid, link }), /未生成有效的节点链接/);

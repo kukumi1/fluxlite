@@ -4,6 +4,41 @@ export type NodeStatus = "unknown" | "online" | "offline";
 export type InitSystem = "systemd" | "openrc" | "";
 export type SingBoxProtocol = "ss2022" | "anytls" | "vless-reality" | "hysteria2" | "tuic" | "trojan" | "vmess" | "vless-tls";
 export type SingBoxSource = "managed" | "external";
+export type SubscriptionFormat = "clash" | "base64" | "shadowrocket" | "loon" | "qx";
+export interface SubscriptionEntry { node_id: number; protocol: SingBoxProtocol; port?: number }
+export interface Subscription {
+  id: number;
+  link_available?: boolean;
+  mode: "collection" | "owned";
+  name: string;
+  enabled: boolean;
+  status: string;
+  quota_bytes: number;
+  used_bytes: number;
+  expires_at: string | null;
+  created_at: string;
+  members: Array<SubscriptionEntry & { user_id: number }>;
+}
+export interface SubscriptionCandidate {
+  user_id: number;
+  node_id: number;
+  name: string;
+  node_name: string;
+  protocol: SingBoxProtocol;
+  port: number;
+  subscription_id: number | null;
+  subscription_name: string;
+}
+export interface SubscriptionInput {
+  name: string;
+  user_ids: number[];
+}
+export interface SubscriptionPreview {
+  content: string;
+  content_type: string;
+  unsupported: string[] | null;
+  included_count: number;
+}
 export type SingBoxStatus = "unknown" | "running" | "stopped" | "exhausted" | "expired" | "error";
 export type SingBoxCipher = "2022-blake3-aes-128-gcm" | "2022-blake3-aes-256-gcm" | "2022-blake3-chacha20-poly1305";
 
@@ -320,11 +355,38 @@ export class ApiError extends Error {
   }
 }
 
+let telegramToken = "";
+
+export function setTelegramToken(token: string) {
+  telegramToken = token;
+}
+
+export function isTelegramMode(): boolean {
+  return typeof window !== "undefined" && /^\/telegram\/?$/.test(window.location.pathname);
+}
+
+export interface TelegramSettings {
+  enabled: boolean;
+  configured: boolean;
+  bot_username: string;
+  panel_url: string;
+  bound_user_id: string;
+  bound_username: string;
+  status: string;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const telegram = isTelegramMode();
+  if (telegram && path !== "/telegram/auth" && !telegramToken) {
+    throw new ApiError(401, "请从 Telegram Bot 重新打开面板");
+  }
+  const headers = new Headers(init?.headers);
+  if (init?.body) headers.set("Content-Type", "application/json");
+  if (telegram && telegramToken) headers.set("Authorization", `Bearer ${telegramToken}`);
   const res = await fetch(`/api${path}`, {
-    credentials: "same-origin",
-    headers: init?.body ? { "Content-Type": "application/json" } : undefined,
     ...init,
+    credentials: telegram ? "omit" : "same-origin",
+    headers,
   });
 
   const text = await res.text();
@@ -347,6 +409,26 @@ const post = <T,>(path: string, payload?: unknown) =>
   });
 
 export const api = {
+  listSubscriptions: () => request<{ subscriptions: Subscription[] }>("/subscriptions"),
+  listSubscriptionCandidates: () => request<{ nodes: SubscriptionCandidate[] }>("/subscriptions/candidates"),
+  createSubscription: (input: SubscriptionInput) =>
+    post<{ subscription: Subscription; token: string }>("/subscriptions", input),
+  updateSubscription: (id: number, input: Pick<SubscriptionInput, "name">) =>
+    request<Subscription>(`/subscriptions/${id}`, { method: "PATCH", body: JSON.stringify({ name: input.name }) }),
+  deleteSubscription: (id: number) => request<{ ok: boolean }>(`/subscriptions/${id}`, { method: "DELETE" }),
+  resetSubscriptionToken: (id: number) => post<{ token: string }>(`/subscriptions/${id}/reset-token`),
+  getSubscriptionLink: (id: number) => request<{ token: string }>(`/subscriptions/${id}/link`, { method: "GET", cache: "no-store" }),
+  previewSubscription: (id: number, format: SubscriptionFormat) =>
+    request<SubscriptionPreview>(`/subscriptions/${id}/preview?format=${format}`),
+  telegramSettings: () => request<TelegramSettings>("/account/telegram"),
+  configureTelegram: (input: { enabled: boolean; token?: string; panel_url: string; password: string; code: string }) =>
+    request<{ ok: boolean }>("/account/telegram", { method: "PUT", body: JSON.stringify(input) }),
+  bindTelegram: (password: string, code: string) =>
+    post<{ url: string; expires_at: string }>("/account/telegram/bind", { password, code }),
+  unbindTelegram: (password: string, code: string) =>
+    request<{ ok: boolean }>("/account/telegram/bind", { method: "DELETE", body: JSON.stringify({ password, code }) }),
+  telegramMachineDraft: (draft: string) => request<{ input: Omit<NodeInput, "secret">; expires_at: string }>(`/telegram/machine-draft?draft=${encodeURIComponent(draft)}`),
+  telegramAuth: (init_data: string) => post<{ token: string; expires_at: string }>("/telegram/auth", { init_data }),
   setupStatus: () => request<{ setup_needed: boolean }>("/setup/status"),
   setup: (username: string, password: string) =>
     post<Enrollment>("/setup", { username, password }),
@@ -383,6 +465,7 @@ export const api = {
   // re-entered and the node id — and every route hanging off it — survives.
   reenrollTicket: (id: number) => post<EnrollTicket>(`/nodes/${id}/reenroll`),
 
+  reorderNodes: (ids: number[]) => request<{ ok: boolean }>("/nodes/order", { method: "PUT", body: JSON.stringify({ ids }) }),
   listNodes: () => request<Node[] | null>("/nodes"),
   createNode: (input: NodeInput) => post<Node>("/nodes", input),
   updateNode: (id: number, input: NodeInput) =>
@@ -391,6 +474,7 @@ export const api = {
   probeNode: (id: number) => post<ProbeResult>(`/nodes/${id}/probe`),
   installRealm: (id: number) => post<{ realm_version: string }>(`/nodes/${id}/realm`),
 
+  reorderRoutes: (ids: number[]) => request<{ ok: boolean }>("/routes/order", { method: "PUT", body: JSON.stringify({ ids }) }),
   listRoutes: () => request<Route[] | null>("/routes"),
   createRoute: (input: RouteInput) => post<Route>("/routes", input),
   updateRoute: (id: number, input: RouteInput) =>
@@ -419,7 +503,7 @@ export const api = {
   setSingBoxExpiry: (id: number, expiresAt: string | null) => post<{ ok: boolean }>(`/singbox/users/${id}/expiry`, { expires_at: expiresAt }),
   adoptSingBoxUser: (id: number, quotaBytes: number) =>
     post<{ ok: boolean }>(`/singbox/users/${id}/adopt`, { bytes: quotaBytes }),
-  exportSingBoxUser: (id: number) => request<{ protocol: SingBoxProtocol; name: string; port: number; config: unknown; link: string; qr_data_url?: string; qr_error?: string; warnings?: string[] }>(`/singbox/users/${id}/export`),
+  exportSingBoxUser: (id: number, family?: "ipv4" | "ipv6") => request<{ protocol: SingBoxProtocol; name: string; port: number; config: unknown; link: string; qr_data_url?: string; qr_error?: string; warnings?: string[]; address_family?: "ipv4" | "ipv6"; available_families?: string[] }>(`/singbox/users/${id}/export${family ? `?address_family=${family}` : ""}`),
   deleteSingBoxUser: (id: number) => request<{ ok: boolean }>(`/singbox/users/${id}`, { method: "DELETE" }),
   audit: (limit = 100) => request<AuditEntry[] | null>(`/audit?limit=${limit}`),
 

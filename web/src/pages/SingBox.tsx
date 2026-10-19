@@ -9,7 +9,7 @@ import { Drawer } from "../components/Drawer";
 import { useConfirm } from "../components/ConfirmDialog";
 import "./management-redesign.css";
 import { formatBytes } from "../lib/format";
-import { normalizeSingBoxExport, type SingBoxExportView } from "../lib/singbox-export";
+import { normalizeSingBoxExport, type SingBoxAddressFamily, type SingBoxExportView } from "../lib/singbox-export";
 
 const protocols: Array<[SingBoxProtocol, string]> = [
   ["ss2022", "SS2022"], ["anytls", "AnyTLS"], ["vless-reality", "VLESS + Reality"],
@@ -79,6 +79,8 @@ export function SingBox() {
   const [discovered, setDiscovered] = useState<SingBoxDiscovery[]>([]);
   const [input, setInput] = useState<SingBoxUserInput>(emptyInput);
   const [exported, setExported] = useState<SingBoxExportView | null>(null);
+  const [exportDialog, setExportDialog] = useState<{ id: number; family?: SingBoxAddressFamily; families: SingBoxAddressFamily[] } | null>(null);
+  const [exportError, setExportError] = useState("");
   const exportRequest = useRef(0);
   const exportPending = useRef(false);
   const [error, setError] = useState("");
@@ -143,19 +145,32 @@ export function SingBox() {
     finally { setBusy(false); }
   }
 
-  async function exportUser(id: number) {
-    if (busy || exportPending.current) return;
+  async function exportUser(id: number, family?: SingBoxAddressFamily) {
+    if (!exportDialog && (busy || exportPending.current)) return;
     const request = ++exportRequest.current;
     exportPending.current = true;
-    setBusy(true); setExported(null); setError(""); setNotice("");
+    setExportDialog((current) => ({ id, family, families: current?.id === id ? current.families : [] }));
+    setBusy(true); setExported(null); setExportError(""); setError(""); setNotice("");
     try {
-      const out = await api.exportSingBoxUser(id);
-      if (request === exportRequest.current) setExported(normalizeSingBoxExport(out));
+      const out = normalizeSingBoxExport(await api.exportSingBoxUser(id, family));
+      if (request === exportRequest.current) {
+        setExported(out);
+        setExportDialog({ id, family: out.addressFamily, families: out.availableFamilies });
+      }
     } catch (e) {
-      if (request === exportRequest.current) setError(e instanceof Error ? e.message : String(e));
+      if (request === exportRequest.current) setExportError(e instanceof Error ? e.message : String(e));
     } finally {
       if (request === exportRequest.current) { exportPending.current = false; setBusy(false); }
     }
+  }
+
+  function closeExportDialog() {
+    exportRequest.current++;
+    exportPending.current = false;
+    setBusy(false);
+    setExported(null);
+    setExportDialog(null);
+    setExportError("");
   }
 
   function openQuotaDialog(user: SingBoxUser, adopt: boolean, reduce = false) {
@@ -278,7 +293,7 @@ export function SingBox() {
 
   return (
     <div className="management-page singbox-management">
-      <PageHeader title="节点" desc="独立连接，独立额度。在线状态反映客户端活动，开关控制节点是否可用。" actions={<button className="btn primary" onClick={() => { setError(""); setCreating(true); }}><Plus size={15} />创建节点</button>} />
+      <PageHeader title="节点" actions={<button className="btn primary" onClick={() => { setError(""); setCreating(true); }}><Plus size={15} />创建节点</button>} />
       {error && <Banner kind="err">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
       <div className="singbox-stat-grid">
@@ -296,7 +311,7 @@ export function SingBox() {
       </div>
       <div className="management-scan-toolbar"><span className="muted">扫描外部节点</span><select aria-label="选择要扫描的机器" value={input.node_id} onChange={(event) => setInput({ ...input, node_id: Number(event.target.value) })}><option value={0}>选择机器</option>{nodes.map((node) => <option key={node.id} value={node.id}>{node.name}</option>)}</select><button className="btn" disabled={busy || !input.node_id} onClick={() => void scanExternal()}><RefreshCw size={14} />扫描已有节点</button></div>
       {creating && <Drawer title="创建节点" onClose={() => setCreating(false)}>
-        <p className="muted">部署独立 sing-box 服务。额度与到期时间留空表示不限制。</p>{error && <Banner kind="err">{error}</Banner>}
+        <p className="muted">额度与到期时间留空表示不限制。</p>{error && <Banner kind="err">{error}</Banner>}
         <div className="singbox-create-grid" style={{ marginTop: 16 }}>
           <label>用户名称<input value={input.name} onChange={(e) => setInput({ ...input, name: e.target.value })} placeholder="例如 Alice" /></label>
           <label>部署机器<select value={input.node_id} onChange={(e) => setInput({ ...input, node_id: Number(e.target.value) })}><option value={0}>选择机器</option>{nodes.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}</select></label>
@@ -311,7 +326,7 @@ export function SingBox() {
       </Drawer>}
       {discovered.length > 0 && <Card>
         <div className="spread"><button className="btn sm" onClick={() => setDiscoveredOpen((open) => !open)}>{discoveredOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}扫描结果（{discovered.length}）</button></div>
-        {discoveredOpen && <><p className="muted">只读发现，不会修改 `/etc/sing-box/conf.d/`。接管前请先确认端口和客户端配置。</p><div className="table-wrap"><table><thead><tr><th>标签</th><th>协议</th><th>端口</th><th>服务</th><th>配置片段</th></tr></thead><tbody>{discovered.map((d) => <tr key={`${d.path}-${d.port}`}><td>{d.tag}</td><td>{d.protocol}</td><td>{d.port}</td><td>{d.running ? "运行中" : "停止"}</td><td><code>{d.path}</code></td></tr>)}</tbody></table></div></>}
+        {discoveredOpen && <><p className="muted">扫描不修改配置；接管前请确认端口和客户端配置。</p><div className="table-wrap"><table><thead><tr><th>标签</th><th>协议</th><th>端口</th><th>服务</th><th>配置片段</th></tr></thead><tbody>{discovered.map((d) => <tr key={`${d.path}-${d.port}`}><td>{d.tag}</td><td>{d.protocol}</td><td>{d.port}</td><td>{d.running ? "运行中" : "停止"}</td><td><code>{d.path}</code></td></tr>)}</tbody></table></div></>}
       </Card>}
       <Card>
         <div className="singbox-list-heading"><button className="btn sm" onClick={() => setManagedOpen((open) => !open)}>{managedOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}面板创建节点（{managedUsers.length}）</button><button className="btn sm" onClick={() => void load()}><RefreshCw size={13} />刷新</button></div>
@@ -321,7 +336,13 @@ export function SingBox() {
         <div className="spread"><button className="btn sm" onClick={() => setExternalOpen((open) => !open)}>{externalOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}外部扫描节点（{externalUsers.length}）</button><span className="muted">移除记录不会删除远程配置</span></div>
         {externalOpen && userTable(externalUsers.filter(matches), true)}
       </Card>
-      {exported && <Modal title="二维码与节点连接" onClose={() => setExported(null)}><div className="singbox-qr-modal">
+      {exportDialog && <Modal title="二维码与节点连接" onClose={closeExportDialog}><div className="singbox-qr-modal">
+        {exportDialog.families.length > 0 && <label>导出地址<select aria-label="导出地址" value={exportDialog.family} onChange={(event) => {
+          const family = event.target.value;
+          if (family === "ipv4" || family === "ipv6") void exportUser(exportDialog.id, family);
+        }}>{exportDialog.families.map((family) => <option key={family} value={family}>{family === "ipv4" ? "IPv4（主机地址）" : "IPv6"}</option>)}</select></label>}
+        {exportError ? <><Banner kind="err">{exportError}</Banner><button className="btn" onClick={() => void exportUser(exportDialog.id, exportDialog.family)}>重试</button></> : !exported && <p className="muted" role="status">正在生成节点链接、二维码与客户端配置…</p>}
+        {exported && <>
         {exported.warnings.map((warning, index) => <Banner kind="warn" key={index}>{warning}</Banner>)}
         {exported.qr ? <img src={exported.qr} width={240} height={240} alt="节点二维码" onError={() => setExported((current) => current?.qr === exported.qr && current?.link === exported.link ? { ...current, qr: undefined, qrError: "二维码加载失败，仍可复制节点链接或客户端配置导入。" } : current)} /> : <Banner kind="warn">{exported.qrError}</Banner>}
         <section className="singbox-export-section" aria-label="节点链接">
@@ -332,6 +353,7 @@ export function SingBox() {
           <div className="singbox-export-heading"><h3>客户端配置</h3><div className="singbox-export-actions"><CopyButton text={exported.config} label="复制客户端配置" /></div></div>
           <pre className="code-block" tabIndex={0} aria-label="客户端 JSON 配置">{exported.config}</pre>
         </section>
+        </>}
       </div></Modal>}
       {infoUser && <Modal title={`客户端信息 — ${infoUser.name}`} onClose={() => setInfoUser(null)}><div className="singbox-info-grid"><span>节点</span><strong>{infoUser.node_name ?? infoUser.node_id}</strong><span>入口</span><strong>{infoUser.name}</strong><span>协议</span><strong>{protocols.find(([protocol]) => protocol === infoUser.protocol)?.[1] ?? infoUser.protocol}</strong><span>流量</span><strong>{usageLabel(infoUser, infoUser.used_in + infoUser.used_out, infoUser.base_quota_bytes + infoUser.top_up_bytes)}</strong><span>连接有效期</span><strong>{hasExpiry(infoUser.expires_at) ? formatDateTime(infoUser.expires_at) : "永久"}</strong><span>周期结束</span><strong>{formatDateTime(infoUser.period_ends_at)}</strong></div></Modal>}
       {quotaDialog && <Modal title={quotaDialog.adopt ? "接管外部节点" : quotaDialog.reduce ? "减少本周期额度" : "增加本周期额度"} onClose={closeQuotaDialog}>{error && <Banner kind="err">{error}</Banner>}<p className="muted">{quotaDialog.adopt ? "面板将读取当前服务端配置，备份原片段并迁移到独立服务。" : quotaDialog.reduce ? "不能减少到低于已使用流量；无限额度不能直接减量。" : "周期结束时间和已用流量保持不变。"}</p><label>额度（GB）<input autoFocus type="number" min={1} value={quotaGB} disabled={busy} onChange={(e) => setQuotaGB(e.target.value)} /></label><div className="row" style={{ justifyContent: "flex-end", marginTop: 16 }}><button className="btn" disabled={busy} onClick={closeQuotaDialog}>取消</button><button className="btn primary" disabled={busy} onClick={() => void confirmQuotaDialog()}>确定</button></div></Modal>}

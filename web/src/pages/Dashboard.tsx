@@ -241,7 +241,6 @@ export function Dashboard({ onNavigate }: Props) {
     <div className="dashboard-redesign">
       <PageHeader
         title="仪表盘"
-        desc="掌握机器资源、链路流量与运行状态。"
         actions={<button className="btn" onClick={() => onNavigate("routes")}>管理链路 <ArrowRight size={15} /></button>}
       />
       {error && <Banner kind="err">{error}</Banner>}
@@ -265,7 +264,7 @@ export function Dashboard({ onNavigate }: Props) {
           {routes.length === 0 ? (
             <Card>
               <EmptyState icon={<Waypoints size={22} />} title="还没有链路"
-                desc="先添加并探测机器，再创建第一条转发链路。"
+                desc="添加并探测机器后，即可创建链路。"
                 action={<button className="btn primary" onClick={() => onNavigate("nodes")}>去添加机器</button>} />
             </Card>
           ) : (

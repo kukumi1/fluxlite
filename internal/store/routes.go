@@ -106,7 +106,7 @@ func (s *Store) ListRoutes(ctx context.Context) ([]*model.Route, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, slug, target, protocol, enabled, listen_ipv6,
 			quota_bytes, quota_reset_day, quota_paused_at, created_at, updated_at
-		FROM routes ORDER BY name`)
+		FROM routes ORDER BY sort_order IS NULL, sort_order, name, id`)
 	if err != nil {
 		return nil, fmt.Errorf("query routes: %w", err)
 	}

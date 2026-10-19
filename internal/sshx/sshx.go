@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"strings"
 	"sync"
@@ -137,6 +136,23 @@ func (d *Dialer) resolveChain(ctx context.Context, node *model.Node) ([]*model.N
 	return chain, nil
 }
 
+// ownedJumpConn makes cancellation of a tunneled SSH client close the actual
+// transport first. A channel Close alone writes to the parent connection and
+// can itself block. Each Dial owns its complete jump chain exclusively.
+type ownedJumpConn struct {
+	net.Conn
+	parent *ssh.Client
+}
+
+func (c *ownedJumpConn) Close() error {
+	parentErr := c.parent.Close()
+	err := c.Conn.Close()
+	if parentErr != nil {
+		return parentErr
+	}
+	return err
+}
+
 // dialOne establishes one SSH connection, tunnelling through via when set.
 func (d *Dialer) dialOne(ctx context.Context, node *model.Node, via *ssh.Client) (*ssh.Client, error) {
 	cfg, err := d.clientConfig(ctx, node)
@@ -150,29 +166,43 @@ func (d *Dialer) dialOne(ctx context.Context, node *model.Node, via *ssh.Client)
 		dialer := &net.Dialer{Timeout: d.timeout}
 		conn, err = dialer.DialContext(ctx, "tcp", addr)
 	} else {
-		// ssh.Client.Dial has no context variant; the handshake deadline below
-		// bounds it instead.
-		conn, err = via.Dial("tcp", addr)
+		// The forwarding-channel request precedes the handshake, so a
+		// handshake deadline cannot bound it. Closing the owned parent does.
+		dialCtx, cancel := context.WithTimeout(ctx, d.timeout)
+		err = withClientContext(dialCtx, via, func() error {
+			var dialErr error
+			conn, dialErr = via.Dial("tcp", addr)
+			return dialErr
+		})
+		cancel()
+		if err == nil {
+			conn = &ownedJumpConn{Conn: conn, parent: via}
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("tcp connect: %w", err)
 	}
 
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	} else {
-		_ = conn.SetDeadline(time.Now().Add(d.timeout))
-	}
-
-	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
+	// SSH forwarded channels do not implement transport deadlines. Close the
+	// owned transport on timeout/cancellation instead, including during host-key
+	// persistence, and join the callback before handing out a healthy client.
+	handshakeCtx, cancel := context.WithTimeout(ctx, d.timeout)
+	defer cancel()
+	cfg.HostKeyCallback = d.hostKeyCallback(handshakeCtx, node)
+	var client *ssh.Client
+	err = withContextClose(handshakeCtx, conn.Close, func() error {
+		sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
+		if err != nil {
+			return err
+		}
+		client = ssh.NewClient(sshConn, chans, reqs)
+		return nil
+	})
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("ssh handshake: %w", err)
 	}
-	// Clear the handshake deadline so long-running sessions are not killed.
-	_ = conn.SetDeadline(time.Time{})
-
-	return ssh.NewClient(sshConn, chans, reqs), nil
+	return client, nil
 }
 
 func (d *Dialer) clientConfig(ctx context.Context, node *model.Node) (*ssh.ClientConfig, error) {
@@ -234,39 +264,67 @@ type Result struct {
 	ExitCode int
 }
 
+// withClientContext covers every blocking SSH phase, including channel open
+// and exec-request acknowledgement. Closing only the session (or sending a
+// signal) cannot unblock a peer that never acknowledges those requests.
+// Cancellation therefore invalidates the entire pooled connection; Pool.Get's
+// keepalive check discards it, and concurrent operations must retry separately.
+// The operation stays on the caller goroutine, and the cancellation callback is
+// joined before return, so no abandoned worker or output-buffer race remains.
+func withClientContext(ctx context.Context, client *ssh.Client, operation func() error) error {
+	return withContextClose(ctx, client.Close, operation)
+}
+
+func withContextClose(ctx context.Context, closeTransport func() error, operation func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	canceled := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		_ = closeTransport()
+		close(canceled)
+	})
+	defer func() {
+		if !stop() {
+			<-canceled
+		}
+	}()
+	err := operation()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
+}
+
 // Run executes a command and returns its output. A non-zero exit is reported
 // in Result.ExitCode rather than as an error, so callers can distinguish a
 // failed command from a broken connection.
 func Run(ctx context.Context, client *ssh.Client, cmd string) (*Result, error) {
-	session, err := client.NewSession()
-	if err != nil {
-		return nil, fmt.Errorf("new session: %w", err)
-	}
-	defer session.Close()
-
-	var stdout, stderr bytes.Buffer
-	session.Stdout = &stdout
-	session.Stderr = &stderr
-
-	done := make(chan error, 1)
-	go func() { done <- session.Run(cmd) }()
-
-	select {
-	case <-ctx.Done():
-		_ = session.Signal(ssh.SIGKILL)
-		return nil, ctx.Err()
-	case err := <-done:
-		res := &Result{Stdout: stdout.String(), Stderr: stderr.String()}
+	var result *Result
+	err := withClientContext(ctx, client, func() error {
+		session, err := client.NewSession()
+		if err != nil {
+			return fmt.Errorf("new session: %w", err)
+		}
+		defer session.Close()
+		var stdout, stderr bytes.Buffer
+		session.Stdout, session.Stderr = &stdout, &stderr
+		err = session.Run(cmd)
+		result = &Result{Stdout: stdout.String(), Stderr: stderr.String()}
 		if err == nil {
-			return res, nil
+			return nil
 		}
 		var exitErr *ssh.ExitError
 		if errors.As(err, &exitErr) {
-			res.ExitCode = exitErr.ExitStatus()
-			return res, nil
+			result.ExitCode = exitErr.ExitStatus()
+			return nil
 		}
-		return nil, fmt.Errorf("run %q: %w", cmd, err)
+		return fmt.Errorf("run remote command: %w", err)
+	})
+	if err != nil {
+		return nil, err
 	}
+	return result, nil
 }
 
 // RunCheck executes a command and fails if it exits non-zero.
@@ -276,8 +334,7 @@ func RunCheck(ctx context.Context, client *ssh.Client, cmd string) (string, erro
 		return "", err
 	}
 	if res.ExitCode != 0 {
-		return res.Stdout, fmt.Errorf("command %q exited %d: %s",
-			cmd, res.ExitCode, strings.TrimSpace(res.Stderr))
+		return res.Stdout, fmt.Errorf("remote command exited %d", res.ExitCode)
 	}
 	return res.Stdout, nil
 }
@@ -286,49 +343,23 @@ func RunCheck(ctx context.Context, client *ssh.Client, cmd string) (string, erro
 // It streams through `cat` rather than SFTP so nodes without an SFTP
 // subsystem (busybox, hardened images) still work.
 func WriteFile(ctx context.Context, client *ssh.Client, path string, content []byte, mode string) error {
-	session, err := client.NewSession()
-	if err != nil {
-		return fmt.Errorf("new session: %w", err)
-	}
-	defer session.Close()
-
-	stdin, err := session.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("stdin pipe: %w", err)
-	}
-	var stderr bytes.Buffer
-	session.Stderr = &stderr
-
-	// The temp-file-then-rename dance makes the replacement atomic, so a
-	// reader never observes a half-written config.
-	tmp := path + ".fluxlite.tmp"
-	cmd := fmt.Sprintf("mkdir -p %s && cat > %s && chmod %s %s && mv -f %s %s",
-		shellQuote(dirOf(path)), shellQuote(tmp), mode, shellQuote(tmp), shellQuote(tmp), shellQuote(path))
-
-	if err := session.Start(cmd); err != nil {
-		return fmt.Errorf("start write: %w", err)
-	}
-	if _, err := io.Copy(stdin, bytes.NewReader(content)); err != nil {
-		stdin.Close()
-		return fmt.Errorf("stream content: %w", err)
-	}
-	if err := stdin.Close(); err != nil {
-		return fmt.Errorf("close stdin: %w", err)
-	}
-
-	done := make(chan error, 1)
-	go func() { done <- session.Wait() }()
-
-	select {
-	case <-ctx.Done():
-		_ = session.Signal(ssh.SIGKILL)
-		return ctx.Err()
-	case err := <-done:
+	return withClientContext(ctx, client, func() error {
+		session, err := client.NewSession()
 		if err != nil {
-			return fmt.Errorf("write %s: %w (%s)", path, err, strings.TrimSpace(stderr.String()))
+			return fmt.Errorf("new session: %w", err)
+		}
+		defer session.Close()
+		// Session.Run waits for its bounded in-memory stdin copy and closes stdin
+		// when the reader reaches EOF. Connection closure interrupts blocked writes.
+		session.Stdin = bytes.NewReader(content)
+		tmp := path + ".fluxlite.tmp"
+		cmd := fmt.Sprintf("mkdir -p %s && cat > %s && chmod %s %s && mv -f %s %s",
+			shellQuote(dirOf(path)), shellQuote(tmp), mode, shellQuote(tmp), shellQuote(tmp), shellQuote(path))
+		if err := session.Run(cmd); err != nil {
+			return fmt.Errorf("write remote file: %w", err)
 		}
 		return nil
-	}
+	})
 }
 
 func dirOf(path string) string {

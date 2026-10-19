@@ -89,7 +89,6 @@ export function Login({ onAuthenticated, onForgotPassword }: {
           <form className="auth-form" onSubmit={submitSetup}>
             <span className="auth-eyebrow">从这里开始</span>
             <h1>创建管理员</h1>
-            <p className="auth-description">设置账号，开启你的管理工作台。创建后可绑定两步验证保护账号。</p>
             <label>
               用户名
               <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" required />
@@ -115,7 +114,7 @@ export function Login({ onAuthenticated, onForgotPassword }: {
             <span className="auth-eyebrow">多一重保护</span>
             <h1>绑定两步验证</h1>
             <p className="auth-description">
-              把下面的密钥加入验证器应用，然后输入当前验证码完成绑定。这个密钥只显示这一次。
+              将密钥添加至验证器后输入验证码。密钥仅显示一次。
             </p>
             <div className="cmd">{enrollment.secret}</div>
             <label>
@@ -154,7 +153,6 @@ export function Login({ onAuthenticated, onForgotPassword }: {
           <form className="auth-form" onSubmit={submitLogin}>
             <span className="auth-eyebrow">你的连接，由你掌控</span>
             <h1>欢迎回来</h1>
-            <p className="auth-description">登录管理工作台，继续管理机器、节点与链路。</p>
             <label>
               用户名
               <input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" placeholder="输入管理员用户名" required />

@@ -132,3 +132,11 @@ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
 ## License
 
 Apache-2.0
+
+## Telegram 管理
+
+支持中文 Bot 查询按钮与 Telegram 内嵌面板：查看整体数据，管理链路、机器与节点；不开放终端和账户安全设置。默认关闭，在普通网页个人中心配置并绑定管理员。详见 [Telegram 接入指南](docs/TELEGRAM.md)。
+
+## 节点订阅
+
+勾选已有托管节点生成客户端订阅，一个节点最多加入一个订阅；节点额度和到期统一在节点板块管理。删除订阅仅解除关联，不删除节点。提供五种客户端格式。详见 [订阅与稳定性说明](docs/SUBSCRIPTIONS.md)。

@@ -1,3 +1,4 @@
+import { SortHandle, useManualOrder } from "../components/ManualOrder";
 import { useEffect, useState } from "react";
 import {
   api,
@@ -203,6 +204,11 @@ export function Routes() {
   const [family, setFamily] = useState<Family>(storedFamily);
   const [confirm, confirmDialog] = useConfirm();
 
+  const order = useManualOrder({
+    items: routes, setItems: setRoutes, save: api.reorderRoutes, reload: api.listRoutes, onError: setError,
+    disabled: busyId !== null || creating || !!editing,
+  });
+
   function chooseView(next: ViewMode) {
     setView(next);
     localStorage.setItem(VIEW_KEY, next);
@@ -217,6 +223,7 @@ export function Routes() {
   const nodeName = (id: number) => nodes.find((n) => n.id === id)?.name ?? `#${id}`;
 
   async function load() {
+    const version = order.readVersion();
     try {
       const [r, n, s, t, q] = await Promise.all([
         api.listRoutes(),
@@ -225,7 +232,7 @@ export function Routes() {
         api.traffic(),
         api.quotas(),
       ]);
-      setRoutes(r ?? []);
+      if (order.acceptsRead(version)) setRoutes(r ?? []);
       setNodes(n ?? []);
       setStatuses(s ?? []);
       setTraffic(t ?? {});
@@ -244,9 +251,10 @@ export function Routes() {
   // per hop.
   useEffect(() => {
     const timer = setInterval(() => {
+      const version = order.readVersion();
       Promise.all([api.listRoutes(), api.status(), api.traffic(), api.quotas()])
         .then(([r, s, t, q]) => {
-          setRoutes(r ?? []);
+          if (order.acceptsRead(version)) setRoutes(r ?? []);
           setStatuses(s ?? []);
           setTraffic(t ?? {});
           setQuotas(q ?? []);
@@ -353,7 +361,7 @@ export function Routes() {
   }
 
   function actionsOf(route: Route) {
-    const busy = busyId === route.id;
+    const busy = busyId === route.id || order.pending;
     return (
       <div className="row nowrap">
         <button
@@ -366,7 +374,7 @@ export function Routes() {
             })
           }
         >
-          {busy ? "处理中…" : "下发"}
+          {busyId === route.id ? "处理中…" : "下发"}
         </button>
         <button
           className="btn sm"
@@ -383,7 +391,7 @@ export function Routes() {
         <button className="btn sm" onClick={() => setTrafficFor(route)}>
           流量
         </button>
-        <button className="btn sm" onClick={() => setEditing(route)}>
+        <button className="btn sm" disabled={order.pending} onClick={() => setEditing(route)}>
           编辑
         </button>
         <button
@@ -437,6 +445,7 @@ export function Routes() {
   // 也不对应任何一条真实账单。
   const familyRoutes = routes.filter((r) => (family === "v6" ? r.listen_ipv6 : !r.listen_ipv6));
   const shown = familyRoutes.filter((route) => `${route.name} ${route.target} ${route.protocol} ${route.hops.map((hop) => nodeName(hop.node_id)).join(" ")}`.toLowerCase().includes(search.trim().toLowerCase()) && (enabledFilter === "all" || route.enabled === (enabledFilter === "enabled")));
+  const visibleIDs = shown.map(item => item.id);
   const counted = shown.map((r) => traffic[r.id]).filter((t): t is Traffic => !!t);
   const totalIn = counted.reduce((sum, t) => sum + t.bytes_in, 0);
   const totalOut = counted.reduce((sum, t) => sum + t.bytes_out, 0);
@@ -459,11 +468,6 @@ export function Routes() {
             ))}
           </div>
         }
-        desc={
-          family === "v6"
-            ? "入口只接受 IPv6 客户端的链路。与 IPv4 链路各走各的，流量分开统计，端口也不能互相复用。"
-            : "多跳转发链。流量从入口节点进入，逐跳中继，最后一跳拨向落地地址。"
-        }
         actions={
           <>
             {shown.length > 0 && (
@@ -484,7 +488,7 @@ export function Routes() {
                 })}
               </div>
             )}
-            <button className="btn primary" onClick={() => setCreating(true)}>
+            <button className="btn primary" disabled={order.pending} onClick={() => setCreating(true)}>
               <Plus size={15} />
               新建链路
             </button>
@@ -542,7 +546,7 @@ export function Routes() {
                   : "现有链路都开了 IPv6 入口。"
             }
             action={
-              <button className="btn primary" onClick={() => setCreating(true)}>
+              <button className="btn primary" disabled={order.pending} onClick={() => setCreating(true)}>
                 <Plus size={15} />
                 新建链路
               </button>
@@ -564,9 +568,10 @@ export function Routes() {
                 </thead>
                 <tbody>
                   {shown.map((route) => (
-                    <tr key={route.id}>
+                    <tr key={route.id} {...order.targetProps(route.id, visibleIDs)}>
                       <td>
                         <div className="row" style={{ gap: 6 }}>
+                          <SortHandle {...order.handleProps(route.id, route.name, visibleIDs)} />
                           <strong className="has-detail" title={onNodeIdentity(route.slug)}>
                             {route.name}
                           </strong>
@@ -591,8 +596,9 @@ export function Routes() {
         ) : (
           <div className={`route-grid${view === "compact" ? " dense" : ""}`}>
             {shown.map((route, cardIndex) => (
-              <Card index={cardIndex} key={route.id}>
-                <h2 style={{ marginBottom: 8 }}>
+              <Card index={cardIndex} key={route.id} {...order.targetProps(route.id, visibleIDs)}>
+                <h2 className="sortable-title" style={{ marginBottom: 8 }}>
+                  <SortHandle {...order.handleProps(route.id, route.name, visibleIDs)} />
                   {/* The slug is only ever needed while logged into a node, so
                       it is one hover away rather than occupying the title. */}
                   <span className="has-detail" title={onNodeIdentity(route.slug)}>
@@ -684,11 +690,11 @@ export function Routes() {
         <Modal title={`验证结果 · ${verifyReport.route_name}`} onClose={() => setVerifyReport(null)}>
           {verifyReport.proven ? (
             <Banner kind="ok">
-              抓包已证实数据真实抵达落地。这是唯一可信的结论。
+              抓包已确认数据抵达落地。
             </Banner>
           ) : (
             <Banner kind="warn">
-              未能用抓包证实端到端投递。注意：即使下面每一跳都能建连，也不代表链路真的在转发。
+              尚未确认端到端转发；逐跳建连成功不等于实际投递成功。
             </Banner>
           )}
           <ul className="checks">
@@ -776,10 +782,6 @@ function TrafficDialog({ route, onClose }: { route: Route; onClose: () => void }
         </>
       )}
 
-      <p className="hint" style={{ marginBottom: 0, marginTop: 12 }}>
-        数字取自入口节点的内核计数器，代表这条链路搬运的字节数。机器重启或防火墙被
-        清空会让计数器归零，面板已按此累加，不会丢账。
-      </p>
     </Modal>
   );
 }
@@ -893,11 +895,6 @@ function RouteForm({ nodes, route, family, onClose, onSaved, onError }: RouteFor
             required
           />
         </label>
-        {!route && (
-          <p className="hint">
-            节点上的服务名和配置文件名会用自动生成的英文标识，中文名称不影响部署。
-          </p>
-        )}
 
         <div className="grid2">
           <label>
@@ -966,16 +963,13 @@ function RouteForm({ nodes, route, family, onClose, onSaved, onError }: RouteFor
               <p className="hint">
                 {entryNode.name} 的 IPv6 入口是服务商映射的{" "}
                 <code>[{entryNode.ipv6_entry}]:{entryPort || "入口端口"}</code>
-                ，流量被转进这台机器的 IPv4，所以首跳会按 IPv4 监听。客户端照样走 IPv6
-                连进来；但同一端口用它的 IPv4 地址也能连上——这由服务商的映射方式决定，
-                面板改变不了。
+                ，首跳监听 IPv4；该端口也可经 IPv4 访问。
               </p>
             ) : entryNode && ipv6Reachable(entryNode) ? (
               <p className="hint">
                 首跳改为<strong>只</strong>接受 IPv6 客户端，入口地址变成{" "}
                 <code>[{ipv6DialAddress(entryNode) || "节点的 v6 地址"}]:{entryPort || "入口端口"}</code>
-                ，同一节点的 IPv4 地址将连不上这条链路。落地走哪个协议族不受影响；
-                只影响这一条链路，同机器上其他链路不动。
+                ，不再接受 IPv4 客户端；其他链路与落地协议族不变。
               </p>
             ) : (
               <p className="hint">
@@ -1019,13 +1013,11 @@ function RouteForm({ nodes, route, family, onClose, onSaved, onError }: RouteFor
           </label>
         </div>
         <p className="hint">
-          按上行 + 下行合计，对齐服务商的计费口径（客户端下载 1GB → 机器进 1GB 出 1GB =
-          账单 2GB）。跑满后面板会自动停掉这条链路，下个周期自动恢复。
-          重置日只到 28 号，29 号之后并非每月都有。
+          额度按上行 + 下行合计。用尽后自动停用，下周期恢复；重置日可选 1–28 号。
         </p>
 
         <h2 style={{ marginTop: 16 }}>转发链</h2>
-        <p className="hint">按顺序选择节点，第一个是入口，最后一个负责拨向落地。</p>
+        <p className="hint">按顺序选择节点：首跳为入口，末跳连接落地。</p>
 
         {hops.map((nodeId, i) => (
           <div className="row" key={i} style={{ marginBottom: 8 }}>

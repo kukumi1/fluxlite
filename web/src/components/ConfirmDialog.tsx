@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 export interface ConfirmRequest {
   title: string;
@@ -25,6 +26,7 @@ interface Pending extends ConfirmRequest {
  */
 export function useConfirm(): [(request: ConfirmRequest) => Promise<boolean>, ReactNode] {
   const [pending, setPending] = useState<Pending | null>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
 
   const ask = useCallback(
@@ -51,14 +53,15 @@ export function useConfirm(): [(request: ConfirmRequest) => Promise<boolean>, Re
   useEffect(() => {
     if (!pending) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") settle(false);
+      if (e.key === "Escape" && Array.from(document.querySelectorAll("body > .modal-backdrop")).pop() === backdropRef.current) settle(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [pending, settle]);
 
-  const dialog = pending ? (
+  const dialog = pending ? createPortal(
     <div
+      ref={backdropRef}
       className="modal-backdrop"
       onClick={(e) => {
         if (e.target === e.currentTarget) settle(false);
@@ -79,7 +82,8 @@ export function useConfirm(): [(request: ConfirmRequest) => Promise<boolean>, Re
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   ) : null;
 
   return [ask, dialog];

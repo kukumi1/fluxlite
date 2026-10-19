@@ -188,3 +188,26 @@
   .machines-management .machine-resource-table tbody[data-details-expanded="false"] .machine-resource-row > td { border-bottom:1px solid var(--border); }
   .machines-management .machine-resource-table tbody[data-details-expanded="false"]:last-child .machine-resource-row > td { border-bottom:0; }
 }
+
+/* Only the quiet grip is draggable, never card actions. */
+.management-page .sort-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: grab;
+  vertical-align: middle;
+}
+.management-page .sort-handle:active { cursor: grabbing; }
+.management-page .sort-handle:hover:not(:disabled) { background: var(--muted); }
+.management-page .sort-handle:disabled { opacity: .35; cursor: default; }
+.management-page .sort-handle:focus-visible { outline: 2px solid var(--muted-foreground); outline-offset: 1px; }
+.management-page .sortable-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.management-page .is-drag-target { outline: 1px dashed var(--muted-foreground); outline-offset: -2px; }

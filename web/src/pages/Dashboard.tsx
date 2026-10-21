@@ -12,7 +12,6 @@ import {
   api,
   type DailyTotal,
   type Node,
-  type NodeMetrics,
   type QuotaState,
   type Route,
   type RouteStatus,
@@ -22,24 +21,14 @@ import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatCard } from "../components/StatCard";
-import { MetricBar } from "../components/MetricBar";
 import { TrafficTrend } from "../components/TrafficTrend";
 import { Banner } from "../components/Modal";
-import { describeAge, formatBytes, isStale, ageOf, percentOf } from "../lib/format";
-import { memCaveat } from "../lib/metrics";
+import { describeAge, formatBytes, isStale, ageOf } from "../lib/format";
 import "./dashboard-redesign.css";
 
 const RANK_LIMIT = 6;
 
 const QUOTA_NEAR_RATIO = 0.9;
-const METRICS_REFRESH_MS = 5000;
-
-function metricAgeLabel(metric: NodeMetrics | undefined): string {
-  if (!metric) return "等待采集";
-  const age = ageOf(metric.collected_at);
-  return age === null ? "采集时间未知" : `更新于 ${describeAge(age)}`;
-}
-
 type Tone = "err" | "warn";
 
 interface Issue {
@@ -146,8 +135,6 @@ export function Dashboard({ onNavigate }: Props) {
   const [traffic, setTraffic] = useState<Record<string, Traffic>>({});
   const [quotas, setQuotas] = useState<QuotaState[]>([]);
   const [daily, setDaily] = useState<DailyTotal[]>([]);
-  const [metrics, setMetrics] = useState<Record<string, NodeMetrics>>({});
-  const [metricsError, setMetricsError] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -179,34 +166,6 @@ export function Dashboard({ onNavigate }: Props) {
     void loadDashboard();
     const timer = window.setInterval(() => void loadDashboard(), 15000);
     return () => window.clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    let disposed = false;
-    let timer: number | undefined;
-
-    const refreshMetrics = async () => {
-      try {
-        const next = await api.metrics();
-        if (disposed) return;
-        setMetrics(next ?? {});
-        setMetricsError("");
-      } catch (e) {
-        if (!disposed) {
-          setMetricsError(e instanceof Error ? e.message : String(e));
-        }
-      } finally {
-        if (!disposed) {
-          timer = window.setTimeout(refreshMetrics, METRICS_REFRESH_MS);
-        }
-      }
-    };
-
-    void refreshMetrics();
-    return () => {
-      disposed = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
   }, []);
 
   const entries = Object.values(traffic);
@@ -271,30 +230,18 @@ export function Dashboard({ onNavigate }: Props) {
             <Card className="dashboard-traffic"><TrafficTrend days={daily} /></Card>
           )}
 
-          <Card className="dashboard-machines">
-            <div className="spread">
-              <div><h2>机器资源</h2><p className="dashboard-caption">{metricsError ? "指标更新失败，暂显示上次采集结果" : "资源使用概况 · 每 5 秒刷新指标"}</p></div>
-              <button className="btn sm" onClick={() => onNavigate("nodes")}>全部机器 <ArrowRight size={14} /></button>
-            </div>
-            {nodes.length === 0 ? <p className="muted">尚未添加机器。</p> : (
-              <div className="dashboard-machine-scroll">
-                <table className="dashboard-machine-table">
-                  <thead><tr><th>机器 / 最近采集</th><th>状态</th><th>CPU</th><th>内存</th><th>磁盘</th></tr></thead>
-                  <tbody>{nodes.map((n) => {
-                    const m = metrics[n.id];
-                    const caveat = memCaveat(m);
-                    return <tr key={n.id}>
-                      <td><div className="dashboard-machine-name"><span className="dashboard-machine-icon"><Server size={16} /></span><div><strong>{n.name}</strong><small>{metricAgeLabel(m)}</small></div></div></td>
-                      <td><span className={`tag ${n.status === "online" ? "ok" : n.status === "offline" ? "err" : ""}`}>{n.status === "online" ? "在线" : n.status === "offline" ? "离线" : "未知"}</span></td>
-                      <td><MetricBar label="CPU" percent={m?.cpu_percent ?? null} caveat={caveat} /></td>
-                      <td><MetricBar label="内存" percent={percentOf(m?.mem_used ?? null, m?.mem_total ?? null)} detail={m?.mem_total ? formatBytes(m.mem_total) : undefined} caveat={caveat} /></td>
-                      <td><MetricBar label="磁盘" percent={percentOf(m?.disk_used ?? null, m?.disk_total ?? null)} detail={m?.disk_total ? formatBytes(m.disk_total) : undefined} /></td>
-                    </tr>;
-                  })}</tbody>
-                </table>
-              </div>
+          {routes.length > 0 && <Card className="dashboard-ranking">
+            <div className="spread"><h2>流量排行</h2><span className="dashboard-caption">累计 · 入站 + 出站</span></div>
+            {rankTop.length === 0 ? <p className="muted">还没有任何链路记到数。</p> : (
+              <ul className="rank-list">{rankTop.map(({ route, t, total }, index) => (
+                <li key={route.id}><button className="rank-item" title={`入 ${formatBytes(t.bytes_in)} · 出 ${formatBytes(t.bytes_out)}`} onClick={() => onNavigate("routes")}>
+                  <div className="rank-head"><span className="rank-name"><span className="dashboard-rank-number">{String(index + 1).padStart(2, "0")}</span><span className="dashboard-rank-title">{route.name}</span>{route.listen_ipv6 && <span className="tag">IPv6</span>}</span><span className="rank-value">{formatBytes(total)}</span></div>
+                  <div className="rank-track"><div className="rank-fill" style={{ width: `${rankMax > 0 ? (total / rankMax) * 100 : 0}%` }} /></div>
+                </button></li>
+              ))}</ul>
             )}
-          </Card>
+            {(ranked.length > RANK_LIMIT || uncounted > 0) && <p className="dashboard-caption">{ranked.length > RANK_LIMIT && `另有 ${ranked.length - RANK_LIMIT} 条未列出。`}{uncounted > 0 && `${uncounted} 条没有计数，不参与排行。`}</p>}
+          </Card>}
         </div>
 
         <aside className="dashboard-side-column" aria-label="运行概况、待关注事项与流量排行">
@@ -314,18 +261,6 @@ export function Dashboard({ onNavigate }: Props) {
               <><ul className="dashboard-issues">{issues.map((issue, i) => <li key={i} className={issue.tone}><TriangleAlert size={15} /><div><strong>{issue.text}</strong>{issue.hint && <p>{issue.hint}</p>}</div></li>)}</ul><button className="btn sm" onClick={() => onNavigate("routes")}>去链路页处理 <ArrowRight size={14} /></button></>
             )}
           </Card>
-          {routes.length > 0 && <Card className="dashboard-ranking">
-            <div className="spread"><h2>流量排行</h2><span className="dashboard-caption">累计 · 入站 + 出站</span></div>
-            {rankTop.length === 0 ? <p className="muted">还没有任何链路记到数。</p> : (
-              <ul className="rank-list">{rankTop.map(({ route, t, total }, index) => (
-                <li key={route.id}><button className="rank-item" title={`入 ${formatBytes(t.bytes_in)} · 出 ${formatBytes(t.bytes_out)}`} onClick={() => onNavigate("routes")}>
-                  <div className="rank-head"><span className="rank-name"><span className="dashboard-rank-number">{String(index + 1).padStart(2, "0")}</span><span className="dashboard-rank-title">{route.name}</span>{route.listen_ipv6 && <span className="tag">IPv6</span>}</span><span className="rank-value">{formatBytes(total)}</span></div>
-                  <div className="rank-track"><div className="rank-fill" style={{ width: `${rankMax > 0 ? (total / rankMax) * 100 : 0}%` }} /></div>
-                </button></li>
-              ))}</ul>
-            )}
-            {(ranked.length > RANK_LIMIT || uncounted > 0) && <p className="dashboard-caption">{ranked.length > RANK_LIMIT && `另有 ${ranked.length - RANK_LIMIT} 条未列出。`}{uncounted > 0 && `${uncounted} 条没有计数，不参与排行。`}</p>}
-          </Card>}
         </aside>
       </div>
     </div>

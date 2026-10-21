@@ -57,18 +57,6 @@ function usageLabel(user: SingBoxUser, used: number, total: number): string {
   return `${formatBytes(used)} / ${formatBytes(total)}`;
 }
 
-function expiryLabel(value: string | null): string {
-  if (!hasExpiry(value)) return "永久";
-  const days = Math.ceil((new Date(value).getTime() - Date.now()) / 86_400_000);
-  if (days <= 0) return "已过期";
-  return `${days}天后`;
-}
-
-function usagePercent(used: number, total: number): number {
-  if (total <= 0) return 0;
-  return Math.min(100, Math.max(0, (used / total) * 100));
-}
-
 export function SingBox() {
   const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState("");
@@ -249,11 +237,11 @@ export function SingBox() {
         {list.map((user) => {
             const used = user.used_in + user.used_out;
             const total = user.base_quota_bytes + user.top_up_bytes;
-            const percent = usagePercent(used, total);
             return (
               <article className="singbox-user-card" data-tone={user.id % 4} key={user.id}>
                 <div className="singbox-user-head">
-                  <div className="singbox-user-title"><strong>{user.name}</strong><span className="management-protocol">{protocols.find(([protocol]) => protocol === user.protocol)?.[1] ?? user.protocol}</span><span className="muted">{user.node_name ?? `机器 #${user.node_id}`} · 端口 {user.port}</span><span className={`tag ${user.enabled && user.status === "running" ? "ok" : user.status === "exhausted" || user.status === "expired" ? "err" : ""}`}>{statusLabel(user)}</span></div>
+                  <div className="singbox-user-title"><strong>{user.name}</strong><span className="singbox-connection-expiry">到期 {user.source === "external" ? "—" : hasExpiry(user.expires_at) ? formatDateTime(user.expires_at) : "永久"}</span><span className="management-protocol">{protocols.find(([protocol]) => protocol === user.protocol)?.[1] ?? user.protocol}</span><span className="muted">{user.node_name ?? `机器 #${user.node_id}`} · 端口 {user.port}</span><span className={`tag ${user.enabled && user.status === "running" ? "ok" : user.status === "exhausted" || user.status === "expired" ? "err" : ""}`}>{statusLabel(user)}</span></div>
+                  <div className="singbox-user-summary" aria-label="节点摘要"><span>流量 <strong>{usageLabel(user, used, total)}</strong></span><span>流量到期 <strong>{user.source === "external" ? "—" : formatDateTime(user.period_ends_at)}</strong></span></div>
                   <div className="singbox-actions">
                     {user.source === "external" ? <>
                       <button className="btn sm" disabled={busy} onClick={() => openQuotaDialog(user, true)}>接管</button>
@@ -269,12 +257,6 @@ export function SingBox() {
                       <button className="btn sm danger" disabled={busy} aria-label="删除节点" title="删除节点" onClick={() => void removeUser(user)}><Trash2 size={13} /></button>
                     </>}
                   </div>
-                </div>
-                <div className="singbox-user-meta">
-                  <div><span>入口机器 / 端口</span><strong>{user.node_name ?? `#${user.node_id}`}:{user.port}</strong></div>
-                  <div className="singbox-usage"><span>已用流量</span><strong>{usageLabel(user, used, total)}</strong>{user.source !== "external" && total > 0 && <div className="singbox-progress"><i style={{ width: `${percent}%` }} /></div>}</div>
-                  <div><span>连接有效期</span><strong>{user.source === "external" ? "—" : hasExpiry(user.expires_at) ? formatDateTime(user.expires_at) : "永久"}</strong>{user.source !== "external" && hasExpiry(user.expires_at) && <small className="muted">{expiryLabel(user.expires_at)}</small>}</div>
-                  <div><span>流量周期结束</span><div className="singbox-period-value"><strong>{user.source === "external" ? "—" : formatDateTime(user.period_ends_at)}</strong></div></div>
                 </div>
               </article>
             );

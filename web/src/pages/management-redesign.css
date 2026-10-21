@@ -28,6 +28,11 @@
 .singbox-management .singbox-actions > .toggle-switch { margin-right:auto; }
 .singbox-management .singbox-actions .btn { padding:6px 9px;min-height:32px;font-size:11px; }
 .singbox-management .singbox-user-meta { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:21px 15px;padding-top:18px;border-top:1px solid var(--border); }
+.singbox-management .singbox-user-meta[hidden] { display:none; }
+.singbox-management .singbox-detail-toggle { display:inline-grid;place-items:center;flex:0 0 28px;width:28px;height:28px;padding:0;border:1px solid var(--border);border-radius:7px;background:transparent;color:var(--muted-foreground);cursor:pointer; }
+.singbox-management .singbox-detail-toggle:hover { background:var(--muted);color:var(--foreground); }
+.singbox-management .singbox-detail-toggle[aria-expanded="true"] svg { transform:rotate(180deg); }
+.singbox-management .singbox-detail-toggle:focus-visible { outline:2px solid var(--ring);outline-offset:2px; }
 .singbox-management .singbox-user-meta > div { min-width:0; }
 .singbox-management .singbox-user-meta strong { font-size:12px;line-height:1.7;overflow-wrap:anywhere; }
 .singbox-management .singbox-user-meta span { font-size:11px; }
@@ -211,3 +216,27 @@
 .management-page .sort-handle:focus-visible { outline: 2px solid var(--muted-foreground); outline-offset: 1px; }
 .management-page .sortable-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .management-page .is-drag-target { outline: 1px dashed var(--muted-foreground); outline-offset: -2px; }
+
+/* Mini node cards: keep the identity and actions visible, move detail data behind the disclosure. */
+.singbox-management .singbox-user-list { gap: 8px; margin-top: 12px; }
+.singbox-management .singbox-user-card { padding: 12px 14px; border-top-width: 1px; border-radius: 10px; background: var(--card); background-image: none; }
+.singbox-management .singbox-user-head { flex-direction:row; align-items:center; gap:12px; padding-bottom:0; }
+.singbox-management .singbox-user-title { flex:1; width:auto; min-width:0; gap:7px; }
+.singbox-management .singbox-user-title > .muted { flex-basis:auto; width:auto; font-size:11px; white-space:nowrap; }
+.singbox-management .singbox-user-title > .tag { flex-shrink:0; }
+.singbox-management .singbox-user-summary { display:flex; align-items:center; gap:14px; flex:0 1 auto; min-width:0; color:var(--muted-foreground); font-size:10px; white-space:nowrap; }
+.singbox-management .singbox-user-summary strong { color:var(--foreground); font-size:11px; font-weight:550; }
+.singbox-management .singbox-connection-expiry { color:var(--muted-foreground); font-size:10px; white-space:nowrap; }
+.singbox-management .singbox-user-actions,
+.singbox-management .singbox-actions { width:auto; flex:0 0 auto; gap:5px; }
+.singbox-management .singbox-actions > .toggle-switch { margin-right:2px; }
+.singbox-management .singbox-actions .btn { min-height:30px; padding:5px 7px; }
+.singbox-management .singbox-detail-toggle { flex-basis:26px; width:26px; height:26px; }
+.singbox-management .singbox-user-meta { margin-top:12px; padding-top:12px; gap:12px; }
+@media(max-width:760px) {
+  .singbox-management .singbox-user-head { align-items:flex-start; }
+  .singbox-management .singbox-user-title { align-content:flex-start; }
+  .singbox-management .singbox-user-title > .muted { flex-basis:100%; }
+  .singbox-management .singbox-user-summary { flex-basis:100%; margin-left:34px; }
+  .singbox-management .singbox-actions { flex-wrap:wrap; justify-content:flex-end; }
+}

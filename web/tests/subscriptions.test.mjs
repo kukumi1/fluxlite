@@ -2,13 +2,55 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { api } from "../src/api.ts";
-import { subscriptionFormats, subscriptionInput, subscriptionName, subscriptionURL } from "../src/lib/subscriptions.ts";
+import { subscriptionFormats, subscriptionInput, subscriptionMemberDetails, subscriptionName, subscriptionURL } from "../src/lib/subscriptions.ts";
 import { telegramTab } from "../src/lib/telegram.ts";
 
 const candidates = [
   { user_id: 1, node_id: 4, name: "A", node_name: "server", protocol: "trojan", port: 24443, subscription_id: null, subscription_name: "" },
   { user_id: 2, node_id: 4, name: "B", node_name: "server", protocol: "trojan", port: 24444, subscription_id: 7, subscription_name: "朋友" },
 ];
+
+test("member details resolve a single node by user ID without adding unrelated candidates", () => {
+  assert.deepEqual(subscriptionMemberDetails([{ user_id: 2, node_id: 4, protocol: "trojan" }], candidates), [
+    { user_id: 2, name: "B", machine: "server", protocol: "trojan", port: 24444 },
+  ]);
+});
+
+test("member details preserve membership order and authoritative protocol and port", () => {
+  const members = [{ user_id: 2, node_id: 4, protocol: "vmess", port: 12345 }, { user_id: 1, node_id: 4, protocol: "trojan" }];
+  const details = subscriptionMemberDetails(members, candidates);
+  assert.deepEqual(details.map(({ user_id, name, protocol, port }) => ({ user_id, name, protocol, port })), [
+    { user_id: 2, name: "B", protocol: "vmess", port: 12345 },
+    { user_id: 1, name: "A", protocol: "trojan", port: 24443 },
+  ]);
+  assert.equal(members[1].port, undefined);
+});
+
+test("missing candidate metadata retains member with node ID and no invented machine or port", () => {
+  assert.deepEqual(subscriptionMemberDetails([{ user_id: 99, node_id: 4, protocol: "tuic" }], candidates), [
+    { user_id: 99, name: "节点 ID 99", machine: "—", protocol: "tuic", port: null },
+  ]);
+});
+
+test("empty or absent membership does not infer membership from candidates", () => {
+  for (const members of [[], null, undefined]) assert.deepEqual(subscriptionMemberDetails(members, candidates), []);
+});
+
+test("member dialog is read-only, accessible, scrollable, and uses shared dismiss controls", () => {
+  const source = readFileSync(new URL("../src/pages/Subscriptions.tsx", import.meta.url), "utf8");
+  const dialog = source.slice(source.indexOf("function SubscriptionMembers("), source.indexOf("function SubscriptionNameEditor("));
+  const modal = readFileSync(new URL("../src/components/Modal.tsx", import.meta.url), "utf8");
+  assert.match(source, /aria-label=\{`查看「\$\{subscription.name\}」/);
+  assert.match(source, /onClick=\{\(\) => setViewingMembers\(subscription\)\}/);
+  assert.match(source, /onClose=\{\(\) => setViewingMembers\(null\)\}/);
+  assert.match(dialog, /<Modal title=\{`订阅节点 — \$\{subscription.name\}`\} onClose=\{onClose\}/);
+  assert.match(dialog, /此订阅暂无节点/);
+  assert.match(dialog, /className="table-scroll"/);
+  for (const heading of ["节点名称", "所属机器", "协议", "端口"]) assert.ok(dialog.includes(heading));
+  assert.doesNotMatch(dialog, /api\.|token|onSave|<input|<form/);
+  assert.match(modal, /e.key === "Escape"/);
+  assert.match(modal, /onClick=\{onClose\}/);
+});
 
 test("collection selection accepts only existing unoccupied nodes and trimmed names", () => {
   assert.deepEqual(subscriptionInput("  自用  ", [1], candidates), { name: "自用", user_ids: [1] });
@@ -118,10 +160,10 @@ test("view and reset have separate controls and failed views cannot leave a stal
 });
 
 
-test("subscription UI exposes four collection actions and occupied-node selection", () => {
+test("subscription UI exposes member details and four collection actions with occupied-node selection", () => {
   const source = readFileSync(new URL("../src/pages/Subscriptions.tsx", import.meta.url), "utf8");
   const cards = source.slice(source.indexOf("{subscriptions.map"), source.indexOf("{editor &&"));
-  assert.equal((cards.match(/<button /g) ?? []).length, 4);
+  assert.equal((cards.match(/<button /g) ?? []).length, 5);
   assert.doesNotMatch(source, /quota_bytes|expires_at|subscriptionPort|subscriptionSNI|exportSingBoxUser|previewSubscription/);
   assert.match(source, /useState<number\[\]>\(\[\]\)/);
   assert.match(source, /checked=\{occupied \|\| checked\}/);

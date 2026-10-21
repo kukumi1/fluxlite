@@ -7,7 +7,7 @@ import { useConfirm } from "../components/ConfirmDialog";
 import { CopyButton } from "../components/CopyButton";
 import { Banner, Modal } from "../components/Modal";
 import { PageHeader } from "../components/PageHeader";
-import { subscriptionFormats, subscriptionInput, subscriptionName, subscriptionURL } from "../lib/subscriptions";
+import { subscriptionFormats, subscriptionInput, subscriptionMemberDetails, subscriptionName, subscriptionURL } from "../lib/subscriptions";
 
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -19,6 +19,7 @@ export function Subscriptions() {
   const [busy, setBusy] = useState(false);
   const [editor, setEditor] = useState(false);
   const [renaming, setRenaming] = useState<Subscription | null>(null);
+  const [viewingMembers, setViewingMembers] = useState<Subscription | null>(null);
   // Tokens remain in page memory only; the server stores them encrypted.
   const [issued, setIssued] = useState<{ id: number; name: string; token: string } | null>(null);
   const [confirm, confirmDialog] = useConfirm();
@@ -119,7 +120,7 @@ export function Subscriptions() {
     {loading && <p className="muted" role="status">正在加载订阅…</p>}
     {!loading && !subscriptions.length && !error && <Card><h2>还没有订阅</h2><p className="muted">选择已有节点创建订阅。</p></Card>}
     {subscriptions.map((subscription) => <Card key={subscription.id}>
-      <div className="spread"><h2>{subscription.name}</h2><span className="tag">{subscription.members?.length ?? 0} 个节点</span></div>
+      <div className="spread"><h2>{subscription.name}</h2><button type="button" className="btn sm" aria-label={`查看「${subscription.name}」的 ${subscription.members?.length ?? 0} 个节点`} onClick={() => setViewingMembers(subscription)}>{subscription.members?.length ?? 0} 个节点</button></div>
       {subscription.mode !== "collection" && <Banner kind="warn">旧独立额度订阅需要先迁移</Banner>}
       {subscription.link_available === false && <Banner kind="warn">旧订阅需手动重置一次以启用查看；现有地址仍有效</Banner>}
       <div className="row">
@@ -130,6 +131,7 @@ export function Subscriptions() {
       </div>
     </Card>)}
     {editor && <SubscriptionEditor candidates={candidates} onSave={save} onClose={() => setEditor(false)} />}
+    {viewingMembers && <SubscriptionMembers subscription={viewingMembers} candidates={candidates} onClose={() => setViewingMembers(null)} />}
     {renaming && <SubscriptionNameEditor key={renaming.id} name={renaming.name} onSave={rename} onClose={() => setRenaming(null)} />}
     {issued && <Modal title={`订阅链接 — ${issued.name}`} onClose={() => setIssued(null)}>
       <Banner kind="warn">链接含访问凭据，请勿公开。各客户端仅导出兼容节点。</Banner>
@@ -141,6 +143,22 @@ export function Subscriptions() {
     </Modal>}
     {confirmDialog}
   </>;
+}
+
+function SubscriptionMembers({ subscription, candidates, onClose }: {
+  subscription: Subscription; candidates: SubscriptionCandidate[]; onClose: () => void;
+}) {
+  const members = subscriptionMemberDetails(subscription.members, candidates);
+  return <Modal title={`订阅节点 — ${subscription.name}`} onClose={onClose}>
+    {!members.length ? <p className="muted">此订阅暂无节点。</p> : <div className="table-scroll">
+      <table>
+        <thead><tr><th scope="col">节点名称</th><th scope="col">所属机器</th><th scope="col">协议</th><th scope="col">端口</th></tr></thead>
+        <tbody>{members.map((member) => <tr key={member.user_id}>
+          <td>{member.name}</td><td>{member.machine}</td><td>{member.protocol}</td><td>{member.port ?? "—"}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>}
+  </Modal>;
 }
 
 function SubscriptionNameEditor({ name: initialName, onSave, onClose }: {

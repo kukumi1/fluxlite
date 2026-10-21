@@ -1,4 +1,18 @@
-import type { SubscriptionCandidate, SubscriptionFormat, SubscriptionInput } from "../api";
+import type { Subscription, SubscriptionCandidate, SubscriptionFormat, SubscriptionInput } from "../api";
+
+export function subscriptionMemberDetails(members: Subscription["members"] | null | undefined, candidates: SubscriptionCandidate[]) {
+  const byUserID = new Map(candidates.map((candidate) => [candidate.user_id, candidate]));
+  return (members ?? []).map((member) => {
+    const candidate = byUserID.get(member.user_id);
+    return {
+      user_id: member.user_id,
+      name: candidate?.name || `节点 ID ${member.user_id}`,
+      machine: candidate?.node_name || "—",
+      protocol: member.protocol,
+      port: member.port ?? candidate?.port ?? null,
+    };
+  });
+}
 
 export const subscriptionFormats: Array<[SubscriptionFormat, string]> = [
   ["clash", "Clash / Mihomo"], ["base64", "v2rayN"],

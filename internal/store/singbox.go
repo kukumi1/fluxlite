@@ -23,12 +23,12 @@ func (s *Store) CreateSingBoxUser(ctx context.Context, u *model.SingBoxUser) err
 		INSERT INTO singbox_users (node_id,name,protocol,port,enabled,source,status,
 			service_name,config_path,external_path,config_blob,base_quota_bytes,
 			top_up_bytes,used_in,used_out,raw_in,raw_out,period_started_at,
-			period_ends_at,period_days,expires_at,quota_paused_at,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			period_ends_at,period_days,expires_at,quota_paused_at,upload_limit_bps,download_limit_bps,rate_limit_error,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		u.NodeID, u.Name, u.Protocol, u.Port, u.Enabled, u.Source, u.Status,
 		u.ServiceName, u.ConfigPath, u.ExternalPath, u.ConfigBlob, u.BaseQuotaBytes,
 		u.TopUpBytes, u.UsedIn, u.UsedOut, u.RawIn, u.RawOut, u.PeriodStartedAt,
-		u.PeriodEndsAt, u.PeriodDays, nullableExpiry(u.ExpiresAt), u.QuotaPausedAt, u.CreatedAt, u.UpdatedAt)
+		u.PeriodEndsAt, u.PeriodDays, nullableExpiry(u.ExpiresAt), u.QuotaPausedAt, u.UploadLimitBps, u.DownloadLimitBps, u.RateLimitError, u.CreatedAt, u.UpdatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("sing-box name or port already exists: %w", ErrConflict)
@@ -97,7 +97,7 @@ func (s *Store) ListSingBoxUsersOnNode(ctx context.Context, nodeID int64) ([]*mo
 const singBoxSelect = `SELECT id,node_id,name,protocol,port,enabled,source,status,
 	service_name,config_path,external_path,config_blob,base_quota_bytes,top_up_bytes,
 	used_in,used_out,raw_in,raw_out,period_started_at,period_ends_at,period_days,expires_at,quota_paused_at,
-	created_at,updated_at FROM singbox_users`
+	upload_limit_bps,download_limit_bps,rate_limit_error,created_at,updated_at FROM singbox_users`
 
 type rowScanner interface{ Scan(...any) error }
 
@@ -108,7 +108,7 @@ func scanSingBoxUser(row rowScanner) (*model.SingBoxUser, error) {
 		&u.Source, &u.Status, &u.ServiceName, &u.ConfigPath, &u.ExternalPath,
 		&u.ConfigBlob, &u.BaseQuotaBytes, &u.TopUpBytes, &u.UsedIn, &u.UsedOut,
 		&u.RawIn, &u.RawOut, &u.PeriodStartedAt, &u.PeriodEndsAt, &u.PeriodDays, &expires, &u.QuotaPausedAt,
-		&u.CreatedAt, &u.UpdatedAt)
+		&u.UploadLimitBps, &u.DownloadLimitBps, &u.RateLimitError, &u.CreatedAt, &u.UpdatedAt)
 	if err == nil {
 		if expires.Valid {
 			u.ExpiresAt = expires.Time
@@ -136,10 +136,10 @@ func (s *Store) updateSingBoxUser(ctx context.Context, u *model.SingBoxUser, wri
 	res, err := s.db.ExecContext(ctx, `UPDATE singbox_users SET name=?, protocol=?, port=?,
 		enabled=?, source=?, status=?, service_name=?, config_path=?, external_path=?,
 		config_blob=CASE WHEN ? THEN ? ELSE config_blob END, base_quota_bytes=?, top_up_bytes=?, used_in=?, used_out=?, raw_in=?, raw_out=?, period_started_at=?,
-		period_ends_at=?, period_days=?, expires_at=?, quota_paused_at=?, updated_at=? WHERE id=?`,
+		period_ends_at=?, period_days=?, expires_at=?, quota_paused_at=?, upload_limit_bps=?, download_limit_bps=?, rate_limit_error=?, updated_at=? WHERE id=?`,
 		u.Name, u.Protocol, u.Port, u.Enabled, u.Source, u.Status, u.ServiceName,
 		u.ConfigPath, u.ExternalPath, writeConfig, u.ConfigBlob, u.BaseQuotaBytes, u.TopUpBytes, u.UsedIn, u.UsedOut, u.RawIn, u.RawOut,
-		u.PeriodStartedAt, u.PeriodEndsAt, u.PeriodDays, nullableExpiry(u.ExpiresAt), u.QuotaPausedAt, u.UpdatedAt, u.ID)
+		u.PeriodStartedAt, u.PeriodEndsAt, u.PeriodDays, nullableExpiry(u.ExpiresAt), u.QuotaPausedAt, u.UploadLimitBps, u.DownloadLimitBps, u.RateLimitError, u.UpdatedAt, u.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("sing-box name or port already exists: %w", ErrConflict)

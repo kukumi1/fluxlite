@@ -63,6 +63,9 @@ export interface SingBoxUser {
   period_days: number;
   expires_at: string | null;
   quota_paused_at: string | null;
+  upload_limit_bps: number;
+  download_limit_bps: number;
+  rate_limit_error?: string;
 }
 
 export interface SingBoxDiscovery {
@@ -564,6 +567,8 @@ export interface SingBoxUserInput {
   cipher: SingBoxCipher;
   access_days: number;
   expires_at: string | null;
+  upload_limit_mbps: number;
+  download_limit_mbps: number;
 }
 
 export interface SingBoxUserUpdate {
@@ -572,4 +577,6 @@ export interface SingBoxUserUpdate {
   period_days: number;
   expires_at: string | null;
   enabled: boolean;
+  upload_limit_mbps: number;
+  download_limit_mbps: number;
 }

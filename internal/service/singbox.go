@@ -20,23 +20,27 @@ import (
 
 type SingBoxUserInput struct {
 	// Internal ownership is reserved durably before any remote deployment.
-	subscriptionID int64
-	NodeID         int64                 `json:"node_id"`
-	Name           string                `json:"name"`
-	Protocol       model.SingBoxProtocol `json:"protocol"`
-	Port           int                   `json:"port"`
-	QuotaBytes     int64                 `json:"quota_bytes"`
-	Cipher         string                `json:"cipher"`
-	AccessDays     int                   `json:"access_days"`
-	ExpiresAt      time.Time             `json:"expires_at"`
+	subscriptionID    int64
+	NodeID            int64                 `json:"node_id"`
+	Name              string                `json:"name"`
+	Protocol          model.SingBoxProtocol `json:"protocol"`
+	Port              int                   `json:"port"`
+	QuotaBytes        int64                 `json:"quota_bytes"`
+	Cipher            string                `json:"cipher"`
+	AccessDays        int                   `json:"access_days"`
+	ExpiresAt         time.Time             `json:"expires_at"`
+	UploadLimitMbps   int64                 `json:"upload_limit_mbps"`
+	DownloadLimitMbps int64                 `json:"download_limit_mbps"`
 }
 
 type SingBoxUserUpdate struct {
-	Name       string    `json:"name"`
-	QuotaBytes int64     `json:"quota_bytes"`
-	PeriodDays int       `json:"period_days"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	Enabled    bool      `json:"enabled"`
+	Name              string    `json:"name"`
+	QuotaBytes        int64     `json:"quota_bytes"`
+	PeriodDays        int       `json:"period_days"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	Enabled           bool      `json:"enabled"`
+	UploadLimitMbps   int64     `json:"upload_limit_mbps"`
+	DownloadLimitMbps int64     `json:"download_limit_mbps"`
 }
 
 func (s *Service) UpdateSingBoxUser(ctx context.Context, id int64, in SingBoxUserUpdate) error {
@@ -56,6 +60,9 @@ func (s *Service) UpdateSingBoxUser(ctx context.Context, id int64, in SingBoxUse
 	if in.QuotaBytes < 0 {
 		return model.ErrSingBoxQuota
 	}
+	if in.UploadLimitMbps < 0 || in.DownloadLimitMbps < 0 || in.UploadLimitMbps > 100000 || in.DownloadLimitMbps > 100000 {
+		return model.ErrSingBoxRate
+	}
 	in.ExpiresAt = in.ExpiresAt.UTC()
 	if !in.ExpiresAt.IsZero() && !in.ExpiresAt.After(time.Now().UTC()) {
 		return fmt.Errorf("connection expiry must be in the future")
@@ -64,6 +71,7 @@ func (s *Service) UpdateSingBoxUser(ctx context.Context, id int64, in SingBoxUse
 		return model.ErrSingBoxQuota
 	}
 	u.Name, u.BaseQuotaBytes, u.TopUpBytes, u.ExpiresAt = strings.TrimSpace(in.Name), in.QuotaBytes, 0, in.ExpiresAt
+	u.UploadLimitBps, u.DownloadLimitBps = rateBps(in.UploadLimitMbps), rateBps(in.DownloadLimitMbps)
 	if in.PeriodDays < 1 || in.PeriodDays > 3650 {
 		return model.ErrSingBoxPeriod
 	}
@@ -71,6 +79,21 @@ func (s *Service) UpdateSingBoxUser(ctx context.Context, id int64, in SingBoxUse
 	u.PeriodEndsAt = u.PeriodStartedAt.Add(time.Duration(u.PeriodDays) * 24 * time.Hour)
 	if err := s.store.UpdateSingBoxUser(ctx, u); err != nil {
 		return err
+	}
+	if node, nodeErr := s.store.NodeByID(ctx, u.NodeID); nodeErr == nil {
+		if client, clientErr := s.pool.Get(ctx, node); clientErr == nil {
+			u.RateLimitError = ""
+			if rateErr := ensureSingBoxLinuxUser(ctx, client.Client, u.ID); rateErr != nil {
+				u.RateLimitError = rateErr.Error()
+			} else if rateErr := ensureSingBoxServiceIdentity(ctx, client.Client, node, u); rateErr != nil {
+				u.RateLimitError = rateErr.Error()
+			} else if rateErr := applySingBoxRateLimit(ctx, client.Client, u); rateErr != nil {
+				u.RateLimitError = rateErr.Error()
+			}
+			if rateErr := s.store.UpdateSingBoxUser(ctx, u); rateErr != nil {
+				return rateErr
+			}
+		}
 	}
 	if u.Enabled != in.Enabled {
 		return s.SetSingBoxEnabled(ctx, id, in.Enabled)
@@ -265,6 +288,7 @@ func (s *Service) createSingBoxUser(ctx context.Context, in SingBoxUserInput, op
 		Status: model.SingBoxStatusError, BaseQuotaBytes: in.QuotaBytes, PeriodDays: 30,
 		PeriodStartedAt: periodStart, PeriodEndsAt: periodStart.Add(30 * 24 * time.Hour), ExpiresAt: expiresAt,
 		ServiceName: "pending", ConfigPath: "pending",
+		UploadLimitBps: rateBps(in.UploadLimitMbps), DownloadLimitBps: rateBps(in.DownloadLimitMbps),
 	}
 	if err := u.Validate(); err != nil {
 		return nil, err
@@ -848,6 +872,13 @@ func (s *Service) singBoxUserOnline(ctx context.Context, node *model.Node, u *mo
 
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 
+func rateBps(mbps int64) int64 {
+	if mbps <= 0 {
+		return 0
+	}
+	return mbps * 1_000_000
+}
+
 func (s *Service) deploySingBoxUser(ctx context.Context, node *model.Node, u *model.SingBoxUser, bundle *singbox.Bundle) error {
 	client, err := s.pool.Get(ctx, node)
 	if err != nil {
@@ -859,6 +890,9 @@ func (s *Service) deploySingBoxUser(ctx context.Context, node *model.Node, u *mo
 	}
 	bin = strings.TrimSpace(strings.Split(bin, "\n")[0])
 	dir := fmt.Sprintf("/etc/fluxlite/singbox/%d", u.ID)
+	if err := ensureSingBoxLinuxUser(ctx, client.Client, u.ID); err != nil {
+		return fmt.Errorf("create isolated sing-box user: %w", err)
+	}
 	if _, err := sshx.RunCheck(ctx, client.Client, "mkdir -p "+shellQuote(dir)+" /var/lib/fluxlite-singbox/"+strconv.FormatInt(u.ID, 10)); err != nil {
 		return err
 	}
@@ -869,8 +903,11 @@ func (s *Service) deploySingBoxUser(ctx context.Context, node *model.Node, u *mo
 	if _, err := sshx.RunCheck(ctx, client.Client, certCmd); err != nil {
 		return fmt.Errorf("create self-signed certificate: %w", err)
 	}
-	unit := fmt.Sprintf("[Unit]\nDescription=fluxlite sing-box user %d\nAfter=network-online.target\n[Service]\nExecStart=%s -D /var/lib/fluxlite-singbox/%d -c %s run\nRestart=on-failure\nRestartSec=2\n[Install]\nWantedBy=multi-user.target\n", u.ID, bin, u.ID, dir+"/config.json")
+	unit := fmt.Sprintf("[Unit]\nDescription=fluxlite sing-box user %d\nAfter=network-online.target\n[Service]\nUser=%s\nGroup=%s\nExecStart=%s -D /var/lib/fluxlite-singbox/%d -c %s run\nRestart=on-failure\nRestartSec=2\n[Install]\nWantedBy=multi-user.target\n", u.ID, singBoxLinuxUser(u.ID), singBoxLinuxUser(u.ID), bin, u.ID, dir+"/config.json")
 	unitPath := "/etc/systemd/system/" + u.ServiceName + ".service"
+	if _, err := sshx.RunCheck(ctx, client.Client, "chown -R "+shellQuote(singBoxLinuxUser(u.ID))+":"+shellQuote(singBoxLinuxUser(u.ID))+" "+shellQuote(dir)+" /var/lib/fluxlite-singbox/"+strconv.FormatInt(u.ID, 10)); err != nil {
+		return err
+	}
 	if node.InitSystem == model.InitSystemd {
 		if err := sshx.WriteFile(ctx, client.Client, unitPath, []byte(unit), "0644"); err != nil {
 			return err
@@ -879,7 +916,7 @@ func (s *Service) deploySingBoxUser(ctx context.Context, node *model.Node, u *mo
 			return fmt.Errorf("start sing-box service: %w", err)
 		}
 	} else if node.InitSystem == model.InitOpenRC {
-		script := fmt.Sprintf("#!/sbin/openrc-run\nname=%q\ndescription=%q\nsupervisor=supervise-daemon\ncommand=%q\ncommand_args=%q\ncommand_background=true\npidfile=%q\nrespawn_delay=2\nrespawn_max=0\ndepend() { need net; after firewall; }\n", u.ServiceName, fmt.Sprintf("fluxlite sing-box user %d", u.ID), bin, fmt.Sprintf("-D /var/lib/fluxlite-singbox/%d -c %s run", u.ID, dir+"/config.json"), "/run/"+u.ServiceName+".pid")
+		script := fmt.Sprintf("#!/sbin/openrc-run\nname=%q\ndescription=%q\ncommand_user=%q\nsupervisor=supervise-daemon\ncommand=%q\ncommand_args=%q\ncommand_background=true\npidfile=%q\nrespawn_delay=2\nrespawn_max=0\ndepend() { need net; after firewall; }\n", u.ServiceName, fmt.Sprintf("fluxlite sing-box user %d", u.ID), singBoxLinuxUser(u.ID), bin, fmt.Sprintf("-D /var/lib/fluxlite-singbox/%d -c %s run", u.ID, dir+"/config.json"), "/run/"+u.ServiceName+".pid")
 		path := "/etc/init.d/" + u.ServiceName
 		if err := sshx.WriteFile(ctx, client.Client, path, []byte(script), "0755"); err != nil {
 			return err
@@ -890,7 +927,15 @@ func (s *Service) deploySingBoxUser(ctx context.Context, node *model.Node, u *mo
 	} else {
 		return fmt.Errorf("unsupported init system %q on %s", node.InitSystem, node.Name)
 	}
-	return s.ensureSingBoxAccounting(ctx, client.Client, u.ID, u.Port)
+	if err := s.ensureSingBoxAccounting(ctx, client.Client, u.ID, u.Port); err != nil {
+		return err
+	}
+	if err := applySingBoxRateLimit(ctx, client.Client, u); err != nil {
+		u.RateLimitError = err.Error()
+	} else {
+		u.RateLimitError = ""
+	}
+	return nil
 }
 
 func (s *Service) remoteUnit(ctx context.Context, node *model.Node, u *model.SingBoxUser, action string) error {
@@ -918,6 +963,10 @@ func (s *Service) removeSingBoxUser(ctx context.Context, node *model.Node, u *mo
 		return err
 	}
 	_, err = sshx.RunCheck(ctx, client.Client, cmd)
+	if err == nil {
+		_ = removeSingBoxRateLimit(ctx, client.Client, u.ID)
+		_, _ = sshx.Run(ctx, client.Client, "userdel "+shellQuote(singBoxLinuxUser(u.ID))+" 2>/dev/null || true")
+	}
 	return err
 }
 

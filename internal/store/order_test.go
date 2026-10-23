@@ -132,8 +132,8 @@ func TestManualOrderPersistenceAndIsolation(t *testing.T) {
 	if err := st.db.QueryRowContext(ctx, "SELECT version FROM schema_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 51 {
-		t.Fatalf("schema version %d", version)
+	if version != len(migrations) {
+		t.Fatalf("schema version %d, want %d", version, len(migrations))
 	}
 }
 

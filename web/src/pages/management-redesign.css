@@ -216,7 +216,6 @@
 .management-page .sort-handle:focus-visible { outline: 2px solid var(--muted-foreground); outline-offset: 1px; }
 .management-page .sortable-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .management-page .is-drag-target { outline: 1px dashed var(--muted-foreground); outline-offset: -2px; }
-
 /* Mini node cards: keep the identity and actions visible, move detail data behind the disclosure. */
 .singbox-management .singbox-user-list { gap: 8px; margin-top: 12px; }
 .singbox-management .singbox-user-card { padding: 12px 14px; border-top-width: 1px; border-radius: 10px; background: var(--card); background-image: none; }
@@ -234,9 +233,19 @@
 .singbox-management .singbox-detail-toggle { flex-basis:26px; width:26px; height:26px; }
 .singbox-management .singbox-user-meta { margin-top:12px; padding-top:12px; gap:12px; }
 @media(max-width:760px) {
-  .singbox-management .singbox-user-head { align-items:flex-start; }
+  .singbox-management .singbox-user-head { grid-template-columns:minmax(0,1fr); align-items:flex-start; }
   .singbox-management .singbox-user-title { align-content:flex-start; }
   .singbox-management .singbox-user-title > .muted { flex-basis:100%; }
-  .singbox-management .singbox-user-summary { flex-basis:100%; margin-left:34px; }
-  .singbox-management .singbox-actions { flex-wrap:wrap; justify-content:flex-end; }
+  .singbox-management .singbox-user-summary { grid-column:1; flex-basis:100%; margin-left:0; }
+  .singbox-management .singbox-actions { grid-column:1; grid-row:auto; flex-wrap:wrap; justify-content:flex-start; }
+}
+
+/* Keep the identity column readable when the action row contains many controls. */
+.singbox-management .singbox-user-head { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:12px; row-gap:8px; }
+.singbox-management .singbox-user-title { grid-column:1; min-width:0; }
+.singbox-management .singbox-user-summary { grid-column:1; min-width:0; }
+.singbox-management .singbox-actions { grid-column:2; grid-row:1 / span 2; align-self:center; max-width:100%; }
+@media(max-width:760px) {
+  .singbox-management .singbox-user-head { grid-template-columns:minmax(0,1fr); }
+  .singbox-management .singbox-actions { grid-column:1; grid-row:auto; }
 }

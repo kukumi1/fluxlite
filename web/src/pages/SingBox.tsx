@@ -23,7 +23,7 @@ function toDateTimeLocal(date: Date): string {
 }
 
 function emptyInput(): SingBoxUserInput {
-  return { node_id: 0, name: "", protocol: "ss2022", cipher: "2022-blake3-aes-256-gcm", port: 0, quota_bytes: 0, access_days: 0, expires_at: "" };
+  return { node_id: 0, name: "", protocol: "ss2022", cipher: "2022-blake3-aes-256-gcm", port: 0, quota_bytes: 0, access_days: 0, expires_at: "", upload_limit_mbps: 0, download_limit_mbps: 0 };
 }
 
 const ciphers: Array<[SingBoxCipher, string]> = [
@@ -57,6 +57,11 @@ function usageLabel(user: SingBoxUser, used: number, total: number): string {
   return `${formatBytes(used)} / ${formatBytes(total)}`;
 }
 
+function rateLabel(user: SingBoxUser): string {
+  if (!user.upload_limit_bps && !user.download_limit_bps) return "未限速";
+  return `上行 ${Math.round(user.upload_limit_bps / 1_000_000)} · 下行 ${Math.round(user.download_limit_bps / 1_000_000)} Mbps`;
+}
+
 export function SingBox() {
   const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState("");
@@ -83,6 +88,8 @@ export function SingBox() {
   const [editQuotaGB, setEditQuotaGB] = useState("");
   const [editPeriodDays, setEditPeriodDays] = useState("30");
   const [editEnabled, setEditEnabled] = useState(true);
+  const [editUploadMbps, setEditUploadMbps] = useState("0");
+  const [editDownloadMbps, setEditDownloadMbps] = useState("0");
   const [managedOpen, setManagedOpen] = useState(true);
   const [externalOpen, setExternalOpen] = useState(false);
   const [discoveredOpen, setDiscoveredOpen] = useState(false);
@@ -119,6 +126,7 @@ export function SingBox() {
     if (!input.name.trim() || !input.node_id) { setError("请输入节点名称并选择机器"); return; }
     if (!Number.isInteger(input.port) || input.port < 0 || input.port > 65535) { setError("端口必须是 0-65535 的整数"); return; }
     if (!Number.isFinite(input.quota_bytes) || input.quota_bytes < 0) { setError("请输入有效流量额度"); return; }
+    if (![input.upload_limit_mbps, input.download_limit_mbps].every((value) => Number.isInteger(value) && value >= 0 && value <= 100000)) { setError("限速必须是 0-100000 的整数 Mbps"); return; }
     if (input.expires_at && (!hasExpiry(input.expires_at) || new Date(input.expires_at).getTime() <= Date.now())) { setError("请选择未来的过期时间，或留空表示永久"); return; }
     setBusy(true); setError(""); setNotice("");
     try { await api.createSingBoxUser({ ...input, expires_at: input.expires_at ? new Date(input.expires_at).toISOString() : null }); setNotice("用户节点已创建"); setCreating(false); setInput((old) => ({ ...emptyInput(), node_id: old.node_id })); await load(); }
@@ -197,6 +205,8 @@ export function SingBox() {
     setEditPeriodDays(String(user.period_days || 30));
     setExpiryAt(hasExpiry(user.expires_at) ? toDateTimeLocal(new Date(user.expires_at)) : "");
     setEditEnabled(user.enabled);
+    setEditUploadMbps(String(Math.round(user.upload_limit_bps / 1_000_000)));
+    setEditDownloadMbps(String(Math.round(user.download_limit_bps / 1_000_000)));
   }
 
   async function saveEditDialog() {
@@ -208,7 +218,9 @@ export function SingBox() {
     if (!Number.isFinite(quota) || quota < 0) { setError("请输入有效额度"); return; }
     const periodDays = Number(editPeriodDays);
     if (!Number.isInteger(periodDays) || periodDays < 1 || periodDays > 3650) { setError("流量周期必须是 1-3650 天"); return; }
-    const saved = await action(() => api.updateSingBoxUser(editUser.id, { name: editName.trim(), quota_bytes: Math.round(quota), period_days: periodDays, expires_at: expiryAt ? (hasExpiry(editUser.expires_at) && expiryAt === toDateTimeLocal(new Date(editUser.expires_at)) ? editUser.expires_at : expiry.toISOString()) : null, enabled: editEnabled }), "客户端已更新");
+    const upload = Number(editUploadMbps), download = Number(editDownloadMbps);
+    if (![upload, download].every((value) => Number.isInteger(value) && value >= 0 && value <= 100000)) { setError("限速必须是 0-100000 的整数 Mbps"); return; }
+    const saved = await action(() => api.updateSingBoxUser(editUser.id, { name: editName.trim(), quota_bytes: Math.round(quota), period_days: periodDays, expires_at: expiryAt ? (hasExpiry(editUser.expires_at) && expiryAt === toDateTimeLocal(new Date(editUser.expires_at)) ? editUser.expires_at : expiry.toISOString()) : null, enabled: editEnabled, upload_limit_mbps: upload, download_limit_mbps: download }), "客户端已更新");
     if (saved) setEditUser(null);
   }
 
@@ -241,7 +253,7 @@ export function SingBox() {
               <article className="singbox-user-card" data-tone={user.id % 4} key={user.id}>
                 <div className="singbox-user-head">
                   <div className="singbox-user-title"><strong>{user.name}</strong><span className="singbox-connection-expiry">到期 {user.source === "external" ? "—" : hasExpiry(user.expires_at) ? formatDateTime(user.expires_at) : "永久"}</span><span className="management-protocol">{protocols.find(([protocol]) => protocol === user.protocol)?.[1] ?? user.protocol}</span><span className="muted">{user.node_name ?? `机器 #${user.node_id}`} · 端口 {user.port}</span><span className={`tag ${user.enabled && user.status === "running" ? "ok" : user.status === "exhausted" || user.status === "expired" ? "err" : ""}`}>{statusLabel(user)}</span></div>
-                  <div className="singbox-user-summary" aria-label="节点摘要"><span>流量 <strong>{usageLabel(user, used, total)}</strong></span><span>流量到期 <strong>{user.source === "external" ? "—" : formatDateTime(user.period_ends_at)}</strong></span></div>
+                  <div className="singbox-user-summary" aria-label="节点摘要"><span>流量 <strong>{usageLabel(user, used, total)}</strong></span><span>流量到期 <strong>{user.source === "external" ? "—" : formatDateTime(user.period_ends_at)}</strong></span><span>限速 <strong>{rateLabel(user)}</strong></span>{user.rate_limit_error && <span className="err-text">限速未生效</span>}</div>
                   <div className="singbox-actions">
                     {user.source === "external" ? <>
                       <button className="btn sm" disabled={busy} onClick={() => openQuotaDialog(user, true)}>接管</button>
@@ -302,6 +314,8 @@ export function SingBox() {
           {input.protocol === "anytls" && <label>SNI<input value="developer.apple.com" readOnly /></label>}
           <label>端口（留空=自动）<input type="number" min={0} max={65535} placeholder="0=自动" value={input.port || ""} onChange={(e) => setInput({ ...input, port: e.target.value === "" ? 0 : Number(e.target.value) })} /></label>
           <label>基础额度（GB，留空=无限）<input type="number" min={0} placeholder="无限制" step="any" value={input.quota_bytes ? input.quota_bytes / 1024 ** 3 : ""} onChange={(e) => setInput({ ...input, quota_bytes: e.target.value === "" ? 0 : Number(e.target.value) * 1024 ** 3 })} /></label>
+          <label>上行限速（Mbps，0=不限）<input type="number" min={0} max={100000} placeholder="不限速" value={input.upload_limit_mbps || ""} onChange={(e) => setInput({ ...input, upload_limit_mbps: e.target.value === "" ? 0 : Number(e.target.value) })} /></label>
+          <label>下行限速（Mbps，0=不限）<input type="number" min={0} max={100000} placeholder="不限速" value={input.download_limit_mbps || ""} onChange={(e) => setInput({ ...input, download_limit_mbps: e.target.value === "" ? 0 : Number(e.target.value) })} /></label>
           <label>连接过期时间（留空=永久）<input type="datetime-local" value={input.expires_at ?? ""} onChange={(e) => setInput({ ...input, expires_at: e.target.value })} /></label>
         </div>
         <div className="row" style={{ marginTop: 16 }}><button className="btn primary" disabled={busy || !input.name || !input.node_id} onClick={() => void create()}><Plus size={14} />创建并部署</button></div>
@@ -339,7 +353,7 @@ export function SingBox() {
       </div></Modal>}
       {infoUser && <Modal title={`客户端信息 — ${infoUser.name}`} onClose={() => setInfoUser(null)}><div className="singbox-info-grid"><span>节点</span><strong>{infoUser.node_name ?? infoUser.node_id}</strong><span>入口</span><strong>{infoUser.name}</strong><span>协议</span><strong>{protocols.find(([protocol]) => protocol === infoUser.protocol)?.[1] ?? infoUser.protocol}</strong><span>流量</span><strong>{usageLabel(infoUser, infoUser.used_in + infoUser.used_out, infoUser.base_quota_bytes + infoUser.top_up_bytes)}</strong><span>连接有效期</span><strong>{hasExpiry(infoUser.expires_at) ? formatDateTime(infoUser.expires_at) : "永久"}</strong><span>周期结束</span><strong>{formatDateTime(infoUser.period_ends_at)}</strong></div></Modal>}
       {quotaDialog && <Modal title={quotaDialog.adopt ? "接管外部节点" : quotaDialog.reduce ? "减少本周期额度" : "增加本周期额度"} onClose={closeQuotaDialog}>{error && <Banner kind="err">{error}</Banner>}<p className="muted">{quotaDialog.adopt ? "面板将读取当前服务端配置，备份原片段并迁移到独立服务。" : quotaDialog.reduce ? "不能减少到低于已使用流量；无限额度不能直接减量。" : "周期结束时间和已用流量保持不变。"}</p><label>额度（GB）<input autoFocus type="number" min={1} value={quotaGB} disabled={busy} onChange={(e) => setQuotaGB(e.target.value)} /></label><div className="row" style={{ justifyContent: "flex-end", marginTop: 16 }}><button className="btn" disabled={busy} onClick={closeQuotaDialog}>取消</button><button className="btn primary" disabled={busy} onClick={() => void confirmQuotaDialog()}>确定</button></div></Modal>}
-      {editUser && <Drawer title="编辑节点" onClose={() => setEditUser(null)}>{error && <Banner kind="err">{error}</Banner>}<div className="singbox-edit-grid"><label>客户端名称<input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)} /></label><label>基础额度（GB，留空=无限）<input type="number" min={0} value={editQuotaGB} onChange={(e) => setEditQuotaGB(e.target.value)} /></label><label>流量自定义周期（天，默认 30 天）<input type="number" min={1} max={3650} value={editPeriodDays} onChange={(e) => setEditPeriodDays(e.target.value)} /></label><label>连接过期时间（留空=永久）<input type="datetime-local" value={expiryAt} onChange={(e) => setExpiryAt(e.target.value)} /></label><label className="singbox-check"><input type="checkbox" checked={editEnabled} onChange={(e) => setEditEnabled(e.target.checked)} />启用客户端</label></div><div className="row" style={{ justifyContent: "flex-end", marginTop: 16 }}><button className="btn" onClick={() => setEditUser(null)}>取消</button><button className="btn primary" disabled={busy} onClick={() => void saveEditDialog()}>保存</button></div></Drawer>}
+      {editUser && <Drawer title="编辑节点" onClose={() => setEditUser(null)}>{error && <Banner kind="err">{error}</Banner>}<div className="singbox-edit-grid"><label>客户端名称<input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)} /></label><label>基础额度（GB，留空=无限）<input type="number" min={0} value={editQuotaGB} onChange={(e) => setEditQuotaGB(e.target.value)} /></label><label>流量自定义周期（天，默认 30 天）<input type="number" min={1} max={3650} value={editPeriodDays} onChange={(e) => setEditPeriodDays(e.target.value)} /></label><label>连接过期时间（留空=永久）<input type="datetime-local" value={expiryAt} onChange={(e) => setExpiryAt(e.target.value)} /></label><label>上行限速（Mbps，0=不限）<input type="number" min={0} max={100000} value={editUploadMbps === "0" ? "" : editUploadMbps} onChange={(e) => setEditUploadMbps(e.target.value || "0")} /></label><label>下行限速（Mbps，0=不限）<input type="number" min={0} max={100000} value={editDownloadMbps === "0" ? "" : editDownloadMbps} onChange={(e) => setEditDownloadMbps(e.target.value || "0")} /></label><label className="singbox-check"><input type="checkbox" checked={editEnabled} onChange={(e) => setEditEnabled(e.target.checked)} />启用客户端</label></div><div className="row" style={{ justifyContent: "flex-end", marginTop: 16 }}><button className="btn" onClick={() => setEditUser(null)}>取消</button><button className="btn primary" disabled={busy} onClick={() => void saveEditDialog()}>保存</button></div></Drawer>}
       {confirmDialog}
     </div>
   );

@@ -398,7 +398,10 @@ func init() {
 		`ALTER TABLE subscriptions ADD COLUMN token_secret BLOB`,
 		`ALTER TABLE subscriptions ADD COLUMN mode TEXT NOT NULL DEFAULT 'owned'; UPDATE subscriptions SET mode='collection' WHERE enabled=1 AND status='active' AND quota_bytes=0 AND expires_at IS NULL`,
 		`ALTER TABLE nodes ADD COLUMN sort_order INTEGER`,
-		`ALTER TABLE routes ADD COLUMN sort_order INTEGER`)
+		`ALTER TABLE routes ADD COLUMN sort_order INTEGER`,
+		`ALTER TABLE singbox_users ADD COLUMN upload_limit_bps INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE singbox_users ADD COLUMN download_limit_bps INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE singbox_users ADD COLUMN rate_limit_error TEXT NOT NULL DEFAULT ''`)
 }
 
 func (s *Store) migrate(ctx context.Context) error {

@@ -53,6 +53,7 @@ var (
 	ErrSingBoxProtocol = errors.New("unsupported sing-box protocol")
 	ErrSingBoxPort     = errors.New("sing-box port must be between 1 and 65535")
 	ErrSingBoxQuota    = errors.New("sing-box quota must be zero (unlimited) or greater than zero")
+	ErrSingBoxRate     = errors.New("sing-box bandwidth must be zero (unlimited) or between 1 and 100000 Mbps")
 	ErrSingBoxPeriod   = errors.New("sing-box period must end after it starts")
 	ErrSingBoxNode     = errors.New("sing-box user must belong to a managed node")
 )
@@ -72,19 +73,22 @@ type SingBoxUser struct {
 	ExternalPath string `json:"external_path,omitempty"`
 	ConfigBlob   []byte `json:"-"`
 
-	BaseQuotaBytes  int64      `json:"base_quota_bytes"`
-	TopUpBytes      int64      `json:"top_up_bytes"`
-	UsedIn          int64      `json:"used_in"`
-	UsedOut         int64      `json:"used_out"`
-	RawIn           int64      `json:"-"`
-	RawOut          int64      `json:"-"`
-	PeriodStartedAt time.Time  `json:"period_started_at"`
-	PeriodEndsAt    time.Time  `json:"period_ends_at"`
-	PeriodDays      int        `json:"period_days"`
-	ExpiresAt       time.Time  `json:"expires_at"`
-	QuotaPausedAt   *time.Time `json:"quota_paused_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	BaseQuotaBytes   int64      `json:"base_quota_bytes"`
+	TopUpBytes       int64      `json:"top_up_bytes"`
+	UsedIn           int64      `json:"used_in"`
+	UsedOut          int64      `json:"used_out"`
+	RawIn            int64      `json:"-"`
+	RawOut           int64      `json:"-"`
+	PeriodStartedAt  time.Time  `json:"period_started_at"`
+	PeriodEndsAt     time.Time  `json:"period_ends_at"`
+	PeriodDays       int        `json:"period_days"`
+	ExpiresAt        time.Time  `json:"expires_at"`
+	QuotaPausedAt    *time.Time `json:"quota_paused_at,omitempty"`
+	UploadLimitBps   int64      `json:"upload_limit_bps"`
+	DownloadLimitBps int64      `json:"download_limit_bps"`
+	RateLimitError   string     `json:"rate_limit_error,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 func (u *SingBoxUser) Validate() error {
@@ -103,6 +107,9 @@ func (u *SingBoxUser) Validate() error {
 	if u.BaseQuotaBytes < 0 {
 		return ErrSingBoxQuota
 	}
+	if !validRate(u.UploadLimitBps) || !validRate(u.DownloadLimitBps) {
+		return ErrSingBoxRate
+	}
 	if !u.PeriodEndsAt.After(u.PeriodStartedAt) {
 		return ErrSingBoxPeriod
 	}
@@ -110,6 +117,10 @@ func (u *SingBoxUser) Validate() error {
 		return ErrSingBoxPeriod
 	}
 	return nil
+}
+
+func validRate(value int64) bool {
+	return value == 0 || (value >= 1_000_000 && value <= 100_000_000_000)
 }
 
 func (u *SingBoxUser) QuotaBytes() int64 {

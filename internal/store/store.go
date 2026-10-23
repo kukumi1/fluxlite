@@ -402,7 +402,19 @@ func init() {
 		`ALTER TABLE singbox_users ADD COLUMN upload_limit_bps INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE singbox_users ADD COLUMN download_limit_bps INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE singbox_users ADD COLUMN rate_limit_error TEXT NOT NULL DEFAULT ''`)
+
+	// Slots 55-62 held the withdrawn connection audit. Production applied them
+	// before they were removed, so its schema_version already counts them.
+	// Without these placeholders the next real migration would sit at an index
+	// that database has already passed, and would never run there.
+	for range 8 {
+		migrations = append(migrations, retiredMigration)
+	}
 }
+
+// retiredMigration holds the place of a migration whose feature was withdrawn
+// after it shipped. Progress is a count, so the slot must survive the feature.
+const retiredMigration = `SELECT 1`
 
 func (s *Store) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx,
@@ -420,6 +432,14 @@ func (s *Store) migrate(ctx context.Context) error {
 		current = 0
 	case err != nil:
 		return fmt.Errorf("read schema_version: %w", err)
+	}
+
+	// A database ahead of this binary has applied migrations it does not know.
+	// Starting anyway would skip every migration appended later at an index
+	// that database has passed, with nothing to say so.
+	if current > len(migrations) {
+		return fmt.Errorf("database schema version %d is newer than the %d migrations this build knows; "+
+			"a shipped migration was removed instead of being replaced with retiredMigration", current, len(migrations))
 	}
 
 	for i := current; i < len(migrations); i++ {

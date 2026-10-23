@@ -11,8 +11,13 @@ fluxlite 的 sing-box 用户节点和 Realm 链路是两个独立功能。Realm 
 /etc/fluxlite/singbox/<id>/server.crt
 /etc/fluxlite/singbox/<id>/server.key
 /var/lib/fluxlite-singbox/<id>/
+/var/lib/fluxlite-singbox/<id>/access.log    连接日志（info 级别，供流量审计读取）
 fluxlite-singbox-<id>.service 或 fluxlite-singbox-<id>
 ```
+
+每个服务以独立系统用户 `fluxlite-sb-<id>` 运行，配置目录和数据目录归这个用户所有；限速靠这个身份给它的流量打标记。删除节点时连同这个系统用户一起删除。
+
+连接日志超过 20MB 且已被面板读完时会被清空，不会无限增长。
 
 服务之间不共享配置。停止、删除或达到额度只影响一个用户。面板不会覆盖 `/etc/sing-box/config.json`，也不会修改一键脚本创建的 `/etc/sing-box/conf.d/*.json`。
 
@@ -37,6 +42,15 @@ fluxlite-singbox-<id>.service 或 fluxlite-singbox-<id>
 - 达到额度后面板停止该用户的独立服务；增加额度、清零或进入下一周期后可以恢复。
 
 统计依赖目标节点上的 `iptables`/`ip6tables` 计数规则。流量轮询存在一个采集周期的过冲，计数口径包含协议和网络头部，不等于服务商账单的计费口径。
+
+计数规则只存在于内核里：机器重启或防火墙重载（ufw、firewalld 等）会把它们清掉。面板采样时发现规则缺失，会自动补回并重新读取，日志里留一条 `sing-box accounting rules were missing and have been restored`。规则丢失到补回之间的流量（最多一个采集周期）无法追回。机器上没有 `iptables` 时不会尝试修改防火墙，只报错。
+
+## 限速
+
+- 上行、下行可分别设置，单位 Mbps，0 表示不限，最大 100000。
+- 实现方式：用 iptables mangle 按节点的系统用户给流量打标记，再由默认出口网卡上的 `tc` police 过滤器限速，超出部分丢弃。
+- 目标机需要 `tc`（iproute2）和 `iptables`/`ip6tables`，并且能识别默认路由的网卡。条件不满足时节点照常运行，卡片上标「限速未生效」。
+- 保存节点编辑时会重启一次该节点的服务，以确认它以独立系统用户运行；已连接的客户端会断开重连。
 
 ## 在线状态与开关
 

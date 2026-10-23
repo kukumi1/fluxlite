@@ -1824,8 +1824,14 @@ tbody tr:last-child td {
 .nav button.active::before { content: ""; position: absolute; left: -16px; height: 23px; width: 3px; border-radius: 0 3px 3px 0; background: var(--primary); }
 .nav-icon { width: 18px; height: 18px; }
 .sidebar-footer { padding-top: 24px; }
-.account-link { background: transparent; border-color: transparent; }
-.account-link .avatar { background: color-mix(in srgb,var(--lavender) 22%,var(--card)); color: var(--foreground); border: 1px solid color-mix(in srgb,var(--lavender) 40%,transparent); }
+.sidebar-footer > .row { position: relative; isolation: isolate; padding: 9px; border: 1px solid var(--border); border-radius: 14px; background: color-mix(in srgb,var(--card) 92%,var(--sidebar)); box-shadow: 0 2px 0 color-mix(in srgb,var(--border) 70%,transparent), 0 8px 20px color-mix(in srgb,#31254a 7%,transparent); }
+.sidebar-footer > .row::before { content: ""; position: absolute; inset: 4px 4px -4px; z-index: -1; border: 1px solid color-mix(in srgb,var(--border) 72%,transparent); border-radius: 14px; background: color-mix(in srgb,var(--sidebar) 76%,var(--card)); }
+.account-link { background: transparent; border-color: transparent; padding: 4px; }
+.account-link .avatar { width: 38px; height: 38px; flex-basis: 38px; background: color-mix(in srgb,var(--lavender) 22%,var(--card)); color: var(--foreground); border: 1px solid color-mix(in srgb,var(--lavender) 40%,transparent); }
+.account-name { font-size: 14px; }
+.account-role { margin-top: 2px; font-size: 12px; }
+.logout-button { flex: 0 0 32px; width: 32px; height: 32px; border-radius: 8px; }
+.logout-button:hover { background: var(--muted); }
 .main { padding: 0; margin-left: 224px; width: calc(100% - 224px); animation: none; transition: margin-left 180ms var(--ease-out); }
 .main-inner { max-width: 1760px; margin-inline: auto; padding: 30px 36px 48px; }
 .topbar { height: 76px; border-bottom: 1px solid var(--border); padding: 0 36px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
@@ -1841,7 +1847,7 @@ tbody tr:last-child td {
 .sidebar-collapsed .sidebar-head { padding-inline: 10px; }
 .sidebar-collapsed .workspace-label, .sidebar-collapsed .nav button { justify-content: center; }
 .sidebar-collapsed .nav button.active::before { left: -12px; }
-.sidebar-collapsed .sidebar-footer > .row { flex-direction: column; }
+.sidebar-collapsed .sidebar-footer > .row { flex-direction: column; padding: 7px 5px; }
 .sidebar-collapsed .account-link { padding: 8px; justify-content: center; }
 .sidebar-collapsed .nav + .sidebar-group-label + .nav { margin-top: 22px; }
 .page-header { margin-bottom: 26px; }

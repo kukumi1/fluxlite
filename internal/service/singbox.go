@@ -986,19 +986,64 @@ func (s *Service) ensureSingBoxAccounting(ctx context.Context, client *ssh.Clien
 
 var singBoxCounterLine = regexp.MustCompile(`\s+\d+\s+(\d+).*fluxlite-sb:(\d+):(in|out)`)
 
+// errSingBoxAccountingMissing means a node's counting rules are gone from the
+// kernel, as opposed to unreadable.
+var errSingBoxAccountingMissing = errors.New("accounting rules missing")
+
 func (s *Service) readSingBoxCounters(ctx context.Context, node *model.Node, id int64) ([2]int64, error) {
 	client, err := s.pool.Get(ctx, node)
 	if err != nil {
 		return [2]int64{}, errors.New("accounting connection unavailable")
 	}
+	sample := func() ([2]int64, error) { return sampleSingBoxCounters(ctx, client.Client, id) }
+	repair := func() error {
+		u, err := s.store.SingBoxUserByID(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := s.ensureSingBoxAccounting(ctx, client.Client, id, u.Port); err != nil {
+			return err
+		}
+		s.log.Warn("sing-box accounting rules were missing and have been restored", "user", u.Name, "node", node.Name)
+		return nil
+	}
+	return sampleWithRepair(sample, repair)
+}
+
+// sampleWithRepair reinstalls missing counting rules and samples again. The
+// rules live only in the kernel: a reboot or a firewall reload drops them and
+// nothing else puts them back, so without this a node would go on serving
+// traffic that is never counted against its quota. Bytes carried while the
+// rules were gone are lost; the counters restart from zero, which recording
+// already treats as a reset.
+func sampleWithRepair(sample func() ([2]int64, error), repair func() error) ([2]int64, error) {
+	out, err := sample()
+	if !errors.Is(err, errSingBoxAccountingMissing) {
+		return out, err
+	}
+	if rerr := repair(); rerr != nil {
+		return out, fmt.Errorf("%w; restoring them failed: %v", err, rerr)
+	}
+	return sample()
+}
+
+func sampleSingBoxCounters(ctx context.Context, client *ssh.Client, id int64) ([2]int64, error) {
 	var out [2]int64
 	for _, bin := range []string{"iptables", "ip6tables"} {
-		command := bin + " -C INPUT -j FLUXLITE_SB_ACCT && " + bin + " -C OUTPUT -j FLUXLITE_SB_ACCT && " + bin + " -nvxL FLUXLITE_SB_ACCT"
-		res, err := sshx.RunCheck(ctx, client.Client, command)
-		if err != nil {
+		res, err := sshx.Run(ctx, client, bin+" -C INPUT -j FLUXLITE_SB_ACCT && "+bin+" -C OUTPUT -j FLUXLITE_SB_ACCT")
+		// 127 is the shell saying the binary is not installed: nothing to
+		// restore there.
+		if err != nil || res.ExitCode == 127 {
 			return out, errors.New("accounting chain unavailable")
 		}
-		v, err := parseSingBoxCounters(res, id)
+		if res.ExitCode != 0 {
+			return out, errSingBoxAccountingMissing
+		}
+		res, err = sshx.Run(ctx, client, bin+" -nvxL FLUXLITE_SB_ACCT")
+		if err != nil || res.ExitCode != 0 {
+			return out, errors.New("accounting chain unavailable")
+		}
+		v, err := parseSingBoxCounters(res.Stdout, id)
 		if err != nil {
 			return out, err
 		}

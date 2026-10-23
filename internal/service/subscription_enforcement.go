@@ -144,7 +144,7 @@ func parseSingBoxCounters(text string, id int64) ([2]int64, error) {
 		out[i] += b
 	}
 	if len(seen) != 4 {
-		return out, errors.New("accounting rules missing")
+		return out, errSingBoxAccountingMissing
 	}
 	return out, nil
 }

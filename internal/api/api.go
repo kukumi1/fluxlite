@@ -165,6 +165,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/singbox/users/{id}/export", s.handleExportSingBoxUser)
 			r.Delete("/singbox/users/{id}", s.handleDeleteSingBoxUser)
 			r.Get("/audit", s.handleAudit)
+			r.Get("/traffic-audit", s.handleTrafficAudit)
 
 			// Unlocking is reachable from an ordinary session; everything it
 			// unlocks is not.

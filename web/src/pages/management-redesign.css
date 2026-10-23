@@ -249,3 +249,17 @@
   .singbox-management .singbox-user-head { grid-template-columns:minmax(0,1fr); }
   .singbox-management .singbox-actions { grid-column:1; grid-row:auto; }
 }
+.traffic-audit table { min-width:720px; }
+.traffic-audit td { vertical-align:top; }
+.traffic-audit-target { overflow-wrap:anywhere; margin-right:6px; }
+.traffic-audit-note { font-size:12px; margin-top:3px; }
+.traffic-audit-pager { display:flex; align-items:center; justify-content:center; gap:14px; margin-top:16px; }
+.traffic-audit-filters { display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px 16px; margin-bottom:12px; }
+.traffic-audit-filters label { margin:0; min-width:170px; }
+.traffic-audit-filters .traffic-audit-query { flex:1; min-width:220px; max-width:360px; }
+.traffic-audit-bar { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin:0 0 10px; font-size:13px; }
+.traffic-audit-bar .btn { display:inline-flex; align-items:center; gap:6px; }
+.traffic-audit-bar-spacer { flex:1; }
+.traffic-audit-pages { display:inline-flex; align-items:center; gap:6px; }
+.traffic-audit-pages .btn { padding-left:8px; padding-right:8px; }
+.traffic-audit-pages input.traffic-audit-jump { width:64px; margin:0; padding:6px 8px; text-align:center; }

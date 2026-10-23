@@ -896,7 +896,11 @@ func (s *Service) deploySingBoxUser(ctx context.Context, node *model.Node, u *mo
 	if _, err := sshx.RunCheck(ctx, client.Client, "mkdir -p "+shellQuote(dir)+" /var/lib/fluxlite-singbox/"+strconv.FormatInt(u.ID, 10)); err != nil {
 		return err
 	}
-	if err := sshx.WriteFile(ctx, client.Client, dir+"/config.json", bundle.Config, "0600"); err != nil {
+	config, _, err := singbox.WithAuditLog(bundle.Config, u.ID)
+	if err != nil {
+		return err
+	}
+	if err := sshx.WriteFile(ctx, client.Client, dir+"/config.json", config, "0600"); err != nil {
 		return err
 	}
 	certCmd := fmt.Sprintf("if [ ! -s %s/server.crt ] || [ ! -s %s/server.key ]; then openssl req -x509 -newkey rsa:2048 -nodes -days 825 -subj '/CN=fluxlite' -keyout %s/server.key -out %s/server.crt >/dev/null 2>&1 && chmod 600 %s/server.key; fi", shellQuote(dir), shellQuote(dir), shellQuote(dir), shellQuote(dir), shellQuote(dir))

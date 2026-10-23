@@ -308,6 +308,29 @@ export interface AuditEntry {
   ip: string;
 }
 
+/** 一次连接：哪台机器的哪个节点访问了什么。 */
+export interface TrafficAuditRecord {
+  id: number;
+  at: string;
+  /** 节点的唯一键。 */
+  node: string;
+  name: string;
+  machine: string;
+  port?: number;
+  protocol?: string;
+  target: string;
+  count: number;
+}
+
+export interface TrafficAuditPage {
+  items: TrafficAuditRecord[] | null;
+  page: number;
+  page_size: number;
+  total: number;
+  capacity: number;
+  machines: string[] | null;
+}
+
 export interface Enrollment {
   secret: string;
   url: string;
@@ -509,6 +532,10 @@ export const api = {
   exportSingBoxUser: (id: number, family?: "ipv4" | "ipv6") => request<{ protocol: SingBoxProtocol; name: string; port: number; config: unknown; link: string; qr_data_url?: string; qr_error?: string; warnings?: string[]; address_family?: "ipv4" | "ipv6"; available_families?: string[] }>(`/singbox/users/${id}/export${family ? `?address_family=${family}` : ""}`),
   deleteSingBoxUser: (id: number) => request<{ ok: boolean }>(`/singbox/users/${id}`, { method: "DELETE" }),
   audit: (limit = 100) => request<AuditEntry[] | null>(`/audit?limit=${limit}`),
+  trafficAudit: (page: number, filter: { machine: string; q: string; until: number }) =>
+    request<TrafficAuditPage>(
+      `/traffic-audit?${new URLSearchParams({ page: String(page), machine: filter.machine, q: filter.q, until: String(filter.until) }).toString()}`,
+    ),
 
   consoleStatus: () => request<{ unlocked: boolean }>("/console/status"),
   consoleUnlock: (password: string, code: string) =>

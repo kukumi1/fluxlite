@@ -40,6 +40,7 @@ type Service struct {
 	verifier *verifier.Verifier
 	realm    applier.RealmSource
 	log      *slog.Logger
+	audit    *connAudit
 
 	// Adoption briefly stops a node's shared service. This low-frequency
 	// operation is serialized across the panel rather than keeping unbounded
@@ -54,7 +55,7 @@ func New(st *store.Store, sealer *cryptox.Sealer, pool *sshx.Pool, ap *applier.A
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{store: st, sealer: sealer, pool: pool, applier: ap, verifier: vf, realm: realm, log: log}
+	return &Service{store: st, sealer: sealer, pool: pool, applier: ap, verifier: vf, realm: realm, log: log, audit: newConnAudit()}
 }
 
 // NodeInput is the client-supplied description of a node.

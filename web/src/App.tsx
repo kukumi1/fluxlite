@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   PanelLeftClose,
   PanelLeftOpen,
+  Radar,
   Menu,
   X,
   ChevronRight,
@@ -26,6 +27,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { Nodes } from "./pages/Nodes";
 import { Routes } from "./pages/Routes";
 import { Audit } from "./pages/Audit";
+import { TrafficAudit } from "./pages/TrafficAudit";
 import { Account } from "./pages/Account";
 import { SingBox } from "./pages/SingBox";
 import { Subscriptions } from "./pages/Subscriptions";
@@ -33,7 +35,7 @@ import { Subscriptions } from "./pages/Subscriptions";
 // 终端页连同 xterm 一起单独打包：不开终端的人不该为它下载一份终端模拟器。
 const Console = lazy(() => import("./pages/Console").then((m) => ({ default: m.Console })));
 
-type Tab = "dashboard" | "routes" | "nodes" | "singbox" | "subscriptions" | "console" | "audit" | "account";
+type Tab = "dashboard" | "routes" | "nodes" | "singbox" | "subscriptions" | "traffic-audit" | "console" | "audit" | "account";
 type AuthState = "checking" | "in" | "out";
 
 const MAIN_NAV = [
@@ -42,6 +44,7 @@ const MAIN_NAV = [
   { id: "nodes", label: "机器", icon: Server },
   { id: "singbox", label: "节点", icon: Network },
   { id: "subscriptions", label: "订阅", icon: ScrollText },
+  { id: "traffic-audit", label: "流量审计", icon: Radar },
   { id: "console", label: "终端", icon: TerminalSquare },
 ] as const;
 
@@ -231,6 +234,7 @@ function Shell() {
           {tab === "nodes" && <Nodes onOpenConsole={openConsole} />}
           {tab === "singbox" && <SingBox />}
           {tab === "subscriptions" && <Subscriptions />}
+          {tab === "traffic-audit" && <TrafficAudit />}
           {tab === "console" && (
             <Suspense fallback={<p className="muted">正在载入终端…</p>}>
               <Console initialNode={consoleNode} />

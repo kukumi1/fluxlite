@@ -78,7 +78,7 @@ func New(cfg Config) *Watcher {
 // sample interval promises.
 func (w *Watcher) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(5)
+	wg.Add(6)
 
 	go func() {
 		defer wg.Done()
@@ -99,6 +99,10 @@ func (w *Watcher) Run(ctx context.Context) {
 	go func() {
 		defer wg.Done()
 		w.trafficLoop(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		w.loop(ctx, connAuditInterval, w.collectConnAudit, true)
 	}()
 
 	wg.Wait()
@@ -142,6 +146,17 @@ func (w *Watcher) sampleSingBoxStatus(ctx context.Context) {
 				w.log.Debug("sing-box status sample failed", "user", user.Name, "error", err)
 			}
 		})
+}
+
+// connAuditInterval is how often node and landing logs are read for the
+// traffic audit. Each read only fetches what was appended since the last one,
+// so a short interval costs one small SSH command per machine.
+const connAuditInterval = 3 * time.Second
+
+func (w *Watcher) collectConnAudit(ctx context.Context) {
+	if err := w.svc.CollectConnAudit(ctx); err != nil {
+		w.log.Debug("traffic audit collection failed", "error", err)
+	}
 }
 
 // loop runs fn on a ticker, optionally once up front.

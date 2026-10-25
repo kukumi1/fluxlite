@@ -4,12 +4,13 @@ import { X } from "lucide-react";
 
 interface DrawerProps {
   title: string;
+  subtitle?: string;
   onClose: () => void;
   children: ReactNode;
 }
 
 /** Native modal dialogs keep keyboard focus inside the drawer and restore it on close. */
-export function Drawer({ title, onClose, children }: DrawerProps) {
+export function Drawer({ title, subtitle, onClose, children }: DrawerProps) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleID = useId();
 
@@ -38,8 +39,8 @@ export function Drawer({ title, onClose, children }: DrawerProps) {
       }}
     >
       <div className="drawer-heading">
-        <div><span className="drawer-eyebrow">FLUXLITE / 配置</span><h2 id={titleID}>{title}</h2></div>
-        <button type="button" className="icon-btn" aria-label="关闭" onClick={onClose}><X size={20} /></button>
+        <div><h2 id={titleID}>{title}</h2>{subtitle && <p className="drawer-subtitle">{subtitle}</p>}</div>
+        <button type="button" className="icon-btn" aria-label="关闭" onClick={onClose}><X size={18} /></button>
       </div>
       <div className="drawer-content">{children}</div>
     </dialog>

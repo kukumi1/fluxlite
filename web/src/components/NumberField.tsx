@@ -4,6 +4,8 @@ interface Props {
   value: number;
   onChange: (value: number) => void;
   required?: boolean;
+  /** 没有可见 label 包着它时，用来给读屏说明这是哪个数。 */
+  "aria-label"?: string;
 }
 
 /**
@@ -16,7 +18,7 @@ interface Props {
  * 所以编辑中的文本单独存在本组件里，只有解析得出数字时才向上报。空串是编辑的
  * 中间状态，不是数字 0。
  */
-export function NumberField({ value, onChange, required }: Props) {
+export function NumberField({ value, onChange, required, "aria-label": ariaLabel }: Props) {
   const [draft, setDraft] = useState(String(value));
   // 记住自己上报过的值，用来区分「外部换了一份表单数据」和「刚才那次输入的回声」。
   // 少了这个区分，输入 "007" 会在上报 7 之后被回写成 "7"，光标当场跳位。
@@ -30,6 +32,7 @@ export function NumberField({ value, onChange, required }: Props) {
   return (
     <input
       type="number"
+      aria-label={ariaLabel}
       value={draft}
       required={required}
       onChange={(e) => {

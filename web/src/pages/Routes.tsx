@@ -15,16 +15,20 @@ import {
   ipv6DialAddress,
   ipv6Reachable,
 } from "../api";
-import { ArrowDown, ArrowUp, LayoutGrid, List, Plus, Rows3, Search, Waypoints } from "lucide-react";
+import { ArrowDown, ArrowUp, BarChart3, DoorOpen, Gauge, Globe, LayoutGrid, List, MapPin, Pencil, Plus, Rows3, ShieldCheck, Signpost, Square, Trash2, Waypoints, X } from "lucide-react";
 import { Banner, Modal } from "../components/Modal";
 import { useConfirm } from "../components/ConfirmDialog";
+import { ActionButton } from "../components/ActionButton";
 import { Card } from "../components/Card";
 import { CopyIconButton } from "../components/CopyButton";
+import { Flag } from "../components/Flag";
 import { EmptyState } from "../components/EmptyState";
+import { ListToolbar } from "../components/ListToolbar";
 import { PageHeader } from "../components/PageHeader";
-import { StatCard } from "../components/StatCard";
 import { Drawer } from "../components/Drawer";
+import { ChoiceGroup, DrawerActions, FormBlock, SwitchField } from "../components/DrawerForm";
 import "./management-redesign.css";
+import { regionOf, toneOf } from "../lib/region";
 import { ageOf, describeAge, formatBytes, staleAfterMs } from "../lib/format";
 
 type ViewMode = "card" | "compact" | "list";
@@ -67,6 +71,29 @@ function entryAddress(route: Route, nodes: Node[]): string {
     return `[${ipv6DialAddress(entry)}]:${route.entry_port}`;
   }
   return `${entry?.host ?? "?"}:${route.entry_port}`;
+}
+
+function hostOf(address: string): string {
+  const cut = address.lastIndexOf(":");
+  return (cut > 0 ? address.slice(0, cut) : address).replace(/^\[|\]$/g, "");
+}
+
+function RegionBadge({ name, landing = false }: { name: string | undefined; landing?: boolean }) {
+  const code = regionOf(name);
+  return (
+    <span className={`hop-region tone-${toneOf(code)}${landing ? " landing" : ""}`} title={code ?? undefined} aria-hidden>
+      {code ?? <Globe size={15} />}
+      {code && <Flag code={code} />}
+    </span>
+  );
+}
+
+// HostPort lets an address wrap before its port and nowhere else first, so a
+// long landing host reads "host / :port" instead of breaking at a hyphen.
+function HostPort({ address }: { address: string }) {
+  const cut = address.lastIndexOf(":");
+  if (cut <= 0) return <>{address}</>;
+  return <>{address.slice(0, cut)}<wbr />{address.slice(cut)}</>;
 }
 
 // onNodeIdentity spells out what a route is called on the machines. A display
@@ -302,6 +329,16 @@ export function Routes() {
 
   const quotaOf = (routeID: number) => quotas.find((q) => q.route_id === routeID);
 
+  // A route is only as healthy as its worst hop: one stopped relay breaks it,
+  // and one hop nobody could sample leaves the whole route unknown.
+  function healthOf(route: Route): "ok" | "down" | "unknown" | "off" {
+    if (!route.enabled) return "off";
+    const states = route.hops.map((hop) => hopState(route.id, hop.hop_order).kind);
+    if (states.includes("down")) return "down";
+    if (states.some((kind) => kind !== "up")) return "unknown";
+    return "ok";
+  }
+
   function chainOf(route: Route) {
     return (
       <div className="chain management-chain">
@@ -315,9 +352,10 @@ export function Routes() {
                 }`}
                 title={hopStateHint(state)}
               >
+                <RegionBadge name={nodes.find((n) => n.id === hop.node_id)?.name} />
                 <small className="management-hop-label">{index === 0 ? "入口机器" : `中继 ${index}`}</small>
                 <strong>{nodeName(hop.node_id)}</strong>
-                {index === 0 ? <span className="management-hop-address"><code>{entryAddress(route, nodes)}</code><CopyIconButton text={entryAddress(route, nodes)} title="复制入口地址" /></span> : <span className="muted">转发端口 {hop.relay_port}</span>}
+                {index === 0 ? <span className="management-hop-address"><code><HostPort address={entryAddress(route, nodes)} /></code><CopyIconButton text={entryAddress(route, nodes)} title="复制入口地址" /></span> : <span className="muted">转发端口 {hop.relay_port}</span>}
                 {state.kind === "down" && <span className="muted"> ✕</span>}
                 {state.kind === "stale" && <span className="muted"> ⚠</span>}
               </span>
@@ -325,7 +363,7 @@ export function Routes() {
             </span>
           );
         })}
-        <span className="hop mono management-hop-target"><small className="management-hop-label">落地目标</small><span className="management-hop-address"><strong>{route.target}</strong><CopyIconButton text={route.target} title="复制落地地址" /></span></span>
+        <span className="hop mono management-hop-target"><RegionBadge landing name={nodes.find((n) => n.host === hostOf(route.target) || n.ipv6_address === hostOf(route.target))?.name} /><small className="management-hop-label">落地目标</small><span className="management-hop-address"><strong><HostPort address={route.target} /></strong><CopyIconButton text={route.target} title="复制落地地址" /></span></span>
       </div>
     );
   }
@@ -360,83 +398,60 @@ export function Routes() {
     );
   }
 
-  function actionsOf(route: Route) {
+  function actionsOf(route: Route, iconOnly = false) {
     const busy = busyId === route.id || order.pending;
+    const apply = () =>
+      void act(route.id, async () => {
+        const result = await api.applyRoute(route.id);
+        setApplyResult(result);
+      });
+    const verify = () =>
+      void act(route.id, async () => {
+        const report = await api.verifyRoute(route.id);
+        setVerifyReport(report);
+      });
+    const stop = () =>
+      void act(route.id, async () => {
+        await api.stopRoute(route.id);
+        setNotice(`链路 ${route.name} 已停止`);
+      });
+    const remove = async () => {
+      const ok = await confirm({
+        title: `删除链路 ${route.name}？`,
+        body: "面板会尽量清理各节点上的转发配置。连不上的节点会在删除后单独列出，需要你到那台机器上收尾。",
+        confirmLabel: "删除链路",
+        danger: true,
+      });
+      if (!ok) return;
+      await act(route.id, async () => {
+        const res = await api.deleteRoute(route.id);
+        const left = res.leftovers ?? [];
+        if (left.length === 0) {
+          setNotice(`链路 ${route.name} 已删除，各节点上的转发已清理`);
+          return;
+        }
+        // 记录没了但转发还在，是需要人去机器上收尾的状态，不能只报成功
+        setWarning(
+          `链路 ${route.name} 已删除，但以下节点上的转发未能清理，` +
+            `机器恢复后需在其上执行卸载脚本：` +
+            left.map((l) => `${l.node_name}（${l.reason}）`).join("；"),
+        );
+      });
+    };
     return (
-      <div className="row nowrap">
-        <button
-          className="btn sm primary"
-          disabled={busy}
-          onClick={() =>
-            void act(route.id, async () => {
-              const result = await api.applyRoute(route.id);
-              setApplyResult(result);
-            })
-          }
-        >
-          {busyId === route.id ? "处理中…" : "下发"}
-        </button>
-        <button
-          className="btn sm"
-          disabled={busy}
-          onClick={() =>
-            void act(route.id, async () => {
-              const report = await api.verifyRoute(route.id);
-              setVerifyReport(report);
-            })
-          }
-        >
-          验证
-        </button>
-        <button className="btn sm" onClick={() => setTrafficFor(route)}>
-          流量
-        </button>
-        <button className="btn sm" disabled={order.pending} onClick={() => setEditing(route)}>
-          编辑
-        </button>
-        <button
-          className="btn sm"
-          disabled={busy}
-          onClick={() =>
-            void act(route.id, async () => {
-              await api.stopRoute(route.id);
-              setNotice(`链路 ${route.name} 已停止`);
-            })
-          }
-        >
-          停止
-        </button>
-        <button
-          className="btn sm danger"
-          disabled={busy}
-          onClick={() => {
-            void (async () => {
-              const ok = await confirm({
-                title: `删除链路 ${route.name}？`,
-                body: "面板会尽量清理各节点上的转发配置。连不上的节点会在删除后单独列出，需要你到那台机器上收尾。",
-                confirmLabel: "删除链路",
-                danger: true,
-              });
-              if (!ok) return;
-              await act(route.id, async () => {
-                const res = await api.deleteRoute(route.id);
-                const left = res.leftovers ?? [];
-                if (left.length === 0) {
-                  setNotice(`链路 ${route.name} 已删除，各节点上的转发已清理`);
-                  return;
-                }
-                // 记录没了但转发还在，是需要人去机器上收尾的状态，不能只报成功
-                setWarning(
-                  `链路 ${route.name} 已删除，但以下节点上的转发未能清理，` +
-                    `机器恢复后需在其上执行卸载脚本：` +
-                    left.map((l) => `${l.node_name}（${l.reason}）`).join("；"),
-                );
-              });
-            })();
-          }}
-        >
-          删除
-        </button>
+      <div className="route-actions">
+        <div className="route-actions-main">
+          <button className="btn sm primary" disabled={busy} onClick={apply}>
+            {busyId === route.id ? "处理中…" : "下发"}
+          </button>
+          <ActionButton iconOnly={iconOnly} label="验证" icon={ShieldCheck} disabled={busy} onClick={verify} />
+          <ActionButton iconOnly={iconOnly} label="流量" icon={BarChart3} onClick={() => setTrafficFor(route)} />
+          <ActionButton iconOnly={iconOnly} label="编辑" icon={Pencil} disabled={order.pending} onClick={() => setEditing(route)} />
+        </div>
+        <div className="route-actions-side">
+          <ActionButton iconOnly={iconOnly} label="停止" icon={Square} className="ghost" title="停止各节点上的转发，保留链路配置" disabled={busy} onClick={stop} />
+          <ActionButton iconOnly={iconOnly} label="删除" icon={Trash2} className="ghost danger" disabled={busy} onClick={() => void remove()} />
+        </div>
       </div>
     );
   }
@@ -444,7 +459,8 @@ export function Routes() {
   // 汇总只统计当前这一族的链路。把两族加在一起，数字既不对应你正在看的列表，
   // 也不对应任何一条真实账单。
   const familyRoutes = routes.filter((r) => (family === "v6" ? r.listen_ipv6 : !r.listen_ipv6));
-  const shown = familyRoutes.filter((route) => `${route.name} ${route.target} ${route.protocol} ${route.hops.map((hop) => nodeName(hop.node_id)).join(" ")}`.toLowerCase().includes(search.trim().toLowerCase()) && (enabledFilter === "all" || route.enabled === (enabledFilter === "enabled")));
+  const searched = familyRoutes.filter((route) => `${route.name} ${route.target} ${route.protocol} ${route.hops.map((hop) => nodeName(hop.node_id)).join(" ")}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const shown = searched.filter((route) => enabledFilter === "all" || route.enabled === (enabledFilter === "enabled"));
   const visibleIDs = shown.map(item => item.id);
   const counted = shown.map((r) => traffic[r.id]).filter((t): t is Traffic => !!t);
   const totalIn = counted.reduce((sum, t) => sum + t.bytes_in, 0);
@@ -500,37 +516,27 @@ export function Routes() {
       {warning && <Banner kind="warn">{warning}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
 
-      <div className="management-toolbar">
-        <label className="management-search"><Search size={16} /><input aria-label="搜索链路" placeholder="搜索链路、机器或落地地址…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-        <select aria-label="筛选链路" value={enabledFilter} onChange={(event) => setEnabledFilter(event.target.value)}><option value="all">全部链路</option><option value="enabled">已启用</option><option value="disabled">已停用</option></select>
-        <span className="management-result-count">{shown.length} / {familyRoutes.length} 条链路</span>
-      </div>
+      <ListToolbar
+        search={search}
+        onSearch={setSearch}
+        searchLabel="搜索链路"
+        placeholder="搜索链路、机器或落地地址…"
+        filterLabel="筛选链路"
+        filter={enabledFilter}
+        onFilter={setEnabledFilter}
+        filters={[
+          { value: "all", label: "全部", count: searched.length },
+          { value: "enabled", label: "已启用", count: searched.filter((r) => r.enabled).length, tone: "ok" },
+          { value: "disabled", label: "已停用", count: searched.filter((r) => !r.enabled).length, tone: "off" },
+        ]}
+      />
       {shown.length > 0 && (
-        <div className="stat-grid">
-          <StatCard
-            index={0}
-            label="累计入向"
-            value={counted.length === 0 ? null : formatBytes(totalIn)}
-            sub={counted.length === 0 ? "还没有任何计数" : `来自 ${counted.length} 条链路`}
-            icon={<ArrowDown size={17} />}
-          />
-          <StatCard
-            index={1}
-            label="累计出向"
-            value={counted.length === 0 ? null : formatBytes(totalOut)}
-            sub={counted.length === 0 ? "还没有任何计数" : `来自 ${counted.length} 条链路`}
-            icon={<ArrowUp size={17} />}
-            tone="warm"
-          />
-          <StatCard
-            index={2}
-            label="链路"
-            value={String(shown.length)}
-            sub={`${shown.filter((r) => r.enabled).length} 条已启用`}
-            icon={<Waypoints size={17} />}
-            tone="cool"
-          />
-        </div>
+        <dl className="stat-strip">
+          <div className="tone-sky"><i><ArrowDown size={16} /></i><dt>累计入向</dt><dd>{counted.length === 0 ? "—" : formatBytes(totalIn)}</dd></div>
+          <div className="lead"><i><ArrowUp size={16} /></i><dt>累计出向</dt><dd>{counted.length === 0 ? "—" : formatBytes(totalOut)}</dd></div>
+          <div className="tone-lilac"><i><Waypoints size={16} /></i><dt>链路</dt><dd>{shown.length}<small>{shown.filter((r) => r.enabled).length} 条已启用</small></dd></div>
+          <div className="tone-peach"><i><Gauge size={16} /></i><dt>计数来源</dt><dd>{counted.length}<small>条有计数</small></dd></div>
+        </dl>
       )}
 
       {shown.length === 0 ? (
@@ -555,72 +561,71 @@ export function Routes() {
         </Card>
       ) : (
         view === "list" ? (
-          <Card className="flush">
-            <div className="table-scroll">
-              <table className="route-list-table">
-                <thead>
-                  <tr>
-                    <th>链路</th>
-                    <th>拓扑与延迟</th>
-                    <th>流量</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {shown.map((route) => (
-                    <tr key={route.id} {...order.targetProps(route.id, visibleIDs)}>
-                      <td>
-                        <div className="row" style={{ gap: 6 }}>
-                          <SortHandle {...order.handleProps(route.id, route.name, visibleIDs)} />
-                          <strong className="has-detail" title={onNodeIdentity(route.slug)}>
-                            {route.name}
-                          </strong>
-                          <span className={`tag ${route.enabled ? "ok" : ""}`}>
-                            {route.enabled ? "已启用" : "已停用"}
-                          </span>
-                        </div>
-                        <div className="muted" style={{ fontSize: 12 }}>{route.protocol}</div>
-                      </td>
-                      <td>{chainOf(route)}</td>
-                      <td className="nowrap">
+          // One floating row per route instead of one table: each route reads
+          // as its own object, the way the card view presents it.
+          <div className="lane-list route-lanes" role="list" aria-label="链路列表">
+            <div className="lane-head" aria-hidden="true">
+              <span>链路与流量</span>
+              <span>拓扑与延迟</span>
+              <span>操作</span>
+            </div>
+            {shown.map((route) => {
+              const target = order.targetProps(route.id, visibleIDs);
+              return (
+                <div
+                  role="listitem"
+                  key={route.id}
+                  {...target}
+                  className={`lane-row tone-${toneOf(regionOf(nodeName(route.hops[0]?.node_id ?? 0)))} ${target.className}`}
+                >
+                  <div className="lane-ident">
+                    <SortHandle {...order.handleProps(route.id, route.name, visibleIDs)} />
+                    <span className={`route-dot ${healthOf(route)}`} aria-hidden />
+                    <div className="lane-title">
+                      <strong className="has-detail" title={onNodeIdentity(route.slug)}>{route.name}</strong>
+                      <span className="lane-sub">
+                        {route.protocol}
+                        {!route.enabled && <span className="tag">已停用</span>}
+                      </span>
+                      <div className="lane-traffic">
                         {trafficOf(route)}
                         <QuotaBar route={route} state={quotaOf(route.id)} />
-                      </td>
-                      <td>{actionsOf(route)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="lane-track">{chainOf(route)}</div>
+                  {actionsOf(route, true)}
+                </div>
+              );
+            })}
+          </div>
         ) : (
           <div className={`route-grid${view === "compact" ? " dense" : ""}`}>
-            {shown.map((route, cardIndex) => (
-              <Card index={cardIndex} key={route.id} {...order.targetProps(route.id, visibleIDs)}>
-                <h2 className="sortable-title" style={{ marginBottom: 8 }}>
+            {shown.map((route, cardIndex) => {
+              const target = order.targetProps(route.id, visibleIDs);
+              return (
+              <Card index={cardIndex} key={route.id} {...target} className={`route-card tone-${toneOf(regionOf(nodeName(route.hops[0]?.node_id ?? 0)))} ${target.className}`}>
+                <div className="route-head">
                   <SortHandle {...order.handleProps(route.id, route.name, visibleIDs)} />
+                  <span className={`route-dot ${healthOf(route)}`} aria-hidden />
                   {/* The slug is only ever needed while logged into a node, so
                       it is one hover away rather than occupying the title. */}
-                  <span className="has-detail" title={onNodeIdentity(route.slug)}>
+                  <h2 className="route-name has-detail" title={onNodeIdentity(route.slug)}>
                     {route.name}
-                  </span>{" "}
-                  <span className={`tag ${route.enabled ? "ok" : ""}`}>
-                    {route.enabled ? "已启用" : "已停用"}
-                  </span>{" "}
+                  </h2>
                   <span className="tag">{route.protocol}</span>
-                </h2>
+                  {!route.enabled && <span className="tag">已停用</span>}
+                  <span className="route-traffic">{trafficOf(route)}</span>
+                </div>
 
                 {chainOf(route)}
 
-                <div className="muted" style={{ marginTop: 10, fontSize: 13 }}>
-                  流量：{trafficOf(route)}
-                </div>
-
                 <QuotaBar route={route} state={quotaOf(route.id)} />
 
-                <div style={{ marginTop: 14 }}>{actionsOf(route)}</div>
+                {actionsOf(route)}
               </Card>
-            ))}
+              );
+            })}
           </div>
         )
       )}
@@ -879,71 +884,142 @@ function RouteForm({ nodes, route, family, onClose, onSaved, onError }: RouteFor
     }
   }
 
+  const roleOf = (index: number) =>
+    index === 0 ? "入口" : index === hops.length - 1 ? "末跳" : "中转";
+
   return (
     <Drawer
       title={route ? `编辑链路 · ${route.name}` : family === "v6" ? "新建 IPv6 链路" : "新建 IPv4 链路"}
+      subtitle="流量从首跳进入，沿转发链逐跳传递，由末跳送到落地。"
       onClose={onClose}
     >
       {formError && <Banner kind="err">{formError}</Banner>}
-      <form onSubmit={submit}>
-        <label>
-          名称
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="随便起，支持中文"
-            required
-          />
-        </label>
-
-        <div className="grid2">
+      <form className="drawer-form" onSubmit={submit}>
+        <FormBlock title="基本信息" icon={Signpost}>
+          <label>
+            名称
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="随便起，支持中文"
+              required
+            />
+          </label>
           <label>
             落地地址
             <input
+              className="mono"
               value={target}
               onChange={(e) => setTarget(e.target.value)}
               placeholder="host:port"
               required
             />
           </label>
-          <label>
-            协议
-            <select
-              value={protocol}
-              onChange={(e) => setProtocol(e.target.value as RouteInput["protocol"])}
-            >
-              <option value="tcp">仅 TCP</option>
-              <option value="tcp+udp">TCP + UDP</option>
-            </select>
-          </label>
-        </div>
-
-        {udpBlockers.length > 0 && (
-          <Banner kind="err">
-            {udpBlockers.map((n) => n.name).join("、")} 探测确认不通 UDP，这条链路会被拒绝创建。
-            改成仅 TCP，或把该节点换掉。
-          </Banner>
-        )}
-
-        <label>
-          入口端口
-          <input
-            type="number"
-            value={entryPort}
-            onChange={(e) => setEntryPort(e.target.value)}
-            placeholder="留空则自动从端口池分配"
+          <ChoiceGroup
+            label="协议"
+            value={protocol}
+            options={[
+              { value: "tcp", label: "仅 TCP" },
+              { value: "tcp+udp", label: "TCP + UDP" },
+            ]}
+            onChange={setProtocol}
           />
-        </label>
+          {udpBlockers.length > 0 && (
+            <Banner kind="err">
+              {udpBlockers.map((n) => n.name).join("、")} 探测确认不通 UDP，这条链路会被拒绝创建。
+              改成仅 TCP，或把该节点换掉。
+            </Banner>
+          )}
+        </FormBlock>
 
-        {showIPv6 && (
-          <>
-            <label style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-              <input
-                type="checkbox"
+        <FormBlock title="转发链" icon={Waypoints} note="按顺序选择机器：首跳为入口，末跳连接落地。">
+          <ol className="hop-steps">
+            {hops.map((nodeId, i) => {
+              const region = regionOf(nodes.find((n) => n.id === nodeId)?.name);
+              return (
+                <li key={i} className={`hop-step tone-${toneOf(region)}`}>
+                  <span className="hop-step-mark">{i + 1}</span>
+                  <div className="hop-step-body">
+                    <span className="hop-step-role">{roleOf(i)}</span>
+                    <div className="hop-step-pick">
+                      {region && <Flag code={region} />}
+                      <select
+                        aria-label={`第 ${i + 1} 跳`}
+                        value={nodeId}
+                        onChange={(e) => {
+                          const next = [...hops];
+                          next[i] = Number(e.target.value);
+                          setHops(next);
+                        }}
+                      >
+                        {hopOptions(i).map((n) => (
+                          <option key={n.id} value={n.id}>
+                            {n.name} ({hopAddress(n, i)})
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        aria-label={`移除第 ${i + 1} 跳`}
+                        title="移除这一跳"
+                        onClick={() => setHops(hops.filter((_, idx) => idx !== i))}
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+            <li className="hop-step landing">
+              <span className="hop-step-mark"><MapPin size={14} /></span>
+              <div className="hop-step-body">
+                <span className="hop-step-role">落地</span>
+                <code className="hop-step-target">{target || "先在上面填写落地地址"}</code>
+              </div>
+            </li>
+          </ol>
+          <button
+            type="button"
+            className="hop-add"
+            disabled={hopOptions(hops.length).length === 0}
+            onClick={() => setHops([...hops, hopOptions(hops.length)[0]?.id])}
+          >
+            <Plus size={15} /> 添加一跳
+          </button>
+          {usable.length === 0 ? (
+            <p className="hint">没有已探测的节点可用，请先到节点页完成探测。</p>
+          ) : (
+            listenIPv6 &&
+            hops.length === 0 &&
+            hopOptions(0).length === 0 && (
+              <p className="hint">
+                没有节点探测到可用的 IPv6，无法作为 IPv6 入口。先在节点页「探测」一次，
+                或改建 IPv4 链路。
+              </p>
+            )
+          )}
+        </FormBlock>
+
+        <FormBlock title="入口" icon={DoorOpen}>
+          <label>
+            入口端口
+            <input
+              type="number"
+              value={entryPort}
+              onChange={(e) => setEntryPort(e.target.value)}
+              placeholder="留空则自动从端口池分配"
+            />
+          </label>
+
+          {showIPv6 && (
+            <>
+              <SwitchField
+                label="入口监听 IPv6"
                 checked={listenIPv6}
                 disabled={!(entryNode && ipv6Reachable(entryNode)) && !listenIPv6}
-                onChange={(e) => {
-                  const on = e.target.checked;
+                onChange={(on) => {
                   setListenIPv6(on);
                   // 开启后首跳若不支持 IPv6，它就不该再留在选择里：下拉会因为
                   // 值不在选项中而显示空白，直到保存时才被后端拒绝。
@@ -955,128 +1031,65 @@ function RouteForm({ nodes, route, family, onClose, onSaved, onError }: RouteFor
                     }
                   }
                 }}
-                style={{ width: "auto", marginTop: 3 }}
               />
-              <span>入口监听 IPv6</span>
+              {entryNode && entryNode.ipv6_entry ? (
+                <p className="hint">
+                  {entryNode.name} 的 IPv6 入口是服务商映射的{" "}
+                  <code>[{entryNode.ipv6_entry}]:{entryPort || "入口端口"}</code>
+                  ，首跳监听 IPv4；该端口也可经 IPv4 访问。
+                </p>
+              ) : entryNode && ipv6Reachable(entryNode) ? (
+                <p className="hint">
+                  首跳改为<strong>只</strong>接受 IPv6 客户端，入口地址变成{" "}
+                  <code>[{ipv6DialAddress(entryNode) || "节点的 v6 地址"}]:{entryPort || "入口端口"}</code>
+                  ，不再接受 IPv4 客户端；其他链路与落地协议族不变。
+                </p>
+              ) : (
+                <p className="hint">
+                  {hops.length === 0
+                    ? "先选好首跳节点，才能判断它支不支持 IPv6。"
+                    : `${entryNode?.name ?? "首跳节点"} 未探测到可用的 IPv6（需要全局 IPv6 地址，且 net.ipv6.bindv6only 为 0），先在节点页「探测」一次。`}
+                </p>
+              )}
+
+              {listenIPv6 && (
+                <Banner kind="warn">
+                  这个端口在 IPv6 上必须没有别人占用。首跳绑 [::] 会取走该端口的整个 IPv6
+                  通配空间，若机器上已有程序把它绑在某个具体 v6 地址上（比如另一个代理），
+                  realm 会因端口冲突启动失败。面板分配端口时会避开已被占用的端口，手填时请自行确认。
+                </Banner>
+              )}
+            </>
+          )}
+        </FormBlock>
+
+        <FormBlock title="流量额度" icon={Gauge} note="按上行 + 下行合计。用尽后自动停用，下周期恢复。">
+          <div className="grid2">
+            <label>
+              额度（GB）
+              <input
+                type="number"
+                step="any"
+                min="0"
+                value={quotaGB}
+                onChange={(e) => setQuotaGB(e.target.value)}
+                placeholder="留空表示不限"
+              />
             </label>
-            {entryNode && entryNode.ipv6_entry ? (
-              <p className="hint">
-                {entryNode.name} 的 IPv6 入口是服务商映射的{" "}
-                <code>[{entryNode.ipv6_entry}]:{entryPort || "入口端口"}</code>
-                ，首跳监听 IPv4；该端口也可经 IPv4 访问。
-              </p>
-            ) : entryNode && ipv6Reachable(entryNode) ? (
-              <p className="hint">
-                首跳改为<strong>只</strong>接受 IPv6 客户端，入口地址变成{" "}
-                <code>[{ipv6DialAddress(entryNode) || "节点的 v6 地址"}]:{entryPort || "入口端口"}</code>
-                ，不再接受 IPv4 客户端；其他链路与落地协议族不变。
-              </p>
-            ) : (
-              <p className="hint">
-                {hops.length === 0
-                  ? "先选好首跳节点，才能判断它支不支持 IPv6。"
-                  : `${entryNode?.name ?? "首跳节点"} 未探测到可用的 IPv6（需要全局 IPv6 地址，且 net.ipv6.bindv6only 为 0），先在节点页「探测」一次。`}
-              </p>
-            )}
-
-            {listenIPv6 && (
-              <Banner kind="warn">
-                这个端口在 IPv6 上必须没有别人占用。首跳绑 [::] 会取走该端口的整个 IPv6
-                通配空间，若机器上已有程序把它绑在某个具体 v6 地址上（比如另一个代理），
-                realm 会因端口冲突启动失败。面板分配端口时会避开已被占用的端口，手填时请自行确认。
-              </Banner>
-            )}
-          </>
-        )}
-
-        <div className="grid2">
-          <label>
-            流量额度（GB）
-            <input
-              type="number"
-              step="any"
-              min="0"
-              value={quotaGB}
-              onChange={(e) => setQuotaGB(e.target.value)}
-              placeholder="留空表示不限"
-            />
-          </label>
-          <label>
-            每月重置日
-            <select value={resetDay} onChange={(e) => setResetDay(Number(e.target.value))}>
-              {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
-                <option key={d} value={d}>
-                  {d} 号
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <p className="hint">
-          额度按上行 + 下行合计。用尽后自动停用，下周期恢复；重置日可选 1–28 号。
-        </p>
-
-        <h2 style={{ marginTop: 16 }}>转发链</h2>
-        <p className="hint">按顺序选择节点：首跳为入口，末跳连接落地。</p>
-
-        {hops.map((nodeId, i) => (
-          <div className="row" key={i} style={{ marginBottom: 8 }}>
-            <span className="muted nowrap" style={{ width: 52 }}>
-              第 {i + 1} 跳
-            </span>
-            <select
-              value={nodeId}
-              onChange={(e) => {
-                const next = [...hops];
-                next[i] = Number(e.target.value);
-                setHops(next);
-              }}
-              style={{ flex: 1 }}
-            >
-              {hopOptions(i).map((n) => (
-                <option key={n.id} value={n.id}>
-                  {n.name} ({hopAddress(n, i)})
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className="btn sm danger"
-              onClick={() => setHops(hops.filter((_, idx) => idx !== i))}
-            >
-              移除
-            </button>
+            <label>
+              每月重置日
+              <select value={resetDay} onChange={(e) => setResetDay(Number(e.target.value))}>
+                {Array.from({ length: 28 }, (_, i) => i + 1).map((d) => (
+                  <option key={d} value={d}>
+                    {d} 号
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
-        ))}
+        </FormBlock>
 
-        <button
-          type="button"
-          className="btn sm"
-          disabled={hopOptions(hops.length).length === 0}
-          onClick={() => setHops([...hops, hopOptions(hops.length)[0]?.id])}
-        >
-          添加一跳
-        </button>
-        {usable.length === 0 ? (
-          <p className="hint">没有已探测的节点可用，请先到节点页完成探测。</p>
-        ) : (
-          listenIPv6 &&
-          hops.length === 0 &&
-          hopOptions(0).length === 0 && (
-            <p className="hint">
-              没有节点探测到可用的 IPv6，无法作为 IPv6 入口。先在节点页「探测」一次，
-              或改建 IPv4 链路。
-            </p>
-          )
-        )}
-        <div className="row" style={{ justifyContent: "flex-end", marginTop: 18 }}>
-          <button type="button" className="btn" onClick={onClose}>
-            取消
-          </button>
-          <button className="btn primary" disabled={busy || hops.length === 0}>
-            {busy ? "保存中…" : "保存"}
-          </button>
-        </div>
+        <DrawerActions busy={busy} disabled={hops.length === 0} onCancel={onClose} />
       </form>
     </Drawer>
   );

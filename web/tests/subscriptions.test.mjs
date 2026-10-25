@@ -43,10 +43,12 @@ test("member dialog is read-only, accessible, scrollable, and uses shared dismis
   assert.match(source, /aria-label=\{`查看「\$\{subscription.name\}」/);
   assert.match(source, /onClick=\{\(\) => setViewingMembers\(subscription\)\}/);
   assert.match(source, /onClose=\{\(\) => setViewingMembers\(null\)\}/);
-  assert.match(dialog, /<Modal title=\{`订阅节点 — \$\{subscription.name\}`\} onClose=\{onClose\}/);
+  assert.match(dialog, /<Modal title=\{subscription.name\} subtitle=\{`收录了 \$\{members.length\} 个节点`\} onClose=\{onClose\}/);
   assert.match(dialog, /此订阅暂无节点/);
-  assert.match(dialog, /className="table-scroll"/);
-  for (const heading of ["节点名称", "所属机器", "协议", "端口"]) assert.ok(dialog.includes(heading));
+  // Every member keeps its name, machine, protocol and port: the row component receives the full detail.
+  assert.match(dialog, /members\.map\(\(member\) => <MemberRow key=\{member\.user_id\} \{\.\.\.member\} \/>\)/);
+  const row = source.slice(source.indexOf("function MemberRow("), source.indexOf("function SummaryFigure("));
+  for (const field of ["{name}", "{machine}", "meta.short", ":{port}"]) assert.ok(row.includes(field), field);
   assert.doesNotMatch(dialog, /api\.|token|onSave|<input|<form/);
   assert.match(modal, /e.key === "Escape"/);
   assert.match(modal, /onClick=\{onClose\}/);
@@ -150,8 +152,8 @@ test("view and reset have separate controls and failed views cannot leave a stal
   assert.match(view, /setIssued\(null\)[\s\S]*await api\.getSubscriptionLink/);
   assert.doesNotMatch(view, /resetSubscriptionToken|resetToken\(/);
   assert.match(view, /catch \(cause\)[\s\S]*setError\(message\(cause\)\)/);
-  assert.match(source, /viewLink\(subscription\)\}>查看订阅链接/);
-  assert.match(source, /resetToken\(subscription\)\}>重置订阅链接/);
+  assert.match(source, /viewLink\(subscription\)\}><Link2 size=\{14\} \/>订阅链接/);
+  assert.match(source, /aria-label="重置订阅链接"[^>]*onClick=\{\(\) => void resetToken\(subscription\)\}/);
   assert.match(source, /subscription\.link_available === false/);
   assert.match(source, /旧订阅需手动重置一次以启用查看；现有地址仍有效/);
   assert.match(source, /链接含访问凭据，请勿公开/);
@@ -163,10 +165,13 @@ test("view and reset have separate controls and failed views cannot leave a stal
 test("subscription UI exposes member details and four collection actions with occupied-node selection", () => {
   const source = readFileSync(new URL("../src/pages/Subscriptions.tsx", import.meta.url), "utf8");
   const cards = source.slice(source.indexOf("{subscriptions.map"), source.indexOf("{editor &&"));
-  assert.equal((cards.match(/<button /g) ?? []).length, 5);
+  // Two ways into the member list (count chip, "还有 N 个") plus the four collection actions.
+  assert.equal((cards.match(/<button /g) ?? []).length, 6);
+  assert.equal((cards.match(/setViewingMembers\(subscription\)/g) ?? []).length, 2);
+  for (const action of ["setRenaming(subscription)", "viewLink(subscription)", "resetToken(subscription)", "remove(subscription)"]) assert.ok(cards.includes(action), action);
   assert.doesNotMatch(source, /quota_bytes|expires_at|subscriptionPort|subscriptionSNI|exportSingBoxUser|previewSubscription/);
   assert.match(source, /useState<number\[\]>\(\[\]\)/);
-  assert.match(source, /checked=\{occupied \|\| checked\}/);
+  assert.match(source, /aria-checked=\{checked\}/);
   assert.match(source, /disabled=\{occupied/);
   assert.match(source, /已属于/);
   assert.match(source, /cause\.status === 409[\s\S]*await load\(\)/);
@@ -208,9 +213,9 @@ test("subscription rename PATCH sends only name and preserves server errors", as
 
 test("rename modal is prefilled, blocks duplicate saves, retains failures, and updates names only", () => {
   const source = readFileSync(new URL("../src/pages/Subscriptions.tsx", import.meta.url), "utf8");
-  const rename = source.slice(source.indexOf("async function rename("), source.indexOf("  return <>"));
+  const rename = source.slice(source.indexOf("async function rename("), source.indexOf("  const memberCount"));
   const editor = source.slice(source.indexOf("function SubscriptionNameEditor("), source.indexOf("function SubscriptionEditor("));
-  assert.match(source, /setRenaming\(subscription\)\}>修改名称/);
+  assert.match(source, /aria-label="修改名称"[^>]*onClick=\{\(\) => setRenaming\(subscription\)\}/);
   assert.match(source, /name=\{renaming\.name\}/);
   assert.match(editor, /useState\(initialName\)/);
   assert.match(editor, /if \(pending\.current\) return/);
@@ -225,12 +230,12 @@ test("rename modal is prefilled, blocks duplicate saves, retains failures, and u
   assert.doesNotMatch(rename, /resetToken|resetSubscriptionToken|user_ids|members:/);
 });
 
-test("subscription checkbox rows have scoped readable touch-target styles", () => {
+test("subscription node choices are labelled checkboxes with readable touch-target styles", () => {
   const source = readFileSync(new URL("../src/pages/Subscriptions.tsx", import.meta.url), "utf8");
-  const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../src/pages/management-redesign.css", import.meta.url), "utf8");
   assert.match(source, /maxLength=\{64\}/);
-  assert.match(source, /subscription-node-choice/);
-  assert.match(css, /\.subscription-node-choice \{[^}]*display: flex;[^}]*min-height: 44px;/);
-  assert.match(css, /\.subscription-node-choice input\[type="checkbox"\] \{[^}]*width: 18px;[^}]*height: 18px;[^}]*margin: 0;/);
-  assert.match(css, /\.subscription-node-choice-text \{[^}]*overflow-wrap: anywhere;/);
+  assert.match(source, /role="checkbox"\s+aria-checked=\{checked\}/);
+  assert.match(source, /className=\{`sub-pick-item/);
+  assert.match(css, /\.sub-pick-item \{[^}]*display: flex;[^}]*min-height: 46px;/);
+  assert.match(css, /\.sub-pick-text strong \{[^}]*text-overflow: ellipsis;/);
 });

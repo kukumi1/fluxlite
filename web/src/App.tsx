@@ -1,8 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   LayoutDashboard,
-  PanelLeftClose,
-  PanelLeftOpen,
   Radar,
   Menu,
   X,
@@ -19,7 +17,9 @@ import {
 } from "lucide-react";
 import { api, isTelegramMode } from "./api";
 import { TelegramApp } from "./pages/TelegramApp";
-import { readPreference, writePreference } from "./lib/appearance";
+import type { Tone } from "./lib/region";
+import { SidebarPet } from "./components/SidebarPet";
+import { readPreference, writePreference } from "./lib/preferences";
 import { ThemeProvider, useTheme, useThemeState } from "./theme";
 import { Login } from "./pages/Login";
 import { Recovery } from "./pages/Recovery";
@@ -38,17 +38,19 @@ const Console = lazy(() => import("./pages/Console").then((m) => ({ default: m.C
 type Tab = "dashboard" | "routes" | "nodes" | "singbox" | "subscriptions" | "traffic-audit" | "console" | "audit" | "account";
 type AuthState = "checking" | "in" | "out";
 
+// Each place keeps one tone, so its icon chip in the sidebar is how it is
+// recognised at a glance (and still is when the sidebar is collapsed).
 const MAIN_NAV = [
-  { id: "dashboard", label: "仪表盘", icon: LayoutDashboard },
-  { id: "routes", label: "链路", icon: Waypoints },
-  { id: "nodes", label: "机器", icon: Server },
-  { id: "singbox", label: "节点", icon: Network },
-  { id: "subscriptions", label: "订阅", icon: ScrollText },
-  { id: "traffic-audit", label: "流量审计", icon: Radar },
-  { id: "console", label: "终端", icon: TerminalSquare },
+  { id: "dashboard", label: "仪表盘", icon: LayoutDashboard, tone: "lime" },
+  { id: "routes", label: "链路", icon: Waypoints, tone: "lilac" },
+  { id: "nodes", label: "机器", icon: Server, tone: "sky" },
+  { id: "singbox", label: "节点", icon: Network, tone: "peach" },
+  { id: "subscriptions", label: "订阅", icon: ScrollText, tone: "sun" },
+  { id: "traffic-audit", label: "流量审计", icon: Radar, tone: "sky" },
+  { id: "console", label: "终端", icon: TerminalSquare, tone: "lime" },
 ] as const;
 
-const ADMIN_NAV = [{ id: "audit", label: "审计日志", icon: ScrollText }] as const;
+const ADMIN_NAV = [{ id: "audit", label: "审计日志", icon: ScrollText, tone: "lilac" }] as const;
 
 export function App() {
   const theme = useThemeState();
@@ -154,7 +156,7 @@ function Shell() {
     }
   }
 
-  function navButton(item: { id: string; label: string; icon: typeof Server }) {
+  function navButton(item: { id: string; label: string; icon: typeof Server; tone: Tone }) {
     const Icon = item.icon;
     return (
       <button
@@ -164,7 +166,7 @@ function Shell() {
         title={item.label}
         aria-current={tab === item.id ? "page" : undefined}
       >
-        <Icon className="nav-icon" size={16} />
+        <span className={`nav-icon-chip tone-${item.tone}`}><Icon className="nav-icon" size={16} /></span>
         <span className="nav-label-text">{item.label}</span>
       </button>
     );
@@ -175,6 +177,7 @@ function Shell() {
       {mobileOpen && <button className="sidebar-scrim" aria-label="关闭导航" onClick={() => setMobileOpen(false)} />}
       <aside ref={sidebarRef} className="sidebar" id="main-navigation" aria-label="主导航">
         <div className="sidebar-head">
+          <button className="nav-toggle" onClick={toggleSidebar} aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"} aria-expanded={!collapsed} aria-controls="main-navigation"><span /></button>
           <div className="brand">
             <span className="brand-mark">
               <Zap size={16} />
@@ -184,12 +187,13 @@ function Shell() {
           <button className="icon-btn mobile-close" onClick={() => setMobileOpen(false)} aria-label="关闭导航"><X size={18} /></button>
         </div>
 
-        <div className="workspace-label"><span className="workspace-mark"><Network size={16} /></span><span className="workspace-copy"><strong>管理工作台</strong><small>机器 · 节点 · 链路</small></span></div>
         <div className="sidebar-group-label">工作空间</div>
         <nav className="nav">{MAIN_NAV.map(navButton)}</nav>
 
         <div className="sidebar-group-label">管理</div>
         <nav className="nav">{ADMIN_NAV.map(navButton)}</nav>
+
+        <SidebarPet />
 
         <div className="sidebar-footer">
           <div className="row" style={{ flexWrap: "nowrap", gap: 6 }}>
@@ -218,9 +222,8 @@ function Shell() {
       <main className="main">
         <header className="topbar">
           <div className="breadcrumb">
-            <button className="icon-btn desktop-collapse" onClick={toggleSidebar} aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"} aria-expanded={!collapsed} aria-controls="main-navigation">{collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}</button>
             <button className="icon-btn mobile-menu" onClick={() => setMobileOpen(true)} aria-label="打开导航" aria-expanded={mobileOpen} aria-controls="main-navigation"><Menu size={18} /></button>
-            <span className="breadcrumb-root">工作空间</span><ChevronRight size={14} className="breadcrumb-root" />
+            <span className="breadcrumb-root">{MAIN_NAV.some((item) => item.id === tab) ? "工作空间" : ADMIN_NAV.some((item) => item.id === tab) ? "管理" : "账号"}</span><ChevronRight size={14} className="breadcrumb-root" />
             <strong>{[...MAIN_NAV, ...ADMIN_NAV].find((item) => item.id === tab)?.label ?? "个人中心"}</strong>
           </div>
           <div className="topbar-actions">

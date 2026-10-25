@@ -3,7 +3,6 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { consoleSocketURL } from "../api";
-import type { Theme } from "../theme";
 
 export type ConnectionState = "connecting" | "open" | "closed";
 
@@ -16,66 +15,41 @@ export interface TerminalHandle {
 
 interface Props {
   nodeID: number;
-  theme: Theme;
   onStateChange(state: ConnectionState): void;
 }
 
+// 终端在两套主题下都是同一块墨色窗口，和面板里其它「命令」块一致：浅色页面
+// 里一块深色终端本来就是终端该有的样子，也省得改一次主题就重绘整屏。
 // 只设背景和前景会让 ANSI 十六色停留在 xterm 的默认值 —— 那套是给纯黑底调
-// 的原色，放在这里刺眼且对比失衡。两套配色都按各自底色重新配过。
-const DARK = {
-  background: "#0f1216",
-  foreground: "#d6deeb",
-  cursor: "#c792ea",
-  cursorAccent: "#0f1216",
-  selectionBackground: "#2a3a4d",
+// 的原色，放在这里刺眼且对比失衡，所以按墨色底重新配过。
+const INK = {
+  background: "#16171a",
+  foreground: "#e6e6e1",
+  cursor: "#c5f03a",
+  cursorAccent: "#16171a",
+  selectionBackground: "#3b4a1e",
 
-  black: "#3b4453",
-  red: "#ef6b73",
-  green: "#7ee787",
-  yellow: "#ffd479",
-  blue: "#79b8ff",
-  magenta: "#c792ea",
-  cyan: "#56d4dd",
-  white: "#c8d1dc",
+  black: "#3b3d44",
+  red: "#ff7a6e",
+  green: "#c5f03a",
+  yellow: "#f5c94a",
+  blue: "#8bbcff",
+  magenta: "#c9b6ff",
+  cyan: "#7fdcd2",
+  white: "#c9c9c3",
 
-  brightBlack: "#5f6b7a",
-  brightRed: "#ff8f96",
-  brightGreen: "#a2f5b0",
-  brightYellow: "#ffe3a6",
-  brightBlue: "#a5d1ff",
-  brightMagenta: "#e0c2ff",
-  brightCyan: "#8ce8ef",
+  brightBlack: "#6b6d74",
+  brightRed: "#ff9f95",
+  brightGreen: "#d9f77a",
+  brightYellow: "#ffe08a",
+  brightBlue: "#b3d4ff",
+  brightMagenta: "#ddd0ff",
+  brightCyan: "#a8ebe3",
   brightWhite: "#ffffff",
 };
 
-const LIGHT = {
-  background: "#ffffff",
-  foreground: "#1b1f24",
-  cursor: "#8250df",
-  cursorAccent: "#ffffff",
-  selectionBackground: "#d7e3f4",
-
-  black: "#24292f",
-  red: "#cf222e",
-  green: "#116329",
-  yellow: "#7d4e00",
-  blue: "#0969da",
-  magenta: "#8250df",
-  cyan: "#1b7c83",
-  white: "#6e7781",
-
-  brightBlack: "#57606a",
-  brightRed: "#a40e26",
-  brightGreen: "#1a7f37",
-  brightYellow: "#9a6700",
-  brightBlue: "#218bff",
-  brightMagenta: "#a475f9",
-  brightCyan: "#3192aa",
-  brightWhite: "#1b1f24",
-};
-
 export const TerminalPane = forwardRef<TerminalHandle, Props>(function TerminalPane(
-  { nodeID, theme, onStateChange },
+  { nodeID, onStateChange },
   ref,
 ) {
   const host = useRef<HTMLDivElement>(null);
@@ -113,17 +87,18 @@ export const TerminalPane = forwardRef<TerminalHandle, Props>(function TerminalP
     }
   }
 
-  // 终端与连接绑定在节点上，整个生命周期只建一次。theme 的变化单独处理，
-  // 放进依赖会让改一次主题就把会话踢掉。
+  // 终端与连接绑定在节点上，整个生命周期只建一次。
   useEffect(() => {
     if (!host.current) return;
 
     const t = new Terminal({
       fontSize: 13,
-      fontFamily: 'ui-monospace, "Cascadia Code", Consolas, monospace',
+      fontFamily: '"IBM Plex Mono", ui-monospace, "Cascadia Code", Consolas, monospace',
+      lineHeight: 1.25,
       cursorBlink: true,
+      cursorStyle: "bar",
       scrollback: 5000,
-      theme: theme === "dark" ? DARK : LIGHT,
+      theme: INK,
     });
     const f = new FitAddon();
     t.loadAddon(f);
@@ -171,6 +146,18 @@ export const TerminalPane = forwardRef<TerminalHandle, Props>(function TerminalP
       }
     });
 
+    // xterm 在 open 时按当时的字体量字宽；内嵌的 Plex Mono 晚一步到位的话，
+    // 列数会按回退字体算错，等字体就绪再量一次。
+    void document.fonts.ready.then(() => {
+      if (term.current !== t) return;
+      try {
+        f.fit();
+      } catch {
+        return;
+      }
+      sendSize();
+    });
+
     const observer = new ResizeObserver(() => {
       try {
         f.fit();
@@ -195,12 +182,6 @@ export const TerminalPane = forwardRef<TerminalHandle, Props>(function TerminalP
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeID]);
-
-  useEffect(() => {
-    if (term.current) {
-      term.current.options.theme = theme === "dark" ? DARK : LIGHT;
-    }
-  }, [theme]);
 
   return <div className="terminal-host" ref={host} />;
 });

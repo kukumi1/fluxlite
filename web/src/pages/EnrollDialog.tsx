@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ArrowLeft, ArrowRight, Cpu, Download, Info, KeyRound, RadioTower, Settings2, Timer } from "lucide-react";
 import {
   api,
   ApiError,
@@ -16,6 +17,19 @@ interface Props {
   nodes: Node[];
   onClose: () => void;
   onEnrolled: () => void;
+}
+
+const SCRIPT_STEPS = [
+  { icon: Cpu, tone: "sky", title: "识别环境", text: "系统、架构与 init，支持 systemd / OpenRC、amd64 / arm64" },
+  { icon: KeyRound, tone: "lilac", title: "写入公钥", text: "面板公钥进 authorized_keys，私钥始终留在面板" },
+  { icon: Download, tone: "peach", title: "安装 realm", text: "从面板下载，机器不需要能访问 GitHub" },
+  { icon: RadioTower, tone: "lime", title: "回连验证", text: "回报系统信息，面板当场回连并告诉你结果" },
+] as const;
+
+function expiryText(expiresAt: string): string {
+  const at = new Date(expiresAt);
+  const minutes = Math.max(0, Math.round((at.getTime() - Date.now()) / 60000));
+  return `${at.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 前有效（约 ${minutes} 分钟）· 仅可使用一次`;
 }
 
 export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
@@ -49,38 +63,49 @@ export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
     }
   }
 
+  const viaName = form.via_node_id ? nodes.find((n) => n.id === form.via_node_id)?.name ?? "跳板" : "直连";
+  const steps = (
+    <ol className="dialog-steps" aria-label="步骤">
+      <li className={ticket ? "done" : "current"}><b>1</b>填写连接</li>
+      <li className={ticket ? "current" : ""}><b>2</b>在机器上执行</li>
+    </ol>
+  );
+
   if (ticket) {
     return (
-      <Modal title="一键注册命令" onClose={onClose}>
-        <Banner kind="ok">
-          在目标机器上以 root 执行下面这条命令即可完成注册，无需再填地址和密码。
-        </Banner>
+      <Modal title="一键注册机器" subtitle={`把命令复制到「${form.name}」上，以 root 执行。`} size="wide" onClose={onClose}>
+        {steps}
 
-        <pre className="cmd">{ticket.command}</pre>
-
-        <div className="row" style={{ marginBottom: 16 }}>
-          <CopyButton text={ticket.command} />
-          <span className="muted" style={{ fontSize: 13 }}>
-            有效期至 {new Date(ticket.expires_at).toLocaleString("zh-CN")}，仅可使用一次
-          </span>
+        <div className="term-block">
+          <div className="terminal-bar">
+            <span className="terminal-dots" aria-hidden><i /><i /><i /></span>
+            <span className="terminal-title">root@{form.name || "目标机器"}</span>
+            <CopyButton text={ticket.command} />
+          </div>
+          <pre className="terminal-body"><span className="terminal-prompt" aria-hidden>$ </span>{ticket.command}</pre>
         </div>
+        <p className="enroll-expiry"><Timer size={14} />{expiryText(ticket.expires_at)}</p>
 
-        <h2>脚本会做什么</h2>
-        <ul className="hop-list" style={{ marginBottom: 16 }}>
-          <li>识别系统、架构与 init（支持 systemd 与 OpenRC，amd64 / arm64）</li>
-          <li>把面板公钥写入 authorized_keys —— 私钥始终留在面板，不经过网络</li>
-          <li>从面板下载 realm 并安装（节点无需访问 GitHub）</li>
-          <li>回报系统信息，面板随即回连验证并当场告诉你结果</li>
-        </ul>
+        <h3 className="dialog-section-title">脚本会做什么</h3>
+        <ol className="script-steps">
+          {SCRIPT_STEPS.map(({ icon: Icon, tone, title, text }) => (
+            <li key={title} className={`tone-${tone}`}>
+              <i><Icon size={16} /></i>
+              <strong>{title}</strong>
+              <span>{text}</span>
+            </li>
+          ))}
+        </ol>
 
-        <Banner kind="warn">
-          若这台是 NAT 机器，上面填的连接地址必须是服务商映射后的公网地址与端口，
-          不是机器自己看到的地址。填错时脚本会明确提示回连失败。
-        </Banner>
+        <p className="dialog-note">
+          <Info size={14} />
+          NAT 机器的连接地址必须是服务商映射后的公网地址与端口；填错时脚本会明确提示回连失败。
+        </p>
 
-        <div className="row" style={{ justifyContent: "flex-end", marginTop: 8 }}>
-          <button className="btn" onClick={onClose}>
-            关闭
+        <div className="modal-actions spread-actions">
+          <button className="btn ghost" onClick={() => setTicket(null)}>
+            <ArrowLeft size={15} />
+            返回修改
           </button>
           <button
             className="btn primary"
@@ -97,110 +122,93 @@ export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
   }
 
   return (
-    <Modal title="生成一键注册命令" onClose={onClose}>
-      <form onSubmit={generate}>
+    <Modal title="一键注册机器" subtitle="告诉面板怎么连上它，再拿一条命令去机器上跑。" size="wide" onClose={onClose}>
+      {steps}
+      <form onSubmit={generate} className="dialog-form">
         {error && <Banner kind="err">{error}</Banner>}
 
         <label>
-          节点名称
-          <input
-            value={form.name}
-            onChange={(e) => set("name", e.target.value)}
-            placeholder="随便起，支持中文"
-            required
-          />
+          机器名称
+          <input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="例如 DMIT-JP，写上地区会自动配国旗" required autoFocus />
         </label>
 
-        <div className="grid2">
-          <label>
-            SSH 连接地址
-            <input
-              value={form.host}
-              onChange={(e) => set("host", e.target.value)}
-              placeholder="面板用来连它的地址"
-              required
-            />
-          </label>
-          <label>
-            SSH 端口
-            <NumberField
-              value={form.ssh_port}
-              onChange={(v) => set("ssh_port", v)}
-              required
-            />
-          </label>
+        <div className="field">
+          <span className="field-label">SSH 连接地址</span>
+          <div className="host-port">
+            <input aria-label="SSH 连接地址" value={form.host} onChange={(e) => set("host", e.target.value)} placeholder="面板用来连它的 IP 或域名" required />
+            <span aria-hidden>:</span>
+            <NumberField aria-label="SSH 端口" value={form.ssh_port} onChange={(v) => set("ssh_port", v)} required />
+          </div>
+          <p className="field-hint" title="NAT 机器的出口地址与入口地址通常不同，脚本无法自动探测，只能由你填写。">
+            NAT 机器填服务商映射后的公网地址和端口，例如 1.2.3.4 : 10022。
+          </p>
         </div>
-        <p className="hint">
-          NAT 机器填服务商映射后的公网地址和端口（例如 1.2.3.4:10022 映射到内网 22）。
-          这一项无法由脚本自动探测，因为 NAT 机器的出口地址与入口地址通常不同。
-        </p>
 
         <label>
           登录用户
           <input value={form.ssh_user} onChange={(e) => set("ssh_user", e.target.value)} required />
         </label>
 
-        <div className="grid2">
+        <details className="advanced">
+          <summary>
+            <Settings2 size={15} />
+            高级设置
+            <span className="advanced-summary">
+              端口池 {form.port_start}–{form.port_end} · {viaName} · {form.skip_udp_probe ? "跳过 UDP" : "检测 UDP"}
+            </span>
+          </summary>
+
+          <div className="field">
+            <span className="field-label">端口池</span>
+            <div className="range-row">
+              <NumberField aria-label="端口池起始" value={form.port_start} onChange={(v) => set("port_start", v)} required />
+              <span aria-hidden>–</span>
+              <NumberField aria-label="端口池结束" value={form.port_end} onChange={(v) => set("port_end", v)} required />
+            </div>
+            <p
+              className="field-hint"
+              title="分配时从起始端口向上取第一个空闲端口，并跳过已被 sshd、网页服务等占用的端口。默认避开 1-9999，那一段既有特权端口也常被系统服务占用。"
+            >
+              链路端口从这里分配。NAT 机器改成服务商实际映射到本机的范围。
+            </p>
+          </div>
+
           <label>
-            端口池起始
-            <NumberField
-              value={form.port_start}
-              onChange={(v) => set("port_start", v)}
-              required
-            />
+            跳板机器
+            <select value={form.via_node_id ?? ""} onChange={(e) => set("via_node_id", e.target.value ? Number(e.target.value) : null)}>
+              <option value="">直连（无需跳板）</option>
+              {nodes.map((n) => (
+                <option key={n.id} value={n.id}>{n.name}</option>
+              ))}
+            </select>
           </label>
-          <label>
-            端口池结束
-            <NumberField
-              value={form.port_end}
-              onChange={(v) => set("port_end", v)}
-              required
-            />
-          </label>
-        </div>
-        <p className="hint">
-          分配时会从起始端口向上取第一个空闲端口，并自动跳过节点上已被其他服务占用的
-          端口（sshd、网页服务等）。起始端口默认避开 1-9999，那一段既有特权端口也常被
-          系统服务占用。NAT 机器请改成服务商实际映射到本机的范围，否则会分配到映射之
-          外、外部根本连不进来的端口。
-        </p>
+          <p className="field-hint">仅面板无法直连的内网机器需要。</p>
 
-        <label>
-          跳板节点
-          <select
-            value={form.via_node_id ?? ""}
-            onChange={(e) => set("via_node_id", e.target.value ? Number(e.target.value) : null)}
-          >
-            <option value="">直连（无需跳板）</option>
-            {nodes.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p className="hint">仅对面板无法直连的内网节点设置。</p>
+          <div className="switch-row">
+            <div>
+              <strong>跳过 UDP 检测</strong>
+              <span>多数 NAT 机器只映射 TCP；勾选后 UDP 标为「已跳过」，每次探测省十几秒。</span>
+            </div>
+            <button
+              type="button"
+              className={`toggle-switch ${form.skip_udp_probe ? "on" : ""}`}
+              role="switch"
+              aria-checked={form.skip_udp_probe}
+              aria-label="跳过 UDP 检测"
+              onClick={() => set("skip_udp_probe", !form.skip_udp_probe)}
+            >
+              <span />
+            </button>
+          </div>
+        </details>
 
-        <label style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-          <input
-            type="checkbox"
-            checked={form.skip_udp_probe}
-            onChange={(e) => set("skip_udp_probe", e.target.checked)}
-            style={{ width: "auto", marginTop: 3 }}
-          />
-          <span>跳过 UDP 检测</span>
-        </label>
-        <p className="hint">
-          多数 NAT 机器只映射 TCP，不打算跑 UDP 链路的话可以勾选，每次探测省十几秒。
-          勾选后该节点的 UDP 能力标记为「已跳过」，建 tcp+udp 链路时不会拦你。
-        </p>
-
-        <div className="row" style={{ justifyContent: "flex-end", marginTop: 8 }}>
-          <button type="button" className="btn" onClick={onClose}>
+        <div className="modal-actions">
+          <button type="button" className="btn ghost" onClick={onClose}>
             取消
           </button>
           <button className="btn primary" disabled={busy}>
             {busy ? "生成中…" : "生成命令"}
+            {!busy && <ArrowRight size={15} />}
           </button>
         </div>
       </form>

@@ -1,36 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Info, Pencil, Plus, QrCode, RefreshCw, RotateCcw, Search, Trash2 } from "lucide-react";
-import { api, type Node, type SingBoxCipher, type SingBoxDiscovery, type SingBoxProtocol, type SingBoxUser, type SingBoxUserInput } from "../api";
-import { Card } from "../components/Card";
+import { ChevronDown, Clock, Gauge, Info, Network, Pencil, Plus, QrCode, RefreshCw, RotateCcw, ScanSearch, Trash2, TriangleAlert, type LucideIcon } from "lucide-react";
+import { api, type Node, type SingBoxDiscovery, type SingBoxUser, type SingBoxUserInput } from "../api";
 import { CopyButton } from "../components/CopyButton";
+import { Flag } from "../components/Flag";
+import { ListToolbar } from "../components/ListToolbar";
 import { PageHeader } from "../components/PageHeader";
 import { Banner, Modal } from "../components/Modal";
-import { Drawer } from "../components/Drawer";
 import { useConfirm } from "../components/ConfirmDialog";
 import "./management-redesign.css";
 import { formatBytes } from "../lib/format";
+import { regionOf, toneOf } from "../lib/region";
 import { normalizeSingBoxExport, type SingBoxAddressFamily, type SingBoxExportView } from "../lib/singbox-export";
-
-const protocols: Array<[SingBoxProtocol, string]> = [
-  ["ss2022", "SS2022"], ["anytls", "AnyTLS"], ["vless-reality", "VLESS + Reality"],
-  ["hysteria2", "Hysteria2"], ["tuic", "TUIC"], ["trojan", "Trojan"],
-  ["vmess", "VMess"], ["vless-tls", "VLESS + TLS"],
-];
-
-function toDateTimeLocal(date: Date): string {
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
-}
+import { CreateNodeDialog, protocolMeta, toDateTimeLocal } from "./SingBoxCreate";
 
 function emptyInput(): SingBoxUserInput {
-  return { node_id: 0, name: "", protocol: "ss2022", cipher: "2022-blake3-aes-256-gcm", port: 0, quota_bytes: 0, access_days: 0, expires_at: "", upload_limit_mbps: 0, download_limit_mbps: 0 };
+  return { node_id: 0, name: "", protocol: "vless-reality", cipher: "2022-blake3-aes-256-gcm", port: 0, quota_bytes: 0, access_days: 0, expires_at: "", upload_limit_mbps: 0, download_limit_mbps: 0 };
 }
 
-const ciphers: Array<[SingBoxCipher, string]> = [
-  ["2022-blake3-aes-128-gcm", "AES-128-GCM"],
-  ["2022-blake3-aes-256-gcm", "AES-256-GCM"],
-  ["2022-blake3-chacha20-poly1305", "ChaCha20-Poly1305"],
-];
+const DAY = 86_400_000;
+const EXPIRING_WITHIN = 7 * DAY;
 
 function statusLabel(user: SingBoxUser) {
   if (user.source === "external") return "外部节点";
@@ -59,7 +47,56 @@ function usageLabel(user: SingBoxUser, used: number, total: number): string {
 
 function rateLabel(user: SingBoxUser): string {
   if (!user.upload_limit_bps && !user.download_limit_bps) return "未限速";
-  return `上行 ${Math.round(user.upload_limit_bps / 1_000_000)} · 下行 ${Math.round(user.download_limit_bps / 1_000_000)} Mbps`;
+  return `↑ ${Math.round(user.upload_limit_bps / 1_000_000)} · ↓ ${Math.round(user.download_limit_bps / 1_000_000)} Mbps`;
+}
+
+function statusTone(user: SingBoxUser): "ok" | "err" | "warn" | "" {
+  if (user.status === "exhausted" || user.status === "expired") return "err";
+  if (user.enabled && user.status === "running") return "ok";
+  if (user.enabled && user.status === "stopped") return "warn";
+  return "";
+}
+
+/** 到期这件事最要紧的是「还有多久」，日期留给悬停。 */
+function ExpiryChip({ value }: { value: string | null }) {
+  if (!hasExpiry(value)) return <span className="expiry-chip">永久</span>;
+  const left = new Date(value).getTime() - Date.now();
+  const days = Math.ceil(left / DAY);
+  const tone = left <= 0 ? "err" : left <= EXPIRING_WITHIN ? "warn" : "";
+  return (
+    <span className={`expiry-chip ${tone}`} title={formatDateTime(value)}>
+      {left <= 0 ? `已过期 ${Math.abs(days)} 天` : days <= 1 ? "今天到期" : `${days} 天后到期`}
+    </span>
+  );
+}
+
+function ProtocolBadge({ protocol }: { protocol: SingBoxUser["protocol"] }) {
+  const meta = protocolMeta(protocol);
+  return <span className={`proto-badge tone-${meta.tone}`} title={meta.label}>{meta.short}</span>;
+}
+
+function WhereLine({ user }: { user: SingBoxUser }) {
+  const code = regionOf(user.node_name);
+  return (
+    <span className="sb-where">
+      {code && <Flag code={code} className="sb-where-flag" />}
+      {user.node_name ?? `机器 #${user.node_id}`}
+      <span className="sb-where-sep">·</span>
+      <code>:{user.port}</code>
+      <span className="sb-where-sep">·</span>
+      {protocolMeta(user.protocol).label}
+    </span>
+  );
+}
+
+function SummaryFigure({ icon: Icon, tone, label, value, note }: { icon: LucideIcon; tone: string; label: string; value: number; note?: string }) {
+  return (
+    <div className={`tone-${tone}`}>
+      <i><Icon size={16} /></i>
+      <dt>{label}</dt>
+      <dd>{value}{note && <small>{note}</small>}</dd>
+    </div>
+  );
 }
 
 export function SingBox() {
@@ -90,9 +127,8 @@ export function SingBox() {
   const [editEnabled, setEditEnabled] = useState(true);
   const [editUploadMbps, setEditUploadMbps] = useState("0");
   const [editDownloadMbps, setEditDownloadMbps] = useState("0");
-  const [managedOpen, setManagedOpen] = useState(true);
   const [externalOpen, setExternalOpen] = useState(false);
-  const [discoveredOpen, setDiscoveredOpen] = useState(false);
+  const [scanNodeID, setScanNodeID] = useState(0);
 
   async function load(selectDefaultNode = true) {
     try {
@@ -225,9 +261,9 @@ export function SingBox() {
   }
 
   async function scanExternal() {
-    if (!input.node_id) return;
+    if (!scanNodeID) return;
     setBusy(true); setError("");
-    try { setDiscovered((await api.scanSingBox(input.node_id)) ?? []); setDiscoveredOpen(true); setExternalOpen(true); await load(); }
+    try { setDiscovered((await api.scanSingBox(scanNodeID)) ?? []); setExternalOpen(true); await load(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   }
@@ -242,118 +278,294 @@ export function SingBox() {
     await action(() => api.resetSingBoxUser(user.id), "流量已重置");
   }
 
-  function userTable(list: SingBoxUser[], compact = false) {
-    if (list.length === 0) return <p className="muted">暂无节点。</p>;
+  function managedCard(user: SingBoxUser) {
+    const used = user.used_in + user.used_out;
+    const total = user.base_quota_bytes + user.top_up_bytes;
+    const pct = total > 0 ? Math.min(100, (used / total) * 100) : null;
+    const barTone = pct === null ? "" : pct >= 100 ? "err" : pct >= 85 ? "warn" : "";
+    const periodLeft = Math.max(0, Math.ceil((new Date(user.period_ends_at).getTime() - Date.now()) / DAY));
+    const locked = user.status === "expired" || user.status === "exhausted";
     return (
-      <div className={`singbox-user-list ${compact ? "singbox-compact-list" : ""}`}>
-        {list.map((user) => {
-            const used = user.used_in + user.used_out;
-            const total = user.base_quota_bytes + user.top_up_bytes;
-            return (
-              <article className="singbox-user-card" data-tone={user.id % 4} key={user.id}>
-                <div className="singbox-user-head">
-                  <div className="singbox-user-title"><strong>{user.name}</strong><span className="singbox-connection-expiry">到期 {user.source === "external" ? "—" : hasExpiry(user.expires_at) ? formatDateTime(user.expires_at) : "永久"}</span><span className="management-protocol">{protocols.find(([protocol]) => protocol === user.protocol)?.[1] ?? user.protocol}</span><span className="muted">{user.node_name ?? `机器 #${user.node_id}`} · 端口 {user.port}</span><span className={`tag ${user.enabled && user.status === "running" ? "ok" : user.status === "exhausted" || user.status === "expired" ? "err" : ""}`}>{statusLabel(user)}</span></div>
-                  <div className="singbox-user-summary" aria-label="节点摘要"><span>流量 <strong>{usageLabel(user, used, total)}</strong></span><span>流量到期 <strong>{user.source === "external" ? "—" : formatDateTime(user.period_ends_at)}</strong></span><span>限速 <strong>{rateLabel(user)}</strong></span>{user.rate_limit_error && <span className="err-text">限速未生效</span>}</div>
-                  <div className="singbox-actions">
-                    {user.source === "external" ? <>
-                      <button className="btn sm" disabled={busy} onClick={() => openQuotaDialog(user, true)}>接管</button>
-                      <button className="btn sm danger" disabled={busy} title="只从面板移除记录，不删除远程配置" onClick={() => void removeUser(user)}>移除记录</button>
-                    </> : <>
-                      <button className={`toggle-switch ${user.enabled ? "on" : ""}`} aria-label={user.enabled ? "关闭节点" : "开启节点"} aria-pressed={user.enabled} disabled={busy || user.status === "expired" || user.status === "exhausted"} onClick={() => void action(() => user.enabled ? api.stopSingBoxUser(user.id) : api.startSingBoxUser(user.id), user.enabled ? "已关闭" : "已开启")}><span /></button>
-                      <button className="btn sm icon-only" aria-label="二维码" title="二维码" disabled={busy} onClick={() => void exportUser(user.id)}><QrCode size={15} /></button>
-                      <button className="btn sm icon-only" aria-label="客户端信息" title="客户端信息" disabled={busy} onClick={() => setInfoUser(user)}><Info size={15} /></button>
-                      <button className="btn sm" disabled={busy} onClick={() => openQuotaDialog(user, false)}>加量</button>
-                      <button className="btn sm" disabled={busy || total === 0} onClick={() => openQuotaDialog(user, false, true)}>减量</button>
-                      <button className="btn sm icon-only" aria-label="重置流量" title="重置流量" disabled={busy} onClick={() => void resetUser(user)}><RotateCcw size={15} /></button>
-                      <button className="btn sm icon-only" aria-label="编辑客户端" title="编辑客户端" disabled={busy} onClick={() => openEditDialog(user)}><Pencil size={15} /></button>
-                      <button className="btn sm danger" disabled={busy} aria-label="删除节点" title="删除节点" onClick={() => void removeUser(user)}><Trash2 size={13} /></button>
-                    </>}
-                  </div>
-                </div>
-              </article>
-            );
-          })}
-      </div>
+      <article className={`sb-card tone-${toneOf(regionOf(user.node_name))}${user.enabled ? "" : " is-off"}`} key={user.id}>
+        <header className="sb-card-head">
+          <ProtocolBadge protocol={user.protocol} />
+          <div className="sb-card-title">
+            <h3>{user.name}</h3>
+            <WhereLine user={user} />
+          </div>
+          <span className={`pill ${statusTone(user)}`}><i />{statusLabel(user)}</span>
+          <button
+            className={`toggle-switch ${user.enabled ? "on" : ""}`}
+            role="switch"
+            aria-checked={user.enabled}
+            aria-label={user.enabled ? "关闭节点" : "开启节点"}
+            title={locked ? "额度用尽或已过期，先加量或延期" : user.enabled ? "关闭节点" : "开启节点"}
+            disabled={busy || locked}
+            onClick={() => void action(() => user.enabled ? api.stopSingBoxUser(user.id) : api.startSingBoxUser(user.id), user.enabled ? "已关闭" : "已开启")}
+          >
+            <span />
+          </button>
+        </header>
+
+        <div className="sb-usage">
+          <div className="sb-usage-figure">
+            <b>{formatBytes(used)}</b>
+            <span>{total > 0 ? `/ ${formatBytes(total)}` : "不限额度"}</span>
+            {pct !== null && <em className={barTone}>{pct.toFixed(0)}%</em>}
+          </div>
+          <div className="progress">
+            {pct !== null && <div className={`progress-bar ${barTone}`} style={{ width: `${Math.max(pct, 1)}%` }} />}
+          </div>
+          <p className="sb-usage-meta" title={`本周期 ${formatDateTime(user.period_started_at)} 起，${formatDateTime(user.period_ends_at)} 结束`}>
+            本周期还剩 {periodLeft} 天 · {user.period_days} 天一周期
+          </p>
+        </div>
+
+        <dl className="leader-rows">
+          <div><dt>到期</dt><dd><ExpiryChip value={user.expires_at} /></dd></div>
+          <div><dt>限速</dt><dd>{rateLabel(user)}{user.rate_limit_error && <span className="tag err" title={user.rate_limit_error}>未生效</span>}</dd></div>
+        </dl>
+
+        <div className="sb-actions">
+          <div className="sb-actions-main">
+            <button className="btn sm export-btn" disabled={busy} onClick={() => void exportUser(user.id)}><QrCode size={14} />导出</button>
+            <button className="btn sm" disabled={busy} onClick={() => openQuotaDialog(user, false)}>加量</button>
+            <button className="btn sm" disabled={busy || total === 0} onClick={() => openQuotaDialog(user, false, true)}>减量</button>
+          </div>
+          <div className="sb-actions-side">
+            <button className="btn sm ghost icon-action" aria-label="客户端信息" title="客户端信息" disabled={busy} onClick={() => setInfoUser(user)}><Info size={15} /></button>
+            <button className="btn sm ghost icon-action" aria-label="清零本周期流量" title="清零本周期流量" disabled={busy} onClick={() => void resetUser(user)}><RotateCcw size={15} /></button>
+            <button className="btn sm ghost icon-action" aria-label="编辑" title="编辑" disabled={busy} onClick={() => openEditDialog(user)}><Pencil size={15} /></button>
+            <button className="btn sm ghost icon-action danger" aria-label="删除节点" title="删除节点" disabled={busy} onClick={() => void removeUser(user)}><Trash2 size={15} /></button>
+          </div>
+        </div>
+      </article>
     );
   }
 
   const managedUsers = users.filter((user) => user.source === "managed");
   const externalUsers = users.filter((user) => user.source === "external");
 
-  const matches = (user: SingBoxUser) => {
-    const matchesText = `${user.name} ${user.node_name ?? ""} ${user.protocol} ${user.port}`.toLowerCase().includes(search.trim().toLowerCase());
-    return matchesText && (filter === "all" || (filter === "enabled" ? user.enabled : filter === "disabled" ? !user.enabled : user.status === filter && (filter !== "running" || user.enabled)));
-  };
+  const searchMatches = (user: SingBoxUser) =>
+    `${user.name} ${user.node_name ?? ""} ${user.protocol} ${user.port}`.toLowerCase().includes(search.trim().toLowerCase());
+  const filterMatches = (user: SingBoxUser, value: string) =>
+    value === "all" || (value === "enabled" ? user.enabled : value === "disabled" ? !user.enabled : user.status === value && (value !== "running" || user.enabled));
+  const matches = (user: SingBoxUser) => searchMatches(user) && filterMatches(user, filter);
+  const searchedManaged = managedUsers.filter(searchMatches);
+  const countOf = (value: string) => searchedManaged.filter((user) => filterMatches(user, value)).length;
+  const filterOptions = [
+    { value: "all", label: "全部", count: searchedManaged.length },
+    { value: "running", label: "在线", count: countOf("running"), tone: "ok" as const },
+    { value: "stopped", label: "离线", count: countOf("stopped"), tone: "warn" as const },
+    { value: "disabled", label: "已关闭", count: countOf("disabled"), tone: "off" as const },
+    { value: "exhausted", label: "额度用尽", count: countOf("exhausted"), tone: "err" as const },
+    { value: "expired", label: "已过期", count: countOf("expired"), tone: "err" as const },
+  ].filter((option) => option.value === "all" || option.value === "running" || option.count > 0 || option.value === filter);
+  const shownManaged = managedUsers.filter(matches);
+  const expiringSoon = managedUsers.filter((user) => hasExpiry(user.expires_at) && new Date(user.expires_at).getTime() > Date.now() && new Date(user.expires_at).getTime() - Date.now() <= EXPIRING_WITHIN).length;
 
   return (
     <div className="management-page singbox-management">
       <PageHeader title="节点" actions={<button className="btn primary" onClick={() => { setError(""); setCreating(true); }}><Plus size={15} />创建节点</button>} />
-      {error && <Banner kind="err">{error}</Banner>}
+      {error && !creating && !editUser && !quotaDialog && <Banner kind="err">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
-      <div className="singbox-stat-grid">
-        <div className="singbox-stat"><span>节点总数</span><strong>{managedUsers.length}</strong></div>
-        <div className="singbox-stat"><span>在线</span><strong className="ok-text">{managedUsers.filter((user) => user.enabled && user.status === "running").length}</strong></div>
-        <div className="singbox-stat"><span>额度用尽</span><strong className="err-text">{managedUsers.filter((user) => user.status === "exhausted").length}</strong></div>
-        <div className="singbox-stat"><span>即将到期</span><strong className="warn-text">{managedUsers.filter((user) => hasExpiry(user.expires_at) && new Date(user.expires_at).getTime() > Date.now() && new Date(user.expires_at).getTime() - Date.now() <= 7 * 86_400_000).length}</strong></div>
-        <div className="singbox-stat"><span>已关闭</span><strong>{managedUsers.filter((user) => !user.enabled).length}</strong></div>
-        <div className="singbox-stat"><span>已启用</span><strong>{managedUsers.filter((user) => user.enabled).length}</strong></div>
-      </div>
-      <div className="management-toolbar">
-        <label className="management-search"><Search size={16} /><input aria-label="搜索节点" name="singbox-node-search" autoComplete="off" placeholder="搜索名称、机器、协议或端口…" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-        <select aria-label="筛选节点状态" value={filter} onChange={(event) => setFilter(event.target.value)}><option value="all">全部状态</option><option value="running">在线</option><option value="stopped">离线</option><option value="enabled">已启用</option><option value="disabled">已关闭</option><option value="exhausted">额度用尽</option><option value="expired">已过期</option></select>
-        <span className="management-result-count">{managedUsers.filter(matches).length} 个节点</span>
-      </div>
-      <div className="management-scan-toolbar"><span className="muted">扫描外部节点</span><select aria-label="选择要扫描的机器" value={input.node_id} onChange={(event) => setInput({ ...input, node_id: Number(event.target.value) })}><option value={0}>选择机器</option>{nodes.map((node) => <option key={node.id} value={node.id}>{node.name}</option>)}</select><button className="btn" disabled={busy || !input.node_id} onClick={() => void scanExternal()}><RefreshCw size={14} />扫描已有节点</button></div>
-      {creating && <Drawer title="创建节点" onClose={() => setCreating(false)}>
-        <p className="muted">额度与到期时间留空表示不限制。</p>{error && <Banner kind="err">{error}</Banner>}
-        <div className="singbox-create-grid" style={{ marginTop: 16 }}>
-          <label>用户名称<input value={input.name} onChange={(e) => setInput({ ...input, name: e.target.value })} placeholder="例如 Alice" /></label>
-          <label>部署机器<select value={input.node_id} onChange={(e) => setInput({ ...input, node_id: Number(e.target.value) })}><option value={0}>选择机器</option>{nodes.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}</select></label>
-          <label>协议<select value={input.protocol} onChange={(e) => setInput({ ...input, protocol: e.target.value as SingBoxProtocol })}>{protocols.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-          {input.protocol === "ss2022" && <label>SS2022 加密方法<select value={input.cipher} onChange={(e) => setInput({ ...input, cipher: e.target.value as SingBoxCipher })}>{ciphers.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
-          {input.protocol === "anytls" && <label>SNI<input value="developer.apple.com" readOnly /></label>}
-          <label>端口（留空=自动）<input type="number" min={0} max={65535} placeholder="0=自动" value={input.port || ""} onChange={(e) => setInput({ ...input, port: e.target.value === "" ? 0 : Number(e.target.value) })} /></label>
-          <label>基础额度（GB，留空=无限）<input type="number" min={0} placeholder="无限制" step="any" value={input.quota_bytes ? input.quota_bytes / 1024 ** 3 : ""} onChange={(e) => setInput({ ...input, quota_bytes: e.target.value === "" ? 0 : Number(e.target.value) * 1024 ** 3 })} /></label>
-          <label>上行限速（Mbps，0=不限）<input type="number" min={0} max={100000} placeholder="不限速" value={input.upload_limit_mbps || ""} onChange={(e) => setInput({ ...input, upload_limit_mbps: e.target.value === "" ? 0 : Number(e.target.value) })} /></label>
-          <label>下行限速（Mbps，0=不限）<input type="number" min={0} max={100000} placeholder="不限速" value={input.download_limit_mbps || ""} onChange={(e) => setInput({ ...input, download_limit_mbps: e.target.value === "" ? 0 : Number(e.target.value) })} /></label>
-          <label>连接过期时间（留空=永久）<input type="datetime-local" value={input.expires_at ?? ""} onChange={(e) => setInput({ ...input, expires_at: e.target.value })} /></label>
-        </div>
-        <div className="row" style={{ marginTop: 16 }}><button className="btn primary" disabled={busy || !input.name || !input.node_id} onClick={() => void create()}><Plus size={14} />创建并部署</button></div>
-      </Drawer>}
-      {discovered.length > 0 && <Card>
-        <div className="spread"><button className="btn sm" onClick={() => setDiscoveredOpen((open) => !open)}>{discoveredOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}扫描结果（{discovered.length}）</button></div>
-        {discoveredOpen && <><p className="muted">扫描不修改配置；接管前请确认端口和客户端配置。</p><div className="table-wrap"><table><thead><tr><th>标签</th><th>协议</th><th>端口</th><th>服务</th><th>配置片段</th></tr></thead><tbody>{discovered.map((d) => <tr key={`${d.path}-${d.port}`}><td>{d.tag}</td><td>{d.protocol}</td><td>{d.port}</td><td>{d.running ? "运行中" : "停止"}</td><td><code>{d.path}</code></td></tr>)}</tbody></table></div></>}
-      </Card>}
-      <Card>
-        <div className="singbox-list-heading"><button className="btn sm" onClick={() => setManagedOpen((open) => !open)}>{managedOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}面板创建节点（{managedUsers.length}）</button><button className="btn sm" onClick={() => void load()}><RefreshCw size={13} />刷新</button></div>
-        {managedOpen && userTable(managedUsers.filter(matches))}
-      </Card>
-      <Card>
-        <div className="spread"><button className="btn sm" onClick={() => setExternalOpen((open) => !open)}>{externalOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}外部扫描节点（{externalUsers.length}）</button><span className="muted">移除记录不会删除远程配置</span></div>
-        {externalOpen && userTable(externalUsers.filter(matches), true)}
-      </Card>
-      {exportDialog && <Modal title="二维码与节点连接" onClose={closeExportDialog}><div className="singbox-qr-modal">
-        {exportDialog.families.length > 0 && <label>导出地址<select aria-label="导出地址" value={exportDialog.family} onChange={(event) => {
-          const family = event.target.value;
-          if (family === "ipv4" || family === "ipv6") void exportUser(exportDialog.id, family);
-        }}>{exportDialog.families.map((family) => <option key={family} value={family}>{family === "ipv4" ? "IPv4（主机地址）" : "IPv6"}</option>)}</select></label>}
-        {exportError ? <><Banner kind="err">{exportError}</Banner><button className="btn" onClick={() => void exportUser(exportDialog.id, exportDialog.family)}>重试</button></> : !exported && <p className="muted" role="status">正在生成节点链接、二维码与客户端配置…</p>}
-        {exported && <>
-        {exported.warnings.map((warning, index) => <Banner kind="warn" key={index}>{warning}</Banner>)}
-        {exported.qr ? <img src={exported.qr} width={240} height={240} alt="节点二维码" onError={() => setExported((current) => current?.qr === exported.qr && current?.link === exported.link ? { ...current, qr: undefined, qrError: "二维码加载失败，仍可复制节点链接或客户端配置导入。" } : current)} /> : <Banner kind="warn">{exported.qrError}</Banner>}
-        <section className="singbox-export-section" aria-label="节点链接">
-          <h3>节点链接</h3><code className="singbox-link">{exported.link}</code>
-          <div className="singbox-export-actions"><CopyButton text={exported.link} label="复制节点链接" /></div>
-        </section>
-        <section className="singbox-export-section" aria-label="客户端配置">
-          <div className="singbox-export-heading"><h3>客户端配置</h3><div className="singbox-export-actions"><CopyButton text={exported.config} label="复制客户端配置" /></div></div>
-          <pre className="code-block" tabIndex={0} aria-label="客户端 JSON 配置">{exported.config}</pre>
-        </section>
+
+      <dl className="stat-strip">
+        <SummaryFigure icon={Network} tone="lime" label="在线" value={managedUsers.filter((user) => user.enabled && user.status === "running").length} note={`/ ${managedUsers.length} 个`} />
+        <SummaryFigure icon={Gauge} tone="peach" label="额度用尽" value={managedUsers.filter((user) => user.status === "exhausted").length} />
+        <SummaryFigure icon={Clock} tone="sun" label="7 天内到期" value={expiringSoon} />
+        <SummaryFigure icon={TriangleAlert} tone="lilac" label="已过期" value={managedUsers.filter((user) => user.status === "expired").length} />
+      </dl>
+
+      <ListToolbar
+        search={search}
+        onSearch={setSearch}
+        searchLabel="搜索节点"
+        placeholder="搜索名称、机器、协议或端口…"
+        filterLabel="筛选节点状态"
+        filter={filter}
+        onFilter={setFilter}
+        filters={filterOptions}
+      />
+
+      <section className="sb-section">
+        <header className="sb-section-head">
+          <h2>面板创建<b>{managedUsers.length}</b></h2>
+          <button className="icon-btn" aria-label="刷新" title="刷新" onClick={() => void load()}><RefreshCw size={15} /></button>
+        </header>
+        {shownManaged.length > 0
+          ? <div className="sb-grid">{shownManaged.map(managedCard)}</div>
+          : <p className="sb-empty">{managedUsers.length ? "没有符合筛选条件的节点。" : "还没有节点，点右上角「创建节点」部署第一个。"}</p>}
+      </section>
+
+      <section className="sb-section">
+        <header className="sb-section-head">
+          <button className="sb-section-toggle" aria-expanded={externalOpen} onClick={() => setExternalOpen((open) => !open)}>
+            <ChevronDown size={16} />
+            <h2>外部扫描<b>{externalUsers.length}</b></h2>
+          </button>
+          <div className="sb-scan">
+            <select aria-label="选择要扫描的机器" value={scanNodeID} onChange={(event) => setScanNodeID(Number(event.target.value))}>
+              <option value={0}>选择机器</option>
+              {nodes.map((node) => <option key={node.id} value={node.id}>{node.name}</option>)}
+            </select>
+            <button className="btn" disabled={busy || !scanNodeID} onClick={() => void scanExternal()}><ScanSearch size={15} />扫描已有节点</button>
+          </div>
+        </header>
+        {externalOpen && <>
+          <p className="sb-section-note">机器上已有、不是面板建的 sing-box 入站。扫描和移除记录都不会改动机器上的配置；接管后才由面板管理。</p>
+          {discovered.length > 0 && (
+            <div className="sb-discovered">
+              <span>本次扫描发现</span>
+              {discovered.map((d) => (
+                <span key={`${d.path}-${d.port}`} className="sb-discovered-item" title={d.path}>
+                  <ProtocolBadge protocol={d.protocol} />{d.tag}<code>:{d.port}</code><i className={d.running ? "ok" : ""} />
+                </span>
+              ))}
+            </div>
+          )}
+          {externalUsers.filter(matches).length > 0 ? (
+            <div className="sb-external">
+              {externalUsers.filter(matches).map((user) => (
+                <div className="sb-external-row" key={user.id}>
+                  <ProtocolBadge protocol={user.protocol} />
+                  <div className="sb-card-title"><h3>{user.name}</h3><WhereLine user={user} /></div>
+                  <button className="btn sm" disabled={busy} onClick={() => openQuotaDialog(user, true)}>接管</button>
+                  <button className="btn sm ghost icon-action danger" aria-label="移除记录" title="只从面板移除记录，不删除远程配置" disabled={busy} onClick={() => void removeUser(user)}><Trash2 size={15} /></button>
+                </div>
+              ))}
+            </div>
+          ) : <p className="sb-empty">暂无外部节点，选一台机器扫描看看。</p>}
         </>}
-      </div></Modal>}
-      {infoUser && <Modal title={`客户端信息 — ${infoUser.name}`} onClose={() => setInfoUser(null)}><div className="singbox-info-grid"><span>节点</span><strong>{infoUser.node_name ?? infoUser.node_id}</strong><span>入口</span><strong>{infoUser.name}</strong><span>协议</span><strong>{protocols.find(([protocol]) => protocol === infoUser.protocol)?.[1] ?? infoUser.protocol}</strong><span>流量</span><strong>{usageLabel(infoUser, infoUser.used_in + infoUser.used_out, infoUser.base_quota_bytes + infoUser.top_up_bytes)}</strong><span>连接有效期</span><strong>{hasExpiry(infoUser.expires_at) ? formatDateTime(infoUser.expires_at) : "永久"}</strong><span>周期结束</span><strong>{formatDateTime(infoUser.period_ends_at)}</strong></div></Modal>}
-      {quotaDialog && <Modal title={quotaDialog.adopt ? "接管外部节点" : quotaDialog.reduce ? "减少本周期额度" : "增加本周期额度"} onClose={closeQuotaDialog}>{error && <Banner kind="err">{error}</Banner>}<p className="muted">{quotaDialog.adopt ? "面板将读取当前服务端配置，备份原片段并迁移到独立服务。" : quotaDialog.reduce ? "不能减少到低于已使用流量；无限额度不能直接减量。" : "周期结束时间和已用流量保持不变。"}</p><label>额度（GB）<input autoFocus type="number" min={1} value={quotaGB} disabled={busy} onChange={(e) => setQuotaGB(e.target.value)} /></label><div className="row" style={{ justifyContent: "flex-end", marginTop: 16 }}><button className="btn" disabled={busy} onClick={closeQuotaDialog}>取消</button><button className="btn primary" disabled={busy} onClick={() => void confirmQuotaDialog()}>确定</button></div></Modal>}
-      {editUser && <Drawer title="编辑节点" onClose={() => setEditUser(null)}>{error && <Banner kind="err">{error}</Banner>}<div className="singbox-edit-grid"><label>客户端名称<input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)} /></label><label>基础额度（GB，留空=无限）<input type="number" min={0} value={editQuotaGB} onChange={(e) => setEditQuotaGB(e.target.value)} /></label><label>流量自定义周期（天，默认 30 天）<input type="number" min={1} max={3650} value={editPeriodDays} onChange={(e) => setEditPeriodDays(e.target.value)} /></label><label>连接过期时间（留空=永久）<input type="datetime-local" value={expiryAt} onChange={(e) => setExpiryAt(e.target.value)} /></label><label>上行限速（Mbps，0=不限）<input type="number" min={0} max={100000} value={editUploadMbps === "0" ? "" : editUploadMbps} onChange={(e) => setEditUploadMbps(e.target.value || "0")} /></label><label>下行限速（Mbps，0=不限）<input type="number" min={0} max={100000} value={editDownloadMbps === "0" ? "" : editDownloadMbps} onChange={(e) => setEditDownloadMbps(e.target.value || "0")} /></label><label className="singbox-check"><input type="checkbox" checked={editEnabled} onChange={(e) => setEditEnabled(e.target.checked)} />启用客户端</label></div><div className="row" style={{ justifyContent: "flex-end", marginTop: 16 }}><button className="btn" onClick={() => setEditUser(null)}>取消</button><button className="btn primary" disabled={busy} onClick={() => void saveEditDialog()}>保存</button></div></Drawer>}
+      </section>
+
+      {creating && (
+        <CreateNodeDialog
+          nodes={nodes}
+          input={input}
+          onChange={setInput}
+          busy={busy}
+          error={error}
+          onCreate={() => void create()}
+          onClose={() => setCreating(false)}
+        />
+      )}
+
+      {exportDialog && (
+        <Modal title="导出节点" subtitle="扫码导入，或复制链接 / 客户端配置。" size="wide" onClose={closeExportDialog}>
+          <div className="sb-export">
+            {exportDialog.families.length > 1 && (
+              <div className="segmented labels" role="radiogroup" aria-label="导出地址">
+                {exportDialog.families.map((family) => (
+                  <button
+                    key={family}
+                    type="button"
+                    role="radio"
+                    aria-checked={exportDialog.family === family}
+                    className={exportDialog.family === family ? "active" : ""}
+                    onClick={() => void exportUser(exportDialog.id, family)}
+                  >
+                    {family === "ipv4" ? "IPv4 地址" : "IPv6 地址"}
+                  </button>
+                ))}
+              </div>
+            )}
+            {exportError ? <><Banner kind="err">{exportError}</Banner><button className="btn" onClick={() => void exportUser(exportDialog.id, exportDialog.family)}>重试</button></> : !exported && <p className="muted" role="status">正在生成节点链接、二维码与客户端配置…</p>}
+            {exported && <>
+              {exported.warnings.map((warning, index) => <Banner kind="warn" key={index}>{warning}</Banner>)}
+              <div className="sb-export-main">
+                <div className="sb-qr">
+                  {exported.qr
+                    ? <img src={exported.qr} width={220} height={220} alt="节点二维码" onError={() => setExported((current) => current?.qr === exported.qr && current?.link === exported.link ? { ...current, qr: undefined, qrError: "二维码加载失败，仍可复制节点链接或客户端配置导入。" } : current)} />
+                    : <p>{exported.qrError ?? "没有二维码"}</p>}
+                </div>
+                <div className="term-block sb-link">
+                  <div className="terminal-bar">
+                    <span className="terminal-dots" aria-hidden><i /><i /><i /></span>
+                    <span className="terminal-title">节点链接</span>
+                    <CopyButton text={exported.link} label="复制链接" />
+                  </div>
+                  <code className="terminal-body">{exported.link}</code>
+                </div>
+              </div>
+              <details className="advanced sb-config">
+                <summary>客户端配置（JSON）<span className="advanced-summary">sing-box outbound</span></summary>
+                <div className="sb-config-actions"><CopyButton text={exported.config} label="复制客户端配置" /></div>
+                <pre className="code-block" tabIndex={0} aria-label="客户端 JSON 配置">{exported.config}</pre>
+              </details>
+            </>}
+          </div>
+        </Modal>
+      )}
+
+      {infoUser && (
+        <Modal title={infoUser.name} subtitle="客户端信息" onClose={() => setInfoUser(null)}>
+          <dl className="leader-rows single">
+            <div><dt>机器</dt><dd>{infoUser.node_name ?? infoUser.node_id}</dd></div>
+            <div><dt>协议</dt><dd>{protocolMeta(infoUser.protocol).label}</dd></div>
+            <div><dt>端口</dt><dd>{infoUser.port}</dd></div>
+            <div><dt>流量</dt><dd>{usageLabel(infoUser, infoUser.used_in + infoUser.used_out, infoUser.base_quota_bytes + infoUser.top_up_bytes)}</dd></div>
+            <div><dt>连接有效期</dt><dd>{hasExpiry(infoUser.expires_at) ? formatDateTime(infoUser.expires_at) : "永久"}</dd></div>
+            <div><dt>周期结束</dt><dd>{formatDateTime(infoUser.period_ends_at)}</dd></div>
+            <div><dt>限速</dt><dd>{rateLabel(infoUser)}</dd></div>
+            <div><dt>服务</dt><dd>{infoUser.service_name}</dd></div>
+          </dl>
+        </Modal>
+      )}
+
+      {quotaDialog && (
+        <Modal
+          title={quotaDialog.adopt ? "接管外部节点" : quotaDialog.reduce ? "减少本周期额度" : "增加本周期额度"}
+          subtitle={`${quotaDialog.user.name} · ${quotaDialog.user.node_name ?? ""}`}
+          onClose={closeQuotaDialog}
+        >
+          <form className="dialog-form" onSubmit={(event) => { event.preventDefault(); void confirmQuotaDialog(); }}>
+            {error && <Banner kind="err">{error}</Banner>}
+            <p className="field-hint flush">{quotaDialog.adopt ? "面板会读取当前服务端配置，备份原片段并迁移到独立服务。" : quotaDialog.reduce ? "不能减少到低于已使用流量；无限额度不能直接减量。" : "周期结束时间和已用流量保持不变。"}</p>
+            <div className="field">
+              <span className="field-label">额度</span>
+              <div className="preset-row">
+                {["10", "50", "100", "200", "500"].map((gb) => (
+                  <button key={gb} type="button" className={quotaGB === gb ? "active" : ""} onClick={() => setQuotaGB(gb)}>{gb} GB</button>
+                ))}
+                <label className="preset-custom">
+                  <input autoFocus type="number" min={1} aria-label="额度（GB）" value={quotaGB} disabled={busy} onChange={(e) => setQuotaGB(e.target.value)} />
+                  <span>GB</span>
+                </label>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="btn ghost" disabled={busy} onClick={closeQuotaDialog}>取消</button>
+              <button className="btn primary" disabled={busy}>{quotaDialog.adopt ? "接管" : quotaDialog.reduce ? "减少" : "增加"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {editUser && (
+        <Modal title="编辑节点" subtitle={`${protocolMeta(editUser.protocol).label} · ${editUser.node_name ?? ""} : ${editUser.port}`} size="wide" onClose={() => setEditUser(null)}>
+          <form className="dialog-form" onSubmit={(event) => { event.preventDefault(); void saveEditDialog(); }}>
+            {error && <Banner kind="err">{error}</Banner>}
+            <label>节点名称<input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)} /></label>
+            <div className="advanced-grid two">
+              <label>基础额度（GB）<input type="number" min={0} placeholder="不限" value={editQuotaGB} onChange={(e) => setEditQuotaGB(e.target.value)} /></label>
+              <label>流量周期（天）<input type="number" min={1} max={3650} value={editPeriodDays} onChange={(e) => setEditPeriodDays(e.target.value)} /></label>
+              <label>上行限速（Mbps）<input type="number" min={0} max={100000} placeholder="不限" value={editUploadMbps === "0" ? "" : editUploadMbps} onChange={(e) => setEditUploadMbps(e.target.value || "0")} /></label>
+              <label>下行限速（Mbps）<input type="number" min={0} max={100000} placeholder="不限" value={editDownloadMbps === "0" ? "" : editDownloadMbps} onChange={(e) => setEditDownloadMbps(e.target.value || "0")} /></label>
+            </div>
+            <label>连接过期时间<input type="datetime-local" value={expiryAt} onChange={(e) => setExpiryAt(e.target.value)} /></label>
+            <p className="field-hint flush">留空表示永久。</p>
+            <div className="switch-row">
+              <div><strong>启用节点</strong><span>关闭后机器上的服务停止，配置保留。</span></div>
+              <button type="button" className={`toggle-switch ${editEnabled ? "on" : ""}`} role="switch" aria-checked={editEnabled} aria-label="启用节点" onClick={() => setEditEnabled((on) => !on)}><span /></button>
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="btn ghost" onClick={() => setEditUser(null)}>取消</button>
+              <button className="btn primary" disabled={busy}>保存</button>
+            </div>
+          </form>
+        </Modal>
+      )}
       {confirmDialog}
     </div>
   );

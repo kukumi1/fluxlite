@@ -1,13 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  ArrowDown,
-  ArrowUp,
-  CircleCheck,
-  ArrowRight,
-  Server,
-  TriangleAlert,
-  Waypoints,
-} from "lucide-react";
+import { ArrowRight, ArrowUpRight, Crown, Waypoints } from "lucide-react";
 import {
   api,
   type DailyTotal,
@@ -17,14 +9,15 @@ import {
   type RouteStatus,
   type Traffic,
 } from "../api";
-import { Card } from "../components/Card";
 import { EmptyState } from "../components/EmptyState";
+import { Flag } from "../components/Flag";
+import { Mascot, type MascotMood } from "../components/Mascot";
 import { PageHeader } from "../components/PageHeader";
-import { StatCard } from "../components/StatCard";
 import { TrafficTrend } from "../components/TrafficTrend";
 import { Banner } from "../components/Modal";
 import { describeAge, formatBytes, isStale, ageOf } from "../lib/format";
-import "./dashboard-redesign.css";
+import { regionOf, TONE_CYCLE, toneOf } from "../lib/region";
+import "./dashboard.css";
 
 const RANK_LIMIT = 6;
 
@@ -128,6 +121,73 @@ interface Props {
   onNavigate: (tab: "routes" | "nodes") => void;
 }
 
+const STATUS_LABEL: Record<Node["status"], string> = { online: "在线", offline: "离线", unknown: "状态未知" };
+
+function moodAt(hour: number): MascotMood {
+  return hour < 6 || hour >= 23 ? "sleepy" : "wave";
+}
+
+const RING_RADIUS = 34;
+
+function OnlineRing({ online, total }: { online: number; total: number }) {
+  const circumference = 2 * Math.PI * RING_RADIUS;
+  const share = total > 0 ? online / total : 0;
+  return (
+    <div className="online-ring">
+      <svg viewBox="0 0 84 84" width="84" height="84" aria-hidden>
+        <circle className="ring-track" cx="42" cy="42" r={RING_RADIUS} />
+        <circle className="ring-value" cx="42" cy="42" r={RING_RADIUS} strokeDasharray={`${circumference * share} ${circumference}`} />
+      </svg>
+      <span><b>{total ? online : "—"}</b><small>/ {total}</small></span>
+    </div>
+  );
+}
+
+const GAUGE_RADIUS = 40;
+
+// A half ring: how much of the whole is measured. Half a circle keeps it short
+// enough to sit beside a headline figure.
+function HalfGauge({ part, whole, label }: { part: number; whole: number; label: string }) {
+  const arc = Math.PI * GAUGE_RADIUS;
+  const share = whole > 0 ? part / whole : 0;
+  const d = `M ${50 - GAUGE_RADIUS} 50 A ${GAUGE_RADIUS} ${GAUGE_RADIUS} 0 0 1 ${50 + GAUGE_RADIUS} 50`;
+  return (
+    <div className="half-gauge">
+      <svg viewBox="0 0 100 56" width="112" height="63" aria-hidden>
+        <path className="gauge-track" d={d} />
+        <path className="gauge-value" d={d} strokeDasharray={`${arc * share} ${arc}`} />
+      </svg>
+      <span><b>{whole > 0 ? Math.round(share * 100) : "—"}<small>%</small></b>{label}</span>
+    </div>
+  );
+}
+
+function regionCounts(nodes: Node[]): [string, number][] {
+  const counts = new Map<string, number>();
+  for (const node of nodes) {
+    const region = regionOf(node.name) ?? "其他";
+    counts.set(region, (counts.get(region) ?? 0) + 1);
+  }
+  return [...counts].sort((a, b) => b[1] - a[1]);
+}
+
+function greeting(hour: number): string {
+  if (hour < 6) return "夜深了";
+  if (hour < 12) return "早上好";
+  if (hour < 18) return "下午好";
+  return "晚上好";
+}
+
+/** formatBytes 给的是「540 GB」，主卡上数字和单位字号不同，要拆开。 */
+function splitBytes(bytes: number): [string, string] {
+  const [value, unit = ""] = formatBytes(bytes).split(" ");
+  return [value, unit];
+}
+
+function percentOf(part: number, whole: number): string {
+  return whole > 0 ? `${Math.round((part / whole) * 100)}%` : "—";
+}
+
 export function Dashboard({ onNavigate }: Props) {
   const [routes, setRoutes] = useState<Route[]>([]);
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -173,8 +233,11 @@ export function Dashboard({ onNavigate }: Props) {
   const totalOut = entries.reduce((sum, t) => sum + t.bytes_out, 0);
   const enabled = routes.filter((r) => r.enabled).length;
   const online = nodes.filter((n) => n.status === "online").length;
-  const offline = nodes.filter((n) => n.status === "offline").length;
+  const offlineNodes = nodes.filter((n) => n.status === "offline");
+  const unknownNodes = nodes.length - online - offlineNodes.length;
   const issues = collectIssues(routes, nodes, statuses, traffic, quotas);
+  const errors = issues.filter((issue) => issue.tone === "err").length;
+  const relayDown = statuses.filter((s) => s.hops.some((h) => h.running === false)).length;
 
   // 只排有计数的链路。没计数的那几条不是「用得少」，是不知道用了多少 ——
   // 把它们以 0 排在末尾，会让人以为它们闲着。
@@ -196,72 +259,155 @@ export function Dashboard({ onNavigate }: Props) {
     );
   }
 
+  const [totalValue, totalUnit] = splitBytes(totalIn + totalOut);
+  const countedDays = daily.filter((d) => d.counted);
+  const windowTotal = countedDays.reduce((sum, d) => sum + d.bytes_in + d.bytes_out, 0);
+  const today = daily.at(-1);
+  const hour = new Date().getHours();
+  const bubble = nodes.length === 0
+    ? "先去添加一台机器吧"
+    : today?.counted ? `今天已转发 ${formatBytes(today.bytes_in + today.bytes_out)}` : "今天还没有计数";
+
   return (
-    <div className="dashboard-redesign">
+    <div className="dashboard">
       <PageHeader
-        title="仪表盘"
+        title={greeting(hour)}
+        titleAside={
+          <div className="greeting-buddy">
+            <Mascot mood={moodAt(hour)} size={58} />
+            <span className="greeting-bubble">{bubble}</span>
+          </div>
+        }
+        desc={nodes.length === 0 ? "还没有添加机器。" : `${online} / ${nodes.length} 台机器在线，${enabled} 条链路在转发。`}
         actions={<button className="btn" onClick={() => onNavigate("routes")}>管理链路 <ArrowRight size={15} /></button>}
       />
       {error && <Banner kind="err">{error}</Banner>}
 
-      <div className="dashboard-kpis">
-        <StatCard index={0} label="累计转发流量" value={entries.length === 0 ? null : formatBytes(totalIn + totalOut)}
-          sub={entries.length === 0 ? "等待首次流量计数" : <span className="dashboard-directions"><span><ArrowDown size={12} /> {formatBytes(totalIn)}</span><span><ArrowUp size={12} /> {formatBytes(totalOut)}</span></span>}
-          icon={<ArrowDown size={19} />} />
-        <StatCard index={1} label="机器在线" value={nodes.length === 0 ? null : `${online} / ${nodes.length}`}
-          sub={nodes.length === 0 ? "尚未添加机器" : `${offline} 台离线 · ${nodes.length - online - offline} 台状态未知`}
-          icon={<Server size={19} />} />
-        <StatCard index={2} label="已启用链路" value={`${enabled} / ${routes.length}`}
-          sub="启用状态不代表实际连接状态" icon={<Waypoints size={19} />} />
-        <StatCard index={3} label="待关注事项" value={String(issues.length)}
-          sub={issues.length ? "检查离线、流量额度与采样异常" : "当前已采集数据未发现异常"}
-          icon={<TriangleAlert size={19} />} />
-      </div>
-
-      <div className="dashboard-columns">
-        <div className="dashboard-main-column">
-          {routes.length === 0 ? (
-            <Card>
-              <EmptyState icon={<Waypoints size={22} />} title="还没有链路"
-                desc="添加并探测机器后，即可创建链路。"
-                action={<button className="btn primary" onClick={() => onNavigate("nodes")}>去添加机器</button>} />
-            </Card>
+      <div className="bento">
+        <section className="bento-hero" aria-label="转发流量">
+          <div className="hero-top">
+            <div className="bento-eyebrow">累计转发流量</div>
+            {countedDays.length > 0 && (
+              <dl className="hero-meta">
+                <div><dt>今天</dt><dd>{today?.counted ? formatBytes(today.bytes_in + today.bytes_out) : "—"}</dd></div>
+                <div><dt>日均</dt><dd>{formatBytes(windowTotal / countedDays.length)}</dd></div>
+              </dl>
+            )}
+          </div>
+          {entries.length === 0 ? (
+            <p className="hero-empty">等待首次流量计数</p>
           ) : (
-            <Card className="dashboard-traffic"><TrafficTrend days={daily} /></Card>
+            <>
+              <div className="hero-figure">
+                <span className="hero-value">{totalValue}</span>
+                <span className="hero-unit">{totalUnit}</span>
+              </div>
+              <div className="hero-ratio">
+                <div className="in" style={{ flexGrow: totalIn }}>
+                  <span>入 <em>{formatBytes(totalIn)}</em></span>
+                  <b>{percentOf(totalIn, totalIn + totalOut)}</b>
+                </div>
+                <div className="out" style={{ flexGrow: totalOut }}>
+                  <span>出 <em>{formatBytes(totalOut)}</em></span>
+                  <b>{percentOf(totalOut, totalIn + totalOut)}</b>
+                </div>
+              </div>
+            </>
           )}
+          {routes.length > 0 && <div className="hero-trend"><TrafficTrend days={daily} /></div>}
+        </section>
 
-          {routes.length > 0 && <Card className="dashboard-ranking">
-            <div className="spread"><h2>流量排行</h2><span className="dashboard-caption">累计 · 入站 + 出站</span></div>
-            {rankTop.length === 0 ? <p className="muted">还没有任何链路记到数。</p> : (
-              <ul className="rank-list">{rankTop.map(({ route, t, total }, index) => (
-                <li key={route.id}><button className="rank-item" title={`入 ${formatBytes(t.bytes_in)} · 出 ${formatBytes(t.bytes_out)}`} onClick={() => onNavigate("routes")}>
-                  <div className="rank-head"><span className="rank-name"><span className="dashboard-rank-number">{String(index + 1).padStart(2, "0")}</span><span className="dashboard-rank-title">{route.name}</span>{route.listen_ipv6 && <span className="tag">IPv6</span>}</span><span className="rank-value">{formatBytes(total)}</span></div>
-                  <div className="rank-track"><div className="rank-fill" style={{ width: `${rankMax > 0 ? (total / rankMax) * 100 : 0}%` }} /></div>
-                </button></li>
-              ))}</ul>
-            )}
-            {(ranked.length > RANK_LIMIT || uncounted > 0) && <p className="dashboard-caption">{ranked.length > RANK_LIMIT && `另有 ${ranked.length - RANK_LIMIT} 条未列出。`}{uncounted > 0 && `${uncounted} 条没有计数，不参与排行。`}</p>}
-          </Card>}
-        </div>
-
-        <aside className="dashboard-side-column" aria-label="运行概况、待关注事项与流量排行">
-          <Card className="dashboard-health">
-            <div className="spread"><h2>运行概况</h2><Server size={17} /></div>
-            <div className="dashboard-health-gauge">
-              <svg viewBox="0 0 160 140" aria-hidden="true"><path d="M 24 118 A 66 66 0 1 1 136 118" fill="none" stroke="var(--border)" strokeWidth="8" strokeLinecap="round" />{nodes.length > 0 && online > 0 && <path d="M 24 118 A 66 66 0 1 1 136 118" fill="none" stroke="var(--ok)" strokeWidth="8" strokeLinecap="round" pathLength="100" strokeDasharray={`${online / nodes.length * 100} 100`} />}</svg>
-              <div><strong>{nodes.length ? online : "—"}<small> / {nodes.length}</small></strong><span>机器连接正常</span></div>
+        <section className="bento-card bento-machines tone-sky" aria-label="机器">
+          <header>
+            <span className="bento-eyebrow">机器</span>
+            <button className="bento-link" title="查看机器" aria-label="查看机器" onClick={() => onNavigate("nodes")}><ArrowUpRight size={16} /></button>
+          </header>
+          <div className="machine-summary">
+            <OnlineRing online={online} total={nodes.length} />
+            <div className="machine-pills">
+              <span className="pill ok"><i />{online} 台在线</span>
+              {offlineNodes.length > 0 && <span className="pill err"><i />{offlineNodes.length} 台离线</span>}
+              {unknownNodes > 0 && <span className="pill"><i />{unknownNodes} 台未知</span>}
             </div>
-            <div className="dashboard-health-counts"><div><strong>{enabled}</strong><span>启用链路</span></div><div><strong>{offline}</strong><span>离线机器</span></div><div><strong>{nodes.length - online - offline}</strong><span>状态未知</span></div></div>
-            <p className="dashboard-health-note">机器连通与节点客户端在线是不同状态；此处不代表活跃客户端数量。</p>
-          </Card>
+          </div>
+          <ul className="region-chips">
+            {regionCounts(nodes).map(([region, count]) => (
+              <li key={region} className={`tone-${toneOf(region)}`}><Flag code={region} />{region}<b>{count}</b></li>
+            ))}
+          </ul>
+          <ul className="machine-cells">
+            {nodes.map((node) => (
+              <li key={node.id} className={node.status} title={`${node.name} · ${STATUS_LABEL[node.status]}`}>
+                <i />
+                <span>{node.name}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="bento-foot">
+            {offlineNodes.length > 0
+              ? `${offlineNodes.map((n) => n.name).join("、")} 离线`
+              : unknownNodes > 0 ? `${unknownNodes} 台状态未知` : "全部机器连接正常"}
+          </p>
+        </section>
 
-          <Card className="dashboard-attention">
-            <div className="spread"><h2>需要注意</h2><span className="tag">{issues.length}</span></div>
-            {issues.length === 0 ? <div className="dashboard-clear"><CircleCheck size={23} /><strong>暂未发现异常</strong><p>仅覆盖当前面板能够采集的数据，不代表未采集部分正常。</p></div> : (
-              <><ul className="dashboard-issues">{issues.map((issue, i) => <li key={i} className={issue.tone}><TriangleAlert size={15} /><div><strong>{issue.text}</strong>{issue.hint && <p>{issue.hint}</p>}</div></li>)}</ul><button className="btn sm" onClick={() => onNavigate("routes")}>去链路页处理 <ArrowRight size={14} /></button></>
-            )}
-          </Card>
-        </aside>
+        <section className="bento-card bento-routes tone-lilac" aria-label="链路">
+          <header>
+            <span className="bento-eyebrow">链路</span>
+            <button className="bento-link" title="查看链路" aria-label="查看链路" onClick={() => onNavigate("routes")}><ArrowUpRight size={16} /></button>
+          </header>
+          <div className="routes-figure">
+            <div className="bento-figure"><b>{enabled}</b><span><em>/ {routes.length}</em> 已启用</span></div>
+            <HalfGauge part={ranked.length} whole={routes.length} label="已计量" />
+          </div>
+          <dl className="route-counts">
+            <div className={relayDown > 0 ? "err" : ""}><dt>转发异常</dt><dd>{relayDown}</dd></div>
+            <div><dt>已计量</dt><dd>{ranked.length}</dd></div>
+            <div><dt>未计量</dt><dd>{uncounted}</dd></div>
+          </dl>
+        </section>
+
+        <section className="bento-card bento-rank" aria-label="流量排行">
+          <header>
+            <span className="bento-eyebrow">流量排行</span>
+            <span className="bento-caption">累计 · 入 + 出</span>
+          </header>
+          {routes.length === 0 ? (
+            <EmptyState icon={<Waypoints size={22} />} title="还没有链路"
+              desc="添加并探测机器后，即可创建链路。"
+              action={<button className="btn primary" onClick={() => onNavigate("nodes")}>去添加机器</button>} />
+          ) : rankTop.length === 0 ? <p className="muted">还没有任何链路记到数。</p> : (
+            <ol className="rank-rows">{rankTop.map(({ route, t, total }, index) => (
+              <li key={route.id} className={`tone-${TONE_CYCLE[index % TONE_CYCLE.length]}`}>
+                <button title={`入 ${formatBytes(t.bytes_in)} · 出 ${formatBytes(t.bytes_out)}`} onClick={() => onNavigate("routes")}>
+                  {index === 0
+                    ? <span className="rank-no first" aria-label="第 1"><Crown size={13} /></span>
+                    : <span className="rank-no">{index + 1}</span>}
+                  <span className="rank-title">{route.name}{route.listen_ipv6 && <span className="tag">IPv6</span>}</span>
+                  <span className="rank-bar"><i style={{ width: `${rankMax > 0 ? (total / rankMax) * 100 : 0}%` }} /></span>
+                  <span className="rank-total">{formatBytes(total)}</span>
+                </button>
+              </li>
+            ))}</ol>
+          )}
+          {(ranked.length > RANK_LIMIT || uncounted > 0) && <p className="bento-foot">{ranked.length > RANK_LIMIT && `另有 ${ranked.length - RANK_LIMIT} 条未列出。`}{uncounted > 0 && `${uncounted} 条没有计数，不参与排行。`}</p>}
+        </section>
+
+        <section className={`bento-card bento-issues tone-${errors > 0 ? "peach" : issues.length > 0 ? "sun" : "lime"}${errors > 0 ? " has-errors" : ""}`} aria-label="需要注意">
+          <header>
+            <span className="bento-eyebrow">需要注意</span>
+            <span className="issue-count">{issues.length}</span>
+          </header>
+          {issues.length === 0 ? (
+            <div className="issues-clear"><Mascot mood="happy" size={84} /><strong>一切正常</strong><p>仅覆盖面板能采集到的数据。</p></div>
+          ) : (
+            <>
+              <ul className="issue-list">{issues.map((issue, i) => (
+                <li key={i} className={issue.tone}><i /><div><strong>{issue.text}</strong>{issue.hint && <p>{issue.hint}</p>}</div></li>
+              ))}</ul>
+              <Mascot mood="worried" size={72} className="issues-buddy" />
+            </>
+          )}
+        </section>
       </div>
     </div>
   );

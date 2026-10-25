@@ -1,15 +1,49 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
+import { Check, Info, KeyRound, Layers, Link2, Pencil, Plus, RefreshCw, Rss, Trash2, Unplug, type LucideIcon } from "lucide-react";
 import { api, ApiError } from "../api";
-import type { Subscription, SubscriptionCandidate, SubscriptionInput } from "../api";
-import { Card } from "../components/Card";
+import type { Subscription, SubscriptionCandidate, SubscriptionFormat, SubscriptionInput } from "../api";
 import { useConfirm } from "../components/ConfirmDialog";
 import { CopyButton } from "../components/CopyButton";
+import { EmptyState } from "../components/EmptyState";
+import { Flag } from "../components/Flag";
 import { Banner, Modal } from "../components/Modal";
 import { PageHeader } from "../components/PageHeader";
+import { regionOf, TONE_CYCLE } from "../lib/region";
 import { subscriptionFormats, subscriptionInput, subscriptionMemberDetails, subscriptionName, subscriptionURL } from "../lib/subscriptions";
+import "./management-redesign.css";
+import { protocolMeta } from "./SingBoxCreate";
 
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+/** 订阅卡上最多直接列出几个节点，其余折成「还有 N 个」。 */
+const MEMBER_PREVIEW = 4;
+
+function MemberRow({ name, machine, protocol, port }: { name: string; machine: string; protocol: SubscriptionCandidate["protocol"]; port: number | null }) {
+  const meta = protocolMeta(protocol);
+  const code = regionOf(machine);
+  return (
+    <div className="sub-member">
+      <span className={`proto-badge tone-${meta.tone}`} title={meta.label}>{meta.short}</span>
+      <strong>{name}</strong>
+      <span className="sub-member-where">
+        {code && <Flag code={code} className="sb-where-flag" />}
+        {machine}
+        {port !== null && <code>:{port}</code>}
+      </span>
+    </div>
+  );
+}
+
+function SummaryFigure({ icon: Icon, tone, label, value, note }: { icon: LucideIcon; tone: string; label: string; value: number; note?: string }) {
+  return (
+    <div className={`tone-${tone}`}>
+      <i><Icon size={16} /></i>
+      <dt>{label}</dt>
+      <dd>{value}{note && <small>{note}</small>}</dd>
+    </div>
+  );
+}
 
 export function Subscriptions() {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
@@ -113,50 +147,115 @@ export function Subscriptions() {
     await load();
   }
 
-  return <>
+  const memberCount = subscriptions.reduce((sum, subscription) => sum + (subscription.members?.length ?? 0), 0);
+  const freeCount = candidates.filter((node) => node.subscription_id === null).length;
+
+  return <div className="management-page subscriptions-management">
     <PageHeader title="订阅"
-      actions={<><button className="btn" disabled={loading || busy} onClick={() => { setError(""); void load(); }}>刷新</button><button className="btn primary" disabled={loading || busy} onClick={() => setEditor(true)}>创建订阅</button></>} />
-    {error && <Banner kind="err">{error}</Banner>}
-    {loading && <p className="muted" role="status">正在加载订阅…</p>}
-    {!loading && !subscriptions.length && !error && <Card><h2>还没有订阅</h2><p className="muted">选择已有节点创建订阅。</p></Card>}
-    {subscriptions.map((subscription) => <Card key={subscription.id}>
-      <div className="spread"><h2>{subscription.name}</h2><button type="button" className="btn sm" aria-label={`查看「${subscription.name}」的 ${subscription.members?.length ?? 0} 个节点`} onClick={() => setViewingMembers(subscription)}>{subscription.members?.length ?? 0} 个节点</button></div>
-      {subscription.mode !== "collection" && <Banner kind="warn">旧独立额度订阅需要先迁移</Banner>}
-      {subscription.link_available === false && <Banner kind="warn">旧订阅需手动重置一次以启用查看；现有地址仍有效</Banner>}
-      <div className="row">
-        <button className="btn sm" disabled={busy || loading || subscription.mode !== "collection"} onClick={() => setRenaming(subscription)}>修改名称</button>
-        <button className="btn sm" disabled={busy || subscription.mode !== "collection"} onClick={() => void viewLink(subscription)}>查看订阅链接</button>
-        <button className="btn sm" disabled={busy || subscription.mode !== "collection"} onClick={() => void resetToken(subscription)}>重置订阅链接</button>
-        <button className="btn sm destructive" disabled={busy || subscription.mode !== "collection"} onClick={() => void remove(subscription)}>删除</button>
+      actions={<>
+        <button className="icon-btn" aria-label="刷新" title="刷新" disabled={loading || busy} onClick={() => { setError(""); void load(); }}><RefreshCw size={16} /></button>
+        <button className="btn primary" disabled={loading || busy} onClick={() => setEditor(true)}><Plus size={15} />创建订阅</button>
+      </>} />
+    {error && !editor && <Banner kind="err">{error}</Banner>}
+    {loading && !subscriptions.length && <p className="muted" role="status">正在加载订阅…</p>}
+
+    {subscriptions.length > 0 && (
+      <dl className="stat-strip">
+        <SummaryFigure icon={Rss} tone="lime" label="订阅" value={subscriptions.length} />
+        <SummaryFigure icon={Layers} tone="sky" label="已收录节点" value={memberCount} />
+        <SummaryFigure icon={Unplug} tone="peach" label="未收录节点" value={freeCount} note={freeCount ? "可加入新订阅" : undefined} />
+      </dl>
+    )}
+
+    {!loading && !subscriptions.length && !error && (
+      <div className="card">
+        <EmptyState icon={<Rss size={18} />} title="还没有订阅" desc="把几个节点打包成一条链接，客户端导入一次就能全部用上。"
+          action={<button className="btn primary" onClick={() => setEditor(true)}><Plus size={15} />创建订阅</button>} />
       </div>
-    </Card>)}
+    )}
+
+    <div className="sub-grid">
+      {subscriptions.map((subscription, index) => {
+        const members = subscriptionMemberDetails(subscription.members, candidates);
+        const legacy = subscription.mode !== "collection";
+        return (
+          <article key={subscription.id} className={`sub-card tone-${TONE_CYCLE[(index + 1) % TONE_CYCLE.length]}`}>
+            <header className="sub-card-head">
+              <span className="sub-icon"><Rss size={18} /></span>
+              <div className="sub-card-title">
+                <h3>{subscription.name}</h3>
+                <span>创建于 {new Date(subscription.created_at).toLocaleDateString("zh-CN")}</span>
+              </div>
+              <button type="button" className="sub-count" aria-label={`查看「${subscription.name}」的 ${members.length} 个节点`} onClick={() => setViewingMembers(subscription)}>
+                <b>{members.length}</b>个节点
+              </button>
+            </header>
+
+            {legacy && <Banner kind="warn">旧独立额度订阅需要先迁移</Banner>}
+            {subscription.link_available === false && <Banner kind="warn">旧订阅需手动重置一次以启用查看；现有地址仍有效</Banner>}
+
+            <div className="sub-members">
+              {members.length === 0 && <p className="sub-members-empty">此订阅暂无节点。</p>}
+              {members.slice(0, MEMBER_PREVIEW).map((member) => <MemberRow key={member.user_id} {...member} />)}
+              {members.length > MEMBER_PREVIEW && (
+                <button type="button" className="sub-more" onClick={() => setViewingMembers(subscription)}>还有 {members.length - MEMBER_PREVIEW} 个节点</button>
+              )}
+            </div>
+
+            <div className="sb-actions">
+              <div className="sb-actions-main">
+                <button className="btn sm export-btn" disabled={busy || legacy} onClick={() => void viewLink(subscription)}><Link2 size={14} />订阅链接</button>
+              </div>
+              <div className="sb-actions-side">
+                <button className="btn sm ghost icon-action" aria-label="修改名称" title="修改名称" disabled={busy || loading || legacy} onClick={() => setRenaming(subscription)}><Pencil size={15} /></button>
+                <button className="btn sm ghost icon-action" aria-label="重置订阅链接" title="重置订阅链接（旧链接失效）" disabled={busy || legacy} onClick={() => void resetToken(subscription)}><KeyRound size={15} /></button>
+                <button className="btn sm ghost icon-action danger" aria-label="删除订阅" title="删除订阅" disabled={busy || legacy} onClick={() => void remove(subscription)}><Trash2 size={15} /></button>
+              </div>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+
     {editor && <SubscriptionEditor candidates={candidates} onSave={save} onClose={() => setEditor(false)} />}
     {viewingMembers && <SubscriptionMembers subscription={viewingMembers} candidates={candidates} onClose={() => setViewingMembers(null)} />}
     {renaming && <SubscriptionNameEditor key={renaming.id} name={renaming.name} onSave={rename} onClose={() => setRenaming(null)} />}
-    {issued && <Modal title={`订阅链接 — ${issued.name}`} onClose={() => setIssued(null)}>
-      <Banner kind="warn">链接含访问凭据，请勿公开。各客户端仅导出兼容节点。</Banner>
-      {subscriptionFormats.map(([format, label]) => {
-        const url = subscriptionURL(window.location.origin, issued.token, format);
-        return <section key={format}><h3>{label}</h3><label>订阅地址<input readOnly value={url} onFocus={(event) => event.target.select()} /></label><CopyButton text={url} label={`复制 ${label} 链接`} /></section>;
-      })}
-      <p className="muted">Clash 链接面向 Mihomo；旧版 Clash 不保证支持。</p>
-    </Modal>}
+    {issued && <SubscriptionLink key={issued.id} name={issued.name} token={issued.token} onClose={() => setIssued(null)} />}
     {confirmDialog}
-  </>;
+  </div>;
+}
+
+// One client at a time: the formats differ only in the query string, so five
+// stacked inputs were mostly the same text. Picking the client first also
+// makes it obvious which link goes where.
+function SubscriptionLink({ name, token, onClose }: { name: string; token: string; onClose: () => void }) {
+  const [format, setFormat] = useState<SubscriptionFormat>("clash");
+  const url = subscriptionURL(window.location.origin, token, format);
+  return <Modal title="订阅链接" subtitle={`${name} · 选好客户端，复制链接导入`} size="wide" onClose={onClose}>
+    <div className="segmented labels sub-formats" role="radiogroup" aria-label="客户端">
+      {subscriptionFormats.map(([value, label]) => (
+        <button key={value} type="button" role="radio" aria-checked={format === value} className={format === value ? "active" : ""} onClick={() => setFormat(value)}>{label}</button>
+      ))}
+    </div>
+    <div className="term-block sb-link">
+      <div className="terminal-bar">
+        <span className="terminal-dots" aria-hidden><i /><i /><i /></span>
+        <span className="terminal-title">{subscriptionFormats.find(([value]) => value === format)?.[1]}</span>
+        <CopyButton text={url} label="复制链接" />
+      </div>
+      <code className="terminal-body">{url}</code>
+    </div>
+    <p className="dialog-note"><Info size={14} />链接含访问凭据，请勿公开。各客户端仅导出兼容节点；Clash 链接面向 Mihomo，旧版 Clash 不保证支持。</p>
+  </Modal>;
 }
 
 function SubscriptionMembers({ subscription, candidates, onClose }: {
   subscription: Subscription; candidates: SubscriptionCandidate[]; onClose: () => void;
 }) {
   const members = subscriptionMemberDetails(subscription.members, candidates);
-  return <Modal title={`订阅节点 — ${subscription.name}`} onClose={onClose}>
-    {!members.length ? <p className="muted">此订阅暂无节点。</p> : <div className="table-scroll">
-      <table>
-        <thead><tr><th scope="col">节点名称</th><th scope="col">所属机器</th><th scope="col">协议</th><th scope="col">端口</th></tr></thead>
-        <tbody>{members.map((member) => <tr key={member.user_id}>
-          <td>{member.name}</td><td>{member.machine}</td><td>{member.protocol}</td><td>{member.port ?? "—"}</td>
-        </tr>)}</tbody>
-      </table>
+  return <Modal title={subscription.name} subtitle={`收录了 ${members.length} 个节点`} onClose={onClose}>
+    {!members.length ? <p className="muted">此订阅暂无节点。</p> : <div className="sub-members in-dialog">
+      {members.map((member) => <MemberRow key={member.user_id} {...member} />)}
     </div>}
   </Modal>;
 }
@@ -180,12 +279,12 @@ function SubscriptionNameEditor({ name: initialName, onSave, onClose }: {
     finally { pending.current = false; setBusy(false); }
   }
 
-  return <Modal title="修改订阅名称" onClose={() => { if (!pending.current) onClose(); }}>
-    <form onSubmit={(event) => void submit(event)}>
+  return <Modal title="修改订阅名称" subtitle="只改面板里的显示名，链接不变。" onClose={() => { if (!pending.current) onClose(); }}>
+    <form className="dialog-form" onSubmit={(event) => void submit(event)}>
       {error && <Banner kind="err">{error}</Banner>}
       <fieldset disabled={busy}>
         <label>名称<input required autoFocus value={name} onChange={(event) => setName(event.target.value)} /></label>
-        <div className="modal-actions"><button className="btn" type="button" onClick={onClose}>取消</button><button className="btn primary" type="submit">{busy ? "保存中…" : "保存"}</button></div>
+        <div className="modal-actions"><button className="btn ghost" type="button" onClick={onClose}>取消</button><button className="btn primary" type="submit">{busy ? "保存中…" : "保存"}</button></div>
       </fieldset>
     </form>
   </Modal>;
@@ -212,25 +311,61 @@ function SubscriptionEditor({ candidates, onSave, onClose }: {
     finally { pending.current = false; setBusy(false); }
   }
 
-  return <Modal title="创建订阅" onClose={() => { if (!busy) onClose(); }}>
-    <form onSubmit={(event) => void submit(event)}>
+  const free = candidates.filter((node) => node.subscription_id === null);
+  const allFreeSelected = free.length > 0 && free.every((node) => availableSelection.includes(node.user_id));
+  const toggle = (id: number) =>
+    setSelected(availableSelection.includes(id) ? availableSelection.filter((x) => x !== id) : [...availableSelection, id].slice(0, 100));
+
+  return <Modal title="创建订阅" subtitle="挑几个节点打包成一条链接；每个节点只能属于一个订阅。" size="wide" onClose={() => { if (!busy) onClose(); }}>
+    <form className="dialog-form" onSubmit={(event) => void submit(event)}>
       {error && <Banner kind="err">{error}</Banner>}
       <fieldset disabled={busy}>
-        <label>名称<input required maxLength={64} value={name} onChange={(event) => setName(event.target.value)} placeholder="自用 / 分享给朋友" /></label>
-        <p className="muted">已选 {availableSelection.length} / 100；每个节点只能属于一个订阅。</p>
-        {!candidates.length && <p className="muted">暂无可管理节点，请先前往节点页面创建。</p>}
-        {candidates.map((node) => {
-          const occupied = node.subscription_id !== null;
-          const checked = availableSelection.includes(node.user_id);
-          return <label key={node.user_id} className={`subscription-node-choice${occupied ? " is-occupied" : ""}`}>
-            <input type="checkbox" checked={occupied || checked} disabled={occupied || (!checked && availableSelection.length >= 100)} onChange={(event) => {
-              setSelected(event.target.checked ? [...availableSelection, node.user_id] : availableSelection.filter((id) => id !== node.user_id));
-            }} />
-            <span className="subscription-node-choice-text">{node.name} · {node.node_name} · {node.protocol} · {node.port}
-            {occupied && <span className="muted">（已属于「{node.subscription_name}」）</span>}</span>
-          </label>;
-        })}
-        <div className="modal-actions"><button className="btn" type="button" onClick={onClose}>取消</button><button className="btn primary" type="submit" disabled={!availableSelection.length}>{busy ? "处理中…" : "创建订阅"}</button></div>
+        <label>订阅名称<input required autoFocus maxLength={64} value={name} onChange={(event) => setName(event.target.value)} placeholder="例如 自用、分享给朋友" /></label>
+
+        <div className="field">
+          <div className="sub-pick-head">
+            <span className="field-label">选择节点</span>
+            <span className="sub-pick-count"><b>{availableSelection.length}</b> / {Math.min(100, free.length)} 已选</span>
+            {free.length > 0 && (
+              <button type="button" className="btn sm ghost" onClick={() => setSelected(allFreeSelected ? [] : free.slice(0, 100).map((node) => node.user_id))}>
+                {allFreeSelected ? "全不选" : "全选空闲节点"}
+              </button>
+            )}
+          </div>
+          {!candidates.length && <p className="field-hint">暂无可用节点，请先去「节点」页创建。</p>}
+          <div className="sub-pick" role="group" aria-label="选择节点">
+            {candidates.map((node) => {
+              const occupied = node.subscription_id !== null;
+              const checked = availableSelection.includes(node.user_id);
+              const meta = protocolMeta(node.protocol);
+              const code = regionOf(node.node_name);
+              return (
+                <button
+                  key={node.user_id}
+                  type="button"
+                  role="checkbox"
+                  aria-checked={checked}
+                  className={`sub-pick-item${checked ? " active" : ""}${occupied ? " is-occupied" : ""}`}
+                  disabled={occupied || (!checked && availableSelection.length >= 100)}
+                  title={occupied ? `已属于「${node.subscription_name}」` : undefined}
+                  onClick={() => toggle(node.user_id)}
+                >
+                  <span className={`proto-badge tone-${meta.tone}`}>{meta.short}</span>
+                  <span className="sub-pick-text">
+                    <strong>{node.name}</strong>
+                    <small>{code && <Flag code={code} className="sb-where-flag" />}{node.node_name} · {meta.label}</small>
+                  </span>
+                  {occupied ? <span className="sub-pick-owner">{node.subscription_name}</span> : <span className="sub-pick-check" aria-hidden>{checked && <Check size={13} />}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="modal-actions">
+          <button className="btn ghost" type="button" onClick={onClose}>取消</button>
+          <button className="btn primary" type="submit" disabled={!availableSelection.length}><Plus size={15} />{busy ? "处理中…" : `创建订阅${availableSelection.length ? `（${availableSelection.length}）` : ""}`}</button>
+        </div>
       </fieldset>
     </form>
   </Modal>;

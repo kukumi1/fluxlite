@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, type RecoverySettings as Settings } from "../api";
+import { LifeBuoy } from "lucide-react";
 import { Banner } from "../components/Modal";
+import { SettingSection } from "../components/SettingSection";
 
 export function RecoverySettings({ enrolled, onDone, onError }: {
   enrolled: boolean;
@@ -78,36 +80,39 @@ export function RecoverySettings({ enrolled, onDone, onError }: {
     }
   }
 
+  const status = !settings ? undefined : settings.enabled ? <span className="pill ok"><i />已设置</span> : <span className="pill warn"><i />未设置</span>;
+
   return (
-    <form className="card" onSubmit={save}>
-      <h2>密码找回 <span className={`tag ${settings?.enabled ? "ok" : "warn"}`}>{settings ? settings.enabled ? "已设置" : "未设置" : "读取中"}</span></h2>
-      <p className="hint">通过安全问题和一次性恢复码重置密码。已开启两步验证时仍需验证码。答案请使用难以猜中的私密长句，不要填写生日、姓名等公开信息。</p>
-      {!settings ? (
-        loadFailed ? <button type="button" className="btn" onClick={() => setRetry((value) => value + 1)}>重新读取</button> : <p className="muted">正在读取设置…</p>
-      ) : (
-        <>
-          {recoveryCode && <div role="status">
-            <Banner kind="ok">恢复码只展示这一次。请离线保存；不要发送给他人。使用后需重新设置。</Banner>
-            <label>新恢复码<input value={recoveryCode} readOnly autoComplete="off" spellCheck={false} onFocus={(e) => e.currentTarget.select()} /></label>
-            <button type="button" className="btn" onClick={() => setRecoveryCode("")}>已保存，隐藏恢复码</button>
-          </div>}
-          <label>安全问题<input value={question} onChange={(e) => setQuestion(e.target.value)} minLength={3} maxLength={120} placeholder="输入只有自己知道答案的问题" required /></label>
-          <div className="grid2">
-            <label>安全问题答案<input type="password" autoComplete="off" value={answer} onChange={(e) => setAnswer(e.target.value)} minLength={4} maxLength={256} required /></label>
-            <label>确认答案<input type="password" autoComplete="off" value={again} onChange={(e) => setAgain(e.target.value)} required maxLength={256} /></label>
-          </div>
-          {mismatch && <Banner kind="err">两次输入的答案不一致</Banner>}
-          <div className="grid2">
-            <label>当前密码<input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
-            {enrolled && <label>两步验证码<input autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} required /></label>}
-          </div>
-          <p className="hint">答案去除首尾空格后区分大小写。重新设置会替换问题、答案和恢复码；恢复成功后所有登录会话退出。恢复码不会保存到当前浏览器。</p>
-          <div className="actions">
-            <button className="btn primary" disabled={busy || mismatch}>{busy ? "处理中…" : settings.enabled ? "更新问题并生成新恢复码" : "设置并生成恢复码"}</button>
-            {settings.enabled && <button type="button" className="btn danger" disabled={busy || !password || (enrolled && !/^[0-9]{6}$/.test(code))} onClick={() => void disable()}>关闭密码找回</button>}
-          </div>
-        </>
-      )}
-    </form>
+    <SettingSection icon={LifeBuoy} tone="sun" title="密码找回" summary="忘记密码时，用安全问题和一次性恢复码重置" status={status}>
+      <form className="dialog-form setting-form" onSubmit={save}>
+        <p className="setting-note">已开启两步验证时仍需验证码。答案请使用难以猜中的私密长句，不要填写生日、姓名等公开信息。</p>
+        {!settings ? (
+          loadFailed ? <button type="button" className="btn" onClick={() => setRetry((value) => value + 1)}>重新读取</button> : <p className="muted">正在读取设置…</p>
+        ) : (
+          <>
+            {recoveryCode && <div className="recovery-reveal" role="status">
+              <Banner kind="ok">恢复码只展示这一次。请离线保存；不要发送给他人。使用后需重新设置。</Banner>
+              <label>新恢复码<input className="mono" value={recoveryCode} readOnly autoComplete="off" spellCheck={false} onFocus={(e) => e.currentTarget.select()} /></label>
+              <button type="button" className="btn" onClick={() => setRecoveryCode("")}>已保存，隐藏恢复码</button>
+            </div>}
+            <label>安全问题<input value={question} onChange={(e) => setQuestion(e.target.value)} minLength={3} maxLength={120} placeholder="输入只有自己知道答案的问题" required /></label>
+            <div className="grid2">
+              <label>安全问题答案<input type="password" autoComplete="off" value={answer} onChange={(e) => setAnswer(e.target.value)} minLength={4} maxLength={256} required /></label>
+              <label>确认答案<input type="password" autoComplete="off" value={again} onChange={(e) => setAgain(e.target.value)} required maxLength={256} /></label>
+            </div>
+            {mismatch && <Banner kind="err">两次输入的答案不一致</Banner>}
+            <div className="grid2">
+              <label>当前密码<input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
+              {enrolled && <label>两步验证码<input className="otp-input" autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} required /></label>}
+            </div>
+            <p className="field-hint flush">答案去除首尾空格后区分大小写。重新设置会替换问题、答案和恢复码；恢复成功后所有登录会话退出。恢复码不会保存到当前浏览器。</p>
+            <div className="setting-actions">
+              <button className="btn primary" disabled={busy || mismatch}>{busy ? "处理中…" : settings.enabled ? "更新问题并生成新恢复码" : "设置并生成恢复码"}</button>
+              {settings.enabled && <button type="button" className="btn danger" disabled={busy || !password || (enrolled && !/^[0-9]{6}$/.test(code))} onClick={() => void disable()}>关闭密码找回</button>}
+            </div>
+          </>
+        )}
+      </form>
+    </SettingSection>
   );
 }

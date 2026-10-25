@@ -1,14 +1,18 @@
 import { useEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
+import { X } from "lucide-react";
 
 interface ModalProps {
   title: string;
+  /** 标题下一行灰字，说清这个弹窗要做成什么。 */
+  subtitle?: ReactNode;
+  size?: "wide";
   onClose: () => void;
   children: ReactNode;
 }
 
-export function Modal({ title, onClose, children }: ModalProps) {
+export function Modal({ title, subtitle, size, onClose, children }: ModalProps) {
   const titleId = useId();
   const backdropRef = useRef<HTMLDivElement>(null);
 
@@ -31,13 +35,16 @@ export function Modal({ title, onClose, children }: ModalProps) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId}>
-        <div className="spread">
-          <h2 id={titleId} style={{ margin: 0 }}>{title}</h2>
-          <button className="btn sm" onClick={onClose}>
-            关闭
+      <div className={`modal${size ? ` ${size}` : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <header className="modal-head">
+          <div>
+            <h2 id={titleId}>{title}</h2>
+            {subtitle && <p className="modal-subtitle">{subtitle}</p>}
+          </div>
+          <button className="modal-close" onClick={onClose} aria-label="关闭" title="关闭">
+            <X size={16} />
           </button>
-        </div>
+        </header>
         {children}
       </div>
     </div>,

@@ -13,6 +13,12 @@ interface Props {
 const WARN_AT = 75;
 const CRITICAL_AT = 90;
 
+/** "err" / "warn" once a reading crosses the thresholds, "" otherwise or when unread. */
+export function metricTone(pct: number | null): "" | "warn" | "err" {
+  if (pct === null) return "";
+  return pct >= CRITICAL_AT ? "err" : pct >= WARN_AT ? "warn" : "";
+}
+
 /**
  * 一条资源占用条。
  *
@@ -20,7 +26,7 @@ const CRITICAL_AT = 90;
  * 而实际情况是根本没问到。
  */
 export function MetricBar({ label, percent: pct, detail, caveat }: Props) {
-  const tone = pct === null ? "" : pct >= CRITICAL_AT ? "err" : pct >= WARN_AT ? "warn" : "";
+  const tone = metricTone(pct);
 
   return (
     <div className="metric">

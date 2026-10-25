@@ -61,7 +61,7 @@ func New(cfg Config) *Watcher {
 	}
 	traffic := cfg.TrafficInterval
 	if traffic <= 0 {
-		traffic = time.Minute
+		traffic = 20 * time.Second
 	}
 	return &Watcher{
 		svc: cfg.Service, store: cfg.Store, log: cfg.Logger,
@@ -253,19 +253,30 @@ func forEachConcurrently[T any](
 	wg.Wait()
 }
 
+// nearQuotaInterval is how often counters are read while some route is close
+// to its quota.
+const nearQuotaInterval = 10 * time.Second
+
+// trafficPhaseBudget bounds each phase of a collection round. It is not the
+// polling interval: nodes are read one after another, and a machine that died
+// since it was last marked online holds its phase for the whole SSH timeout.
+// Tying the budget to a short interval would let that one machine leave every
+// node behind it unread for the round.
+const trafficPhaseBudget = time.Minute
+
 // trafficLoop collects byte counters and enforces quotas, looking more often
 // while some route is close to its limit.
 //
 // A quota can only be acted on at a poll, so whatever the route carries between
-// two polls is overshoot. At a minute apart a saturated gigabit link can run
-// hundreds of megabytes past its allowance; tightening the interval as a route
-// approaches its cap keeps that within reason without polling every node every
-// few seconds for the rest of the time.
+// two polls is overshoot. Even at twenty seconds apart a saturated gigabit link
+// can run a couple of gigabytes past its allowance; tightening the interval as
+// a route approaches its cap keeps that within reason without polling every
+// node every few seconds for the rest of the time.
 func (w *Watcher) trafficLoop(ctx context.Context) {
 	for {
 		wait := w.traffic
 		if w.collectTraffic(ctx) {
-			wait = min(w.traffic/6, 10*time.Second)
+			wait = min(w.traffic, nearQuotaInterval)
 		}
 		select {
 		case <-ctx.Done():
@@ -280,28 +291,28 @@ func (w *Watcher) trafficLoop(ctx context.Context) {
 func (w *Watcher) collectTraffic(ctx context.Context) bool {
 	// Each phase owns its deadline. An offline Realm node cannot starve sing-box,
 	// and slow subscription stops cannot consume Realm's enforcement budget.
-	realmCtx, realmCancel := context.WithTimeout(ctx, w.traffic)
+	realmCtx, realmCancel := context.WithTimeout(ctx, trafficPhaseBudget)
 	if err := w.svc.CollectTraffic(realmCtx); err != nil {
 		w.log.Debug("traffic collection incomplete", "error", err)
 	}
 	realmCancel()
-	enforceCtx, enforceCancel := context.WithTimeout(ctx, w.traffic)
+	enforceCtx, enforceCancel := context.WithTimeout(ctx, trafficPhaseBudget)
 	near, err := w.svc.EnforceQuotas(enforceCtx)
 	enforceCancel()
 	if err != nil {
 		w.log.Error("quota enforcement incomplete", "error", err)
 	}
-	sampleCtx, sampleCancel := context.WithTimeout(ctx, w.traffic)
+	sampleCtx, sampleCancel := context.WithTimeout(ctx, trafficPhaseBudget)
 	if err := w.svc.CollectSubscriptionTraffic(sampleCtx); err != nil {
 		w.log.Debug("subscription traffic collection incomplete", "error", err)
 	}
 	sampleCancel()
-	subscriptionCtx, subscriptionCancel := context.WithTimeout(ctx, w.traffic)
+	subscriptionCtx, subscriptionCancel := context.WithTimeout(ctx, trafficPhaseBudget)
 	if err := w.svc.ReconcileSubscriptions(subscriptionCtx); err != nil {
 		w.log.Debug("subscription enforcement incomplete", "error", err)
 	}
 	subscriptionCancel()
-	standaloneCtx, standaloneCancel := context.WithTimeout(ctx, w.traffic)
+	standaloneCtx, standaloneCancel := context.WithTimeout(ctx, trafficPhaseBudget)
 	if err := w.svc.CollectSingBoxTraffic(standaloneCtx); err != nil {
 		w.log.Debug("sing-box traffic collection incomplete", "error", err)
 	}
@@ -317,6 +328,9 @@ func (w *Watcher) reconcile(ctx context.Context) {
 	}
 	w.refreshNodeStatus(ctx)
 	w.reconcileRoutes(ctx)
+	if err := w.svc.RemoveOrphanRelays(ctx); err != nil {
+		w.log.Warn("orphan relay scan incomplete", "error", err)
+	}
 }
 
 // refreshNodeStatus records which nodes are currently reachable.

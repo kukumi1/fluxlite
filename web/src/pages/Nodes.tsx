@@ -219,15 +219,18 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
     void load();
   }, []);
 
-  // 指标随 5 分钟巡检更新，页面每分钟取一次即可跟上。取失败不弹横幅：
-  // 一次轮询失败会把用户正在做的事盖掉，而屏幕上的旧数字仍然是对的。
+  // 后台每 10 秒采一次资源并据此判定在线，页面同频取机器列表和指标。取失败
+  // 不弹横幅：一次轮询失败会把用户正在做的事盖掉，而屏幕上的旧数字仍然是对的。
   useEffect(() => {
     const timer = setInterval(() => {
-      api
-        .metrics()
-        .then((snapshot) => setMetrics(snapshot ?? {}))
+      const version = order.readVersion();
+      Promise.all([api.listNodes(), api.metrics()])
+        .then(([list, snapshot]) => {
+          if (order.acceptsRead(version)) setNodes(list ?? []);
+          setMetrics(snapshot ?? {});
+        })
         .catch(() => {});
-    }, 60000);
+    }, 10000);
     return () => clearInterval(timer);
   }, []);
 

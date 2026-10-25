@@ -166,3 +166,25 @@ func TestDecodeMasterKeyAcceptsHexAndBase64(t *testing.T) {
 		t.Errorf("error = %v, want ErrMasterKeySize", err)
 	}
 }
+
+func TestIdentityOfMatchesTheIssuedAuthorizedKey(t *testing.T) {
+	pair, err := GenerateSSHKeyPair("fluxlite-CDT HK 香港")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := IdentityOf(pair.PrivateKeyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := "ssh-ed25519 " + id.Blob + " " + id.Comment; got != pair.AuthorizedKey {
+		t.Fatalf("identity %q does not match issued key %q", got, pair.AuthorizedKey)
+	}
+}
+
+func TestIdentityOfRejectsForeignInput(t *testing.T) {
+	for _, in := range []string{"", "not a key", "-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----\n"} {
+		if _, err := IdentityOf([]byte(in)); err == nil {
+			t.Fatalf("IdentityOf(%q) succeeded, want an error", in)
+		}
+	}
+}

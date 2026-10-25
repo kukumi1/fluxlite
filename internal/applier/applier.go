@@ -9,6 +9,8 @@ package applier
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -403,4 +405,47 @@ func (a *Applier) InstallRealm(ctx context.Context, node *model.Node) (bool, err
 		return false, fmt.Errorf("connect to %s: %w", node.Name, err)
 	}
 	return a.ensureRealm(ctx, client.Client, node)
+}
+
+// deployedCommand lists the slug of every relay a node carries, wherever it
+// left a trace: a config file, an enabled or loaded systemd instance, or an
+// OpenRC script. A route torn down half way can leave any one of them behind.
+// OpenRC scripts are recognised by their realm command line, because managed
+// sing-box services share the fluxlite- prefix in /etc/init.d.
+const deployedCommand = `for f in /etc/fluxlite/realm/*.toml; do [ -f "$f" ] && basename "$f" .toml; done
+for f in /etc/systemd/system/*.wants/fluxlite-relay@*.service; do [ -e "$f" ] || [ -L "$f" ] || continue; n="${f##*/fluxlite-relay@}"; echo "${n%.service}"; done
+systemctl list-units --all --plain --no-legend 'fluxlite-relay@*' 2>/dev/null | awk '{ n = $1; sub(/^fluxlite-relay@/, "", n); sub(/\.service$/, "", n); print n }'
+for f in /etc/init.d/fluxlite-*; do [ -f "$f" ] && grep -q '^command="/usr/local/bin/realm"' "$f" && echo "${f#/etc/init.d/fluxlite-}"; done
+true`
+
+// slugPattern is what makeSlug can produce. Anything else found on a node was
+// not put there by the panel and is never touched.
+var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+
+// Deployed reports the slugs of all relays present on a node.
+func (a *Applier) Deployed(ctx context.Context, node *model.Node) ([]string, error) {
+	client, err := a.pool.Get(ctx, node)
+	if err != nil {
+		return nil, fmt.Errorf("connect to %s: %w", node.Name, err)
+	}
+	res, err := sshx.RunCheck(ctx, client.Client, deployedCommand)
+	if err != nil {
+		return nil, fmt.Errorf("list relays on %s: %w", node.Name, err)
+	}
+	return parseDeployed(res), nil
+}
+
+func parseDeployed(out string) []string {
+	seen := make(map[string]bool)
+	var slugs []string
+	for _, line := range strings.Split(out, "\n") {
+		slug := strings.TrimSpace(line)
+		if !slugPattern.MatchString(slug) || seen[slug] {
+			continue
+		}
+		seen[slug] = true
+		slugs = append(slugs, slug)
+	}
+	sort.Strings(slugs)
+	return slugs
 }

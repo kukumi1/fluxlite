@@ -49,6 +49,8 @@ type Service struct {
 	subscriptionLocks   map[int64]*subscriptionLock
 	singBoxAdoptionOnce sync.Once
 	singBoxAdoptionGate chan struct{}
+
+	reach reachability
 }
 
 func New(st *store.Store, sealer *cryptox.Sealer, pool *sshx.Pool, ap *applier.Applier, vf *verifier.Verifier, realm applier.RealmSource, log *slog.Logger) *Service {
@@ -347,6 +349,9 @@ func (s *Service) ProbeNode(ctx context.Context, id int64) (*ProbeResult, error)
 	if err := s.collectMetrics(ctx, node, client.Client); err != nil {
 		s.log.Warn("could not collect node metrics", "node", node.Name, "error", err)
 	}
+	// Only now is the key in use proven to work, which is what makes it safe
+	// to drop the ones it replaced.
+	s.sweepStaleKeys(ctx, node, client.Client)
 	return &ProbeResult{Facts: facts, UDP: udp}, nil
 }
 
@@ -376,8 +381,10 @@ func (s *Service) SampleNodeMetrics(ctx context.Context, id int64) error {
 	}
 	client, err := s.pool.Get(ctx, node)
 	if err != nil {
+		s.noteUnreachable(ctx, node)
 		return fmt.Errorf("connect to %s: %w", node.Name, err)
 	}
+	s.noteReachable(ctx, node)
 	return s.collectMetrics(ctx, node, client.Client)
 }
 
@@ -609,7 +616,7 @@ func (s *Service) UpdateRoute(ctx context.Context, id int64, in RouteInput) (*mo
 
 // removeOrphanedHops tears down deployments on nodes no longer in the chain.
 // Failures are tolerated: the route itself is already updated, and a stale
-// relay on an unreachable node is reported by the next reconcile rather than
+// relay on an unreachable node is removed by a later reconcile rather than
 // blocking the operator here.
 func (s *Service) removeOrphanedHops(ctx context.Context, previous, current []model.RouteHop, slug string) {
 	inUse := make(map[int64]bool, len(current))

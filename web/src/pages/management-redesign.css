@@ -334,11 +334,12 @@
 .metric-ring-label .tag { padding: 0 6px; font-size: 10px; }
 .metric-ring-detail { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted-foreground); }
 
-.leader-rows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 22px; margin: 0; }
-.leader-rows > div { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.leader-rows dt { flex: 1; display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--tone-ink, var(--muted-foreground)); white-space: nowrap; }
-.leader-rows dt::after { content: ""; flex: 1; min-width: 12px; border-bottom: 1px dashed color-mix(in srgb, var(--tone-ink, var(--foreground)) 30%, transparent); }
-.leader-rows dd { display: inline-flex; align-items: center; gap: 3px; margin: 0; font-family: var(--font-mono); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Small facts as tiles: label above, value below. A value that runs long
+ * wraps inside its own tile instead of spilling into the next column. */
+.leader-rows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.leader-rows > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 9px 12px; border-radius: 14px; background: color-mix(in srgb, var(--card) 60%, transparent); }
+.leader-rows dt { font-size: 11px; color: var(--tone-ink, var(--muted-foreground)); white-space: nowrap; }
+.leader-rows dd { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; min-width: 0; margin: 0; font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 
 .machine-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .machine-chip {
@@ -565,6 +566,8 @@
 
 /* ===== Leader rows (shared) ===== */
 .leader-rows.single { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.leader-rows.single > div { flex-direction: row; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0; border-radius: 0; background: none; }
+.leader-rows.single dd { justify-content: flex-end; text-align: right; }
 .leader-rows dd .tag { margin-left: 6px; padding: 0 7px; font-size: 10.5px; }
 
 /* ===== Nodes (sing-box) =====

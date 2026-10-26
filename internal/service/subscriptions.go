@@ -487,8 +487,12 @@ func (s *Service) RenderSubscription(ctx context.Context, id int64, token, forma
 		return subscription.Result{}, store.ErrNotFound
 	}
 	nodes := []subscription.Node{}
+	members := []*model.SingBoxUser{}
 	for _, m := range v.Members {
 		u, e := s.store.SingBoxUserByID(ctx, m.UserID)
+		if e == nil {
+			members = append(members, u)
+		}
 		if e != nil || !u.Enabled || u.Status == model.SingBoxStatusError || u.QuotaPausedAt != nil || (!u.ExpiresAt.IsZero() && !time.Now().Before(u.ExpiresAt)) {
 			if v.Mode == "collection" {
 				continue
@@ -512,7 +516,54 @@ func (s *Service) RenderSubscription(ctx context.Context, id int64, token, forma
 		}
 		nodes = append(nodes, subscription.Node{Name: u.Name + " / " + n.Name + " / " + string(u.Protocol), Link: link, Config: config})
 	}
-	return subscription.Render(format, nodes)
+	var r subscription.Result
+	if v.Mode == "collection" && len(nodes) == 0 {
+		r, e = subscription.Empty(format)
+	} else {
+		r, e = subscription.Render(format, nodes)
+	}
+	r.Name = v.Name
+	if v.Mode == "collection" {
+		r.Usage = collectionUsage(members)
+	} else {
+		r.Usage = subscription.Usage{Download: v.UsedBytes, Total: v.QuotaBytes, Expire: v.ExpiresAt}
+	}
+	return r, e
+}
+
+// collectionUsage totals every node in a collection, including the ones it no
+// longer serves: leaving out a node once it runs out would make the traffic
+// already used go down. The allowance and expiry are those of the subscription
+// as a whole, which keeps working until its last node runs out, so a single
+// unlimited or permanent node makes the subscription unlimited or permanent.
+func collectionUsage(users []*model.SingBoxUser) subscription.Usage {
+	var usage subscription.Usage
+	if len(users) == 0 {
+		return usage
+	}
+	unlimited, permanent := false, false
+	var expire time.Time
+	for _, u := range users {
+		usage.Upload += u.UsedIn
+		usage.Download += u.UsedOut
+		if q := u.QuotaBytes(); q == 0 {
+			unlimited = true
+		} else {
+			usage.Total += q
+		}
+		if u.ExpiresAt.IsZero() {
+			permanent = true
+		} else if u.ExpiresAt.After(expire) {
+			expire = u.ExpiresAt
+		}
+	}
+	if unlimited {
+		usage.Total = 0
+	}
+	if !permanent {
+		usage.Expire = &expire
+	}
+	return usage
 }
 
 var ErrSubscriptionLinkUnavailable = errors.New("subscription link unavailable")

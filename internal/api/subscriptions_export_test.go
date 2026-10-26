@@ -61,6 +61,12 @@ func TestSubscriptionHTTPRealExportPipeline(t *testing.T) {
 		if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("%s export %d", f, w.Code)
 		}
+		if got := w.Header().Get("Subscription-Userinfo"); got != "upload=0; download=0" {
+			t.Fatalf("%s userinfo %q", f, got)
+		}
+		if got := w.Header().Get("Content-Disposition"); got != "attachment; filename=friend" {
+			t.Fatalf("%s disposition %q", f, got)
+		}
 		out := w.Body.Bytes()
 		if f == "base64" || f == "shadowrocket" {
 			out, e = base64.StdEncoding.DecodeString(string(out))

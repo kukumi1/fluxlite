@@ -8,7 +8,6 @@ import (
 	"github.com/kukumi1/fluxlite/internal/model"
 	"github.com/kukumi1/fluxlite/internal/singbox"
 	"github.com/kukumi1/fluxlite/internal/store"
-	"github.com/kukumi1/fluxlite/internal/subscription"
 	"strings"
 	"sync"
 	"testing"
@@ -62,12 +61,20 @@ func TestCollectionLocalLifecycleAndNodePolicy(t *testing.T) {
 	if e != nil || result.IncludedCount != 1 || !strings.Contains(string(result.Content), "renamed") {
 		t.Fatalf("%+v %v", result, e)
 	}
+	// The disabled member is no longer served but still counted, and being
+	// unlimited it leaves the subscription unlimited.
+	if result.Name != "collection" || result.Usage.Total != 0 || result.Usage.Expire != nil {
+		t.Fatalf("usage %+v name %q", result.Usage, result.Name)
+	}
 	updated, e := s.store.RecordSingBoxTraffic(ctx, u.ID, 20, 20)
 	if e != nil || updated.QuotaPausedAt == nil {
 		t.Fatal(updated, e)
 	}
-	if _, e = s.RenderSubscription(ctx, 0, token, "clash"); !errors.Is(e, subscription.ErrNoCompatible) {
-		t.Fatal(e)
+	// With no node left to serve, the link still answers so clients can show
+	// that the traffic ran out.
+	result, e = s.RenderSubscription(ctx, 0, token, "clash")
+	if e != nil || result.IncludedCount != 0 || result.Usage.Upload+result.Usage.Download != 40 || !strings.Contains(string(result.Content), "DIRECT") {
+		t.Fatalf("%+v %v", result, e)
 	}
 	// Disabled group state cannot prevent standalone export or per-node controls.
 	v.Enabled = false

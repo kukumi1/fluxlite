@@ -22,6 +22,8 @@ type Result struct {
 	ContentType   string
 	Unsupported   []string
 	IncludedCount int
+	Name          string
+	Usage         Usage
 }
 
 var ErrNoCompatible = errors.New("此格式没有兼容节点")
@@ -138,6 +140,23 @@ func Render(format string, nodes []Node) (Result, error) {
 			raw = base64.StdEncoding.EncodeToString([]byte(raw))
 		}
 		r.Content = []byte(raw)
+	}
+	return r, nil
+}
+// Empty renders a subscription with no nodes in it that clients still accept,
+// so they keep reading its usage after every node has run out. Clash gets a
+// profile that goes direct rather than one that rejects everything: a person
+// whose nodes all lapsed should lose the proxy, not their whole connection.
+func Empty(format string) (Result, error) {
+	r := Result{ContentType: "text/plain; charset=utf-8", Unsupported: []string{}}
+	switch format {
+	case "clash":
+		r.Content, _ = json.MarshalIndent(map[string]any{"mixed-port": 7890, "mode": "rule", "proxies": []any{}, "proxy-groups": []any{map[string]any{"name": "订阅节点", "type": "select", "proxies": []string{"DIRECT"}}}, "rules": []string{"MATCH,订阅节点"}}, "", "  ")
+		r.ContentType = "application/yaml; charset=utf-8"
+	case "base64", "shadowrocket", "loon", "qx":
+		r.Content = []byte{}
+	default:
+		return r, ErrFormat
 	}
 	return r, nil
 }

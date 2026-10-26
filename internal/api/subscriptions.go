@@ -6,6 +6,7 @@ import (
 	"github.com/kukumi1/fluxlite/internal/service"
 	"github.com/kukumi1/fluxlite/internal/store"
 	"github.com/kukumi1/fluxlite/internal/subscription"
+	"mime"
 	"net/http"
 	"strconv"
 )
@@ -133,15 +134,15 @@ func (s *Server) renderSubscription(w http.ResponseWriter, r *http.Request, id i
 		}
 		return
 	}
-	if id == 0 && len(v.Content) == 0 {
-		writeError(w, 422, "没有兼容节点")
-		return
-	}
 	if id != 0 {
 		writeJSON(w, 200, map[string]any{"content": string(v.Content), "content_type": v.ContentType, "unsupported": v.Unsupported, "included_count": v.IncludedCount})
 		return
 	}
 	w.Header().Set("Content-Type", v.ContentType)
+	w.Header().Set("Subscription-Userinfo", v.Usage.Header())
+	if disposition := mime.FormatMediaType("attachment", map[string]string{"filename": v.Name}); disposition != "" {
+		w.Header().Set("Content-Disposition", disposition)
+	}
 	w.Header().Set("X-Subscription-Unsupported-Count", strconv.Itoa(len(v.Unsupported)))
 	w.WriteHeader(200)
 	_, _ = w.Write(v.Content)

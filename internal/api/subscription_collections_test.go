@@ -107,9 +107,10 @@ func TestCollectionHTTPContract(t *testing.T) {
 	if e != nil || renamed.Name != "台湾订阅" {
 		t.Fatal("rejected patch changed name", e)
 	}
+	// Its only node is disabled: no nodes go out, but the usage still does.
 	w = recoveryHTTP(t, h, "GET", "/sub/"+created.Token, "", "192.0.2.4", nil)
-	if w.Code != 422 {
-		t.Fatal(w.Code, w.Body)
+	if w.Code != 200 || w.Body.Len() != 0 || !strings.HasPrefix(w.Header().Get("Subscription-Userinfo"), "upload=0; download=0") {
+		t.Fatal(w.Code, w.Body, w.Header())
 	}
 	w = recoveryHTTP(t, h, "DELETE", fmt.Sprintf("/api/subscriptions/%d", created.Subscription.ID), cookie, "192.0.2.3", nil)
 	if w.Code != 204 {

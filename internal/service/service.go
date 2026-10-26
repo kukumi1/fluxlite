@@ -364,6 +364,10 @@ func (s *Service) collectMetrics(ctx context.Context, node *model.Node, client *
 	if err != nil {
 		return fmt.Errorf("collect metrics for %s: %w", node.Name, err)
 	}
+	return s.storeMetrics(ctx, node, metrics)
+}
+
+func (s *Service) storeMetrics(ctx context.Context, node *model.Node, metrics *model.NodeMetrics) error {
 	metrics.NodeID = node.ID
 	if err := s.store.UpsertNodeMetrics(ctx, metrics); err != nil {
 		return fmt.Errorf("store metrics for %s: %w", node.Name, err)
@@ -384,8 +388,16 @@ func (s *Service) SampleNodeMetrics(ctx context.Context, id int64) error {
 		s.noteUnreachable(ctx, node)
 		return fmt.Errorf("connect to %s: %w", node.Name, err)
 	}
+	// A connection is not an answer. A machine starved of memory can keep a
+	// pooled connection open while every command on it fails, and counting
+	// that as reachable is how such a node kept flipping back to online.
+	metrics, err := prober.Metrics(ctx, client.Client)
+	if err != nil {
+		s.noteUnreachable(ctx, node)
+		return fmt.Errorf("collect metrics for %s: %w", node.Name, err)
+	}
 	s.noteReachable(ctx, node)
-	return s.collectMetrics(ctx, node, client.Client)
+	return s.storeMetrics(ctx, node, metrics)
 }
 
 // NodeMetrics returns the latest snapshot for every node that has one.

@@ -59,15 +59,27 @@ fi
 
 # 容器里 /proc 是宿主机的。cgroup 读得到就用它覆盖上面的内存读数，读不到就
 # 保持 host 来源，由界面说明这个数字描述的不是这台容器。
+#
+# cgroup 的用量把文件缓存也算在内。小容器读过的文件很快把额度填满，用量常年
+# 贴着上限，看上去像内存耗尽，其实程序只用了一小部分。和非容器机器用的
+# MemTotal - MemAvailable 保持同一口径：文件缓存可回收，扣掉；共享内存虽然记在
+# 文件缓存里却回收不了，加回来。结果和容器里 free 显示的 used 一致。
+stat_value() { awk -v k="$1" '$1 == k { print $2; exit }' "$2" 2>/dev/null; }
+in_use() {
+  fc=$(stat_value "$2" "$4"); sh=$(stat_value "$3" "$4")
+  if [ -n "$fc" ] && [ "$fc" -le "$1" ] 2>/dev/null; then echo $(($1 - fc + ${sh:-0})); else echo "$1"; fi
+}
 if [ -r /sys/fs/cgroup/memory.max ]; then
   lim=$(cat /sys/fs/cgroup/memory.max 2>/dev/null)
   cur=$(cat /sys/fs/cgroup/memory.current 2>/dev/null)
+  [ -n "$cur" ] && cur=$(in_use "$cur" file shmem /sys/fs/cgroup/memory.stat)
   if [ -n "$cur" ] && [ "$lim" != "max" ] && [ -n "$lim" ]; then
     say memtotal "$lim"; say memused "$cur"; say memsource cgroup
   fi
 elif [ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
   lim=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null)
   cur=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null)
+  [ -n "$cur" ] && cur=$(in_use "$cur" total_cache total_shmem /sys/fs/cgroup/memory/memory.stat)
   if [ -n "$cur" ] && [ -n "$lim" ] && [ "$lim" -lt 9223372036854770000 ] 2>/dev/null; then
     say memtotal "$lim"; say memused "$cur"; say memsource cgroup
   fi

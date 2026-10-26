@@ -202,11 +202,18 @@ except Exception:
 			return fmt.Sprintf(`socat -u UDP-RECV:%d,reuseaddr OPEN:%s,create,append >/dev/null 2>&1 &`, port, logPath)
 		},
 	},
+	// nc never exits on its own and its command line carries no trace of the
+	// log path, which only appears in the shell's redirect. Both other ways
+	// of stopping a listener therefore miss it, so it gets a time limit of
+	// its own here and is killed by its exact command line in
+	// killNCListenerCmd. Without both, every probe of a node that only has nc
+	// left one listener behind until the machine ran out of memory.
 	{
 		name:  "nc",
 		check: "command -v nc",
 		start: func(port int, logPath string) string {
-			return fmt.Sprintf(`nc -u -l -p %d > %s 2>/dev/null &`, port, logPath)
+			return fmt.Sprintf(`if timeout 1 true 2>/dev/null; then limit="timeout 40"; elif timeout -t 1 true 2>/dev/null; then limit="timeout -t 40"; else limit=""; fi
+$limit nc -u -l -p %d > %s 2>/dev/null &`, port, logPath)
 		},
 	},
 	// Last because the three above are better tools where they exist, and
@@ -243,6 +250,13 @@ while(defined(recv(S,my $d,2048,0))){$d=~s/\s+\z//;print F "$d\n";}' >/dev/null 
 // its own text does not.
 const killListenerCmd = `pkill -f 'fluxlite[-]udp-probe' 2>/dev/null`
 
+// killNCListenerCmd stops an nc listener on the probe port, which
+// killListenerCmd cannot see. The same bracket keeps the shell running it
+// from matching, and the anchor keeps port 4327 from matching 43277.
+func killNCListenerCmd(port int) string {
+	return fmt.Sprintf(`pkill -f 'n[c] -u -l -p %d$' 2>/dev/null`, port)
+}
+
 // resetProbeState kills any listener left over from an earlier run and removes
 // the log it wrote.
 //
@@ -252,8 +266,11 @@ const killListenerCmd = `pkill -f 'fluxlite[-]udp-probe' 2>/dev/null`
 // removal — silently, because a signalled remote command surfaces as an exit
 // code rather than an error. That is how the log came to survive every probe
 // and answer for runs it was never part of.
-func resetProbeState(ctx context.Context, target *ssh.Client, logPath string) error {
+func resetProbeState(ctx context.Context, target *ssh.Client, logPath string, port int) error {
 	if _, err := sshx.Run(ctx, target, killListenerCmd); err != nil {
+		return err
+	}
+	if _, err := sshx.Run(ctx, target, killNCListenerCmd(port)); err != nil {
 		return err
 	}
 	if _, err := sshx.Run(ctx, target, fmt.Sprintf("rm -f %s", logPath)); err != nil {
@@ -300,14 +317,14 @@ func ProbeUDP(ctx context.Context, target, source *ssh.Client, ingressAddr strin
 	}
 
 	defer func() {
-		// Best effort: a leftover listener exits on its own timeout.
-		_ = resetProbeState(context.WithoutCancel(ctx), target, logPath)
+		// Best effort: every listener also stops on its own time limit.
+		_ = resetProbeState(context.WithoutCancel(ctx), target, logPath, port)
 	}()
 
 	// The log must be gone before the listener starts. Every verdict below is
 	// a grep over this file, so a surviving one from an earlier run answers
 	// for this one.
-	if err := resetProbeState(ctx, target, logPath); err != nil {
+	if err := resetProbeState(ctx, target, logPath, port); err != nil {
 		return nil, fmt.Errorf("probe udp: cleanup: %w", err)
 	}
 	if _, err := sshx.Run(ctx, target, startCmd); err != nil {

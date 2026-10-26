@@ -103,15 +103,57 @@
 .routes-management .route-grid { grid-template-columns: repeat(auto-fill, minmax(540px, 1fr)); gap: 14px; align-items: stretch; }
 .routes-management .route-grid.dense { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 12px; }
 .routes-management .route-grid > .card { margin: 0; }
-.routes-management .route-card { display: flex; flex-direction: column; gap: 18px; padding: 20px 22px 18px; }
-.routes-management .route-card:hover { box-shadow: var(--card-shadow-hover); }
-/* A route card wears its entry region's tone; controls on it sit on white so
- * they never sink into the tint. */
-.routes-management .route-grid .route-card { background: var(--tone-soft, var(--card)); }
-.routes-management .route-grid .route-card .route-traffic,
-.routes-management .route-grid .route-card .btn:not(.primary):not(.ghost),
-.routes-management .route-grid .route-card .progress { background-color: var(--card); }
-.routes-management .route-grid .route-card .management-hop-label { color: var(--tone-ink); }
+/* A route is a ticket, not a tinted tile: region colour belongs to machines,
+ * so here the card stays white and only its health speaks, as a band across
+ * the top. The stub on the right is torn along a perforated edge, with a
+ * notch cut out of either end, and carries the traffic and the state. */
+.routes-management .route-ticket {
+  --ticket-tone: var(--muted-foreground);
+  display: flex;
+  padding: 0;
+  overflow: hidden;
+  box-shadow: inset 0 4px 0 var(--ticket-tone), 0 0 0 1px var(--border), var(--card-shadow);
+}
+.routes-management .route-ticket:hover { box-shadow: inset 0 4px 0 var(--ticket-tone), 0 0 0 1px var(--border), var(--card-shadow-hover); }
+.routes-management .route-ticket.health-ok { --ticket-tone: var(--ok); }
+.routes-management .route-ticket.health-down { --ticket-tone: var(--err); }
+.routes-management .route-ticket.health-unknown { --ticket-tone: var(--warn); }
+.routes-management .route-ticket.health-off { --ticket-tone: var(--border); }
+.routes-management .ticket-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 18px; padding: 22px 22px 18px; }
+.routes-management .ticket-stub {
+  position: relative;
+  flex: 0 0 124px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 24px 16px 18px;
+  border-left: 2px dashed var(--border);
+}
+.routes-management .ticket-stub::before,
+.routes-management .ticket-stub::after {
+  content: "";
+  position: absolute;
+  left: -11px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--background);
+}
+.routes-management .ticket-stub::before { top: -10px; }
+.routes-management .ticket-stub::after { bottom: -10px; }
+.routes-management .ticket-stub-label { font-size: 11px; letter-spacing: 0.08em; color: var(--muted-foreground); }
+.routes-management .ticket-traffic { display: grid; gap: 10px; margin: 0; }
+.routes-management .ticket-traffic dt { font-size: 11px; color: var(--muted-foreground); }
+.routes-management .ticket-traffic dd { margin: 2px 0 0; font-family: var(--font-mono); font-size: 16px; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; white-space: nowrap; }
+.routes-management .ticket-state { margin-top: auto; display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 500; color: var(--foreground); }
+.routes-management .ticket-state.down { color: var(--err); }
+.routes-management .ticket-state.unknown { color: var(--warn); }
+.routes-management .ticket-state.off { color: var(--muted-foreground); }
+.routes-management .route-ticket .management-chain .arrow { flex-basis: 64px; }
+.routes-management .route-grid.dense .ticket-main { padding: 18px 18px 16px; gap: 14px; }
+.routes-management .route-grid.dense .ticket-stub { flex-basis: 108px; padding: 20px 14px 16px; }
+.routes-management .route-grid.dense .ticket-traffic dd { font-size: 15px; }
 
 .routes-management .route-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .routes-management .route-head .sort-handle { margin-left: -6px; }
@@ -122,18 +164,6 @@
 .routes-management .route-dot.down { background: var(--err); box-shadow: 0 0 0 3px color-mix(in srgb, var(--err) 18%, transparent); }
 .routes-management .route-dot.unknown { background: var(--warn); }
 .routes-management .route-dot.off { background: transparent; border: 1.5px solid var(--muted-foreground); }
-.routes-management .route-traffic {
-  margin-left: auto;
-  flex: none;
-  padding: 4px 12px;
-  border-radius: 999px;
-  background: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--foreground);
-  white-space: nowrap;
-}
 
 .routes-management .management-chain { display: flex; align-items: stretch; gap: 0; margin: 0; flex-wrap: nowrap; }
 .routes-management .management-chain-leg { display: contents; }
@@ -255,8 +285,15 @@
   .routes-management .management-hop-target .management-hop-address { justify-content: flex-start; }
   .routes-management .management-chain .arrow { flex-basis: 34px; }
   .routes-management .management-chain .arrow::before { left: 50%; right: auto; top: 4px; bottom: 4px; border-top: 0; border-left: 1.5px dashed color-mix(in srgb, var(--foreground) 22%, transparent); }
-  .routes-management .route-traffic { margin-left: 0; }
   .routes-management .route-head { flex-wrap: wrap; }
+  .routes-management .route-ticket { flex-direction: column; }
+  .routes-management .ticket-stub { flex-basis: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding: 16px 22px 18px; border-left: 0; border-top: 2px dashed var(--border); }
+  .routes-management .ticket-stub::before,
+  .routes-management .ticket-stub::after { top: -11px; bottom: auto; }
+  .routes-management .ticket-stub::before { left: -10px; }
+  .routes-management .ticket-stub::after { left: auto; right: -10px; }
+  .routes-management .ticket-traffic { grid-auto-flow: column; gap: 18px; }
+  .routes-management .ticket-state { margin: 0 0 0 auto; }
 }
 .dark .routes-management .hop-region:not(.landing) { background: color-mix(in srgb, var(--tone) 18%, transparent); box-shadow: inset 0 0 0 1.5px var(--tone); }
 

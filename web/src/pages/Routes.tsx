@@ -78,6 +78,13 @@ function hostOf(address: string): string {
   return (cut > 0 ? address.slice(0, cut) : address).replace(/^\[|\]$/g, "");
 }
 
+const HEALTH_LABEL: Record<"ok" | "down" | "unknown" | "off", string> = {
+  ok: "运行中",
+  down: "有跳未运行",
+  unknown: "状态未知",
+  off: "已停用",
+};
+
 function RegionBadge({ name, landing = false }: { name: string | undefined; landing?: boolean }) {
   const code = regionOf(name);
   return (
@@ -398,6 +405,36 @@ export function Routes() {
     );
   }
 
+  // stubOf is the tear-off end of a route's ticket: what the route has carried
+  // and whether it is running, the two things read before anything else.
+  function stubOf(route: Route) {
+    const t = traffic[route.id];
+    const health = healthOf(route);
+    return (
+      <aside className="ticket-stub" aria-label={`${route.name} 的流量与状态`}>
+        <span className="ticket-stub-label">流量</span>
+        {t ? (
+          <dl className="ticket-traffic" title={`统计自内核计数器，更新于 ${new Date(t.updated_at).toLocaleString("zh-CN")}`}>
+            <div><dt>↑ 上行</dt><dd>{formatBytes(t.bytes_in)}</dd></div>
+            <div><dt>↓ 下行</dt><dd>{formatBytes(t.bytes_out)}</dd></div>
+          </dl>
+        ) : (
+          // 没采到不等于没跑流量，画成 0 会让人以为链路没在用
+          <span className="tag warn">未知</span>
+        )}
+        {t && !t.from_entry && (
+          <span className="tag warn" title={`入口节点没有装 iptables，无法计数，这里退而取第 ${t.hop_order + 1} 跳。该跳看不到链路在它之前丢掉的流量，数字只会偏小。`}>
+            非入口跳
+          </span>
+        )}
+        <span className={`ticket-state ${health}`}>
+          <span className={`route-dot ${health}`} aria-hidden />
+          {HEALTH_LABEL[health]}
+        </span>
+      </aside>
+    );
+  }
+
   function actionsOf(route: Route, iconOnly = false) {
     const busy = busyId === route.id || order.pending;
     const apply = () =>
@@ -604,25 +641,25 @@ export function Routes() {
             {shown.map((route, cardIndex) => {
               const target = order.targetProps(route.id, visibleIDs);
               return (
-              <Card index={cardIndex} key={route.id} {...target} className={`route-card tone-${toneOf(regionOf(nodeName(route.hops[0]?.node_id ?? 0)))} ${target.className}`}>
-                <div className="route-head">
-                  <SortHandle {...order.handleProps(route.id, route.name, visibleIDs)} />
-                  <span className={`route-dot ${healthOf(route)}`} aria-hidden />
-                  {/* The slug is only ever needed while logged into a node, so
-                      it is one hover away rather than occupying the title. */}
-                  <h2 className="route-name has-detail" title={onNodeIdentity(route.slug)}>
-                    {route.name}
-                  </h2>
-                  <span className="tag">{route.protocol}</span>
-                  {!route.enabled && <span className="tag">已停用</span>}
-                  <span className="route-traffic">{trafficOf(route)}</span>
+              <Card index={cardIndex} key={route.id} {...target} className={`route-card route-ticket health-${healthOf(route)} ${target.className}`}>
+                <div className="ticket-main">
+                  <div className="route-head">
+                    <SortHandle {...order.handleProps(route.id, route.name, visibleIDs)} />
+                    {/* The slug is only ever needed while logged into a node, so
+                        it is one hover away rather than occupying the title. */}
+                    <h2 className="route-name has-detail" title={onNodeIdentity(route.slug)}>
+                      {route.name}
+                    </h2>
+                    <span className="tag">{route.protocol}</span>
+                  </div>
+
+                  {chainOf(route)}
+
+                  <QuotaBar route={route} state={quotaOf(route.id)} />
+
+                  {actionsOf(route)}
                 </div>
-
-                {chainOf(route)}
-
-                <QuotaBar route={route} state={quotaOf(route.id)} />
-
-                {actionsOf(route)}
+                {stubOf(route)}
               </Card>
               );
             })}

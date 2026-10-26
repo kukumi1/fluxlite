@@ -78,3 +78,28 @@ func TestAnswerResetsTheMissCount(t *testing.T) {
 		t.Fatalf("status = %q, want online", got.Status)
 	}
 }
+
+func TestOfflineIsRecordedAfterTheSampleBudgetIsSpent(t *testing.T) {
+	s := newReinstallService(t)
+	n := seedReinstallNode(t, s)
+	if err := s.store.SetNodeStatus(context.Background(), n.ID, model.StatusOnline, nil); err != nil {
+		t.Fatal(err)
+	}
+	// A dial that timed out leaves the sample's context already expired.
+	spent, cancel := context.WithTimeout(context.Background(), -time.Second)
+	defer cancel()
+	node, err := s.store.NodeByID(context.Background(), n.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < offlineAfterMisses; i++ {
+		s.noteUnreachable(spent, node)
+	}
+	got, err := s.store.NodeByID(context.Background(), n.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != model.StatusOffline {
+		t.Fatalf("status = %q, want offline even though the sample context had expired", got.Status)
+	}
+}

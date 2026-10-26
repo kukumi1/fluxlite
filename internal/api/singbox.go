@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"image/png"
 	"net"
 	"net/http"
@@ -75,6 +76,27 @@ func (s *Server) handleUpdateSingBoxUser(w http.ResponseWriter, r *http.Request)
 	}
 	s.audit(r, "singbox.update", strconv.FormatInt(id, 10), req.Name)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleChangeSingBoxPort(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Port int `json:"port"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	move, err := s.svc.ChangeSingBoxPort(r.Context(), id, req.Port)
+	if err != nil {
+		writeError(w, statusForError(err), err.Error())
+		return
+	}
+	s.audit(r, "singbox.port", strconv.FormatInt(id, 10), fmt.Sprintf("端口改为 %d", move.Port))
+	writeJSON(w, http.StatusOK, move)
 }
 
 func (s *Server) handleStartSingBoxUser(w http.ResponseWriter, r *http.Request) {

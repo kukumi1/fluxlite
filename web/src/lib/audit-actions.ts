@@ -69,6 +69,7 @@ const LABELS: Record<string, string> = {
   "routes.reorder": "调整链路顺序",
   "singbox.create": "创建节点",
   "singbox.update": "修改节点",
+  "singbox.port": "修改节点端口",
   "singbox.delete": "删除节点",
   "singbox.set_enabled": "启停节点",
   "singbox.export": "导出节点",

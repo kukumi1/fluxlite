@@ -149,6 +149,31 @@ func (s *Store) updateSingBoxUser(ctx context.Context, u *model.SingBoxUser, wri
 	return checkAffected(res, "sing-box user", u.ID)
 }
 
+// MoveSingBoxPort records a managed user's new port and the configuration that
+// goes with it. Only those two columns are written: usage counters change
+// under the traffic collector while a move is in progress, and writing back a
+// snapshot taken before it would lose whatever was counted meanwhile. The
+// update only lands if neither column changed since the caller read them.
+func (s *Store) MoveSingBoxPort(ctx context.Context, id int64, fromPort, toPort int, previous, next []byte) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE singbox_users SET port=?, config_blob=?, updated_at=?
+		WHERE id=? AND source='managed' AND port=? AND config_blob=?`,
+		toPort, next, time.Now().UTC(), id, fromPort, previous)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("sing-box port %d already exists: %w", toPort, ErrConflict)
+		}
+		return fmt.Errorf("move sing-box port: %w", err)
+	}
+	count, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("move sing-box port: %w", err)
+	}
+	if count == 0 {
+		return fmt.Errorf("sing-box user %d changed while its port was being moved: %w", id, ErrConflict)
+	}
+	return nil
+}
+
 // CompareAndSwapSingBoxConfig updates only the encrypted configuration and
 // rejects stale client-preference edits without clobbering live usage/status.
 func (s *Store) CompareAndSwapSingBoxConfig(ctx context.Context, id int64, previous, next []byte) error {

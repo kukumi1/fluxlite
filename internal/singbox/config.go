@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -178,4 +179,81 @@ func (b *Bundle) Link(host string) string {
 		return b.LinkTemplate
 	}
 	return "vmess://" + base64.RawStdEncoding.EncodeToString([]byte(strings.ReplaceAll(string(decoded), "HOST", strings.Trim(host, "[]"))))
+}
+
+// WithPort moves the bundle to another port: the server inbound that listens
+// on the current port, the recorded port and the share link template.
+//
+// Exactly one inbound must listen on the current port. A config with none or
+// several cannot be moved safely, since there is no telling which of them the
+// panel's record refers to.
+func (b *Bundle) WithPort(port int) error {
+	if port < 1 || port > 65535 {
+		return model.ErrSingBoxPort
+	}
+	var server map[string]json.RawMessage
+	if err := json.Unmarshal(b.Config, &server); err != nil {
+		return fmt.Errorf("parse server config: %w", err)
+	}
+	var inbounds []map[string]json.RawMessage
+	if err := json.Unmarshal(server["inbounds"], &inbounds); err != nil {
+		return fmt.Errorf("parse inbounds: %w", err)
+	}
+	matched := -1
+	for i, in := range inbounds {
+		var listen int
+		if json.Unmarshal(in["listen_port"], &listen) == nil && listen == b.Port {
+			if matched >= 0 {
+				return fmt.Errorf("several inbounds listen on port %d", b.Port)
+			}
+			matched = i
+		}
+	}
+	if matched < 0 {
+		return fmt.Errorf("no inbound listens on port %d", b.Port)
+	}
+	inbounds[matched]["listen_port"] = json.RawMessage(strconv.Itoa(port))
+
+	rawInbounds, err := json.Marshal(inbounds)
+	if err != nil {
+		return err
+	}
+	server["inbounds"] = rawInbounds
+	config, err := json.Marshal(server)
+	if err != nil {
+		return err
+	}
+
+	link, err := relinkPort(b.Protocol, b.LinkTemplate, b.Port, port)
+	if err != nil {
+		return err
+	}
+	b.Config, b.Port, b.LinkTemplate = config, port, link
+	return nil
+}
+
+// relinkPort rewrites the port in a share link template. vmess hides it in a
+// base64 JSON document; every other scheme carries it after "HOST:". Bundles
+// adopted from an existing config may have no template at all.
+func relinkPort(protocol model.SingBoxProtocol, link string, from, to int) (string, error) {
+	if link == "" {
+		return "", nil
+	}
+	if protocol != model.SingBoxVMess {
+		old := fmt.Sprintf("@HOST:%d", from)
+		if strings.Count(link, old) != 1 {
+			return "", fmt.Errorf("share link does not carry port %d", from)
+		}
+		return strings.Replace(link, old, fmt.Sprintf("@HOST:%d", to), 1), nil
+	}
+	decoded, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(link, "vmess://"))
+	if err != nil {
+		return "", fmt.Errorf("decode vmess link: %w", err)
+	}
+	old := fmt.Sprintf(`"port":"%d"`, from)
+	if strings.Count(string(decoded), old) != 1 {
+		return "", fmt.Errorf("vmess link does not carry port %d", from)
+	}
+	body := strings.Replace(string(decoded), old, fmt.Sprintf(`"port":"%d"`, to), 1)
+	return "vmess://" + base64.RawStdEncoding.EncodeToString([]byte(body)), nil
 }

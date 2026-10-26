@@ -155,6 +155,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/singbox/users", s.handleListSingBoxUsers)
 			r.Post("/singbox/users", s.handleCreateSingBoxUser)
 			r.Put("/singbox/users/{id}", s.handleUpdateSingBoxUser)
+			r.Put("/singbox/users/{id}/port", s.handleChangeSingBoxPort)
 			r.Post("/singbox/users/{id}/start", s.handleStartSingBoxUser)
 			r.Post("/singbox/users/{id}/stop", s.handleStopSingBoxUser)
 			r.Post("/singbox/users/{id}/top-up", s.handleTopUpSingBoxUser)

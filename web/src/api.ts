@@ -521,6 +521,7 @@ export const api = {
   scanSingBox: (nodeID: number) => request<SingBoxDiscovery[] | null>(`/nodes/${nodeID}/singbox/scan`),
   createSingBoxUser: (input: SingBoxUserInput) => post<SingBoxUser>("/singbox/users", input),
     updateSingBoxUser: (id: number, input: SingBoxUserUpdate) => request<{ ok: boolean }>(`/singbox/users/${id}`, { method: "PUT", body: JSON.stringify(input) }),
+  changeSingBoxPort: (id: number, port: number) => request<SingBoxPortMove>(`/singbox/users/${id}/port`, { method: "PUT", body: JSON.stringify({ port }) }),
   startSingBoxUser: (id: number) => post<{ enabled: boolean }>(`/singbox/users/${id}/start`),
   stopSingBoxUser: (id: number) => post<{ enabled: boolean }>(`/singbox/users/${id}/stop`),
   topUpSingBoxUser: (id: number, bytes: number) => post<{ ok: boolean }>(`/singbox/users/${id}/top-up`, { bytes }),
@@ -598,6 +599,11 @@ export interface SingBoxUserInput {
   download_limit_mbps: number;
 }
 
+/** 换端口的结果。landing_routes 是落地地址还指着旧端口、需要手动改的链路。 */
+export interface SingBoxPortMove {
+  port: number;
+  landing_routes: string[] | null;
+}
 export interface SingBoxUserUpdate {
   name: string;
   quota_bytes: number;

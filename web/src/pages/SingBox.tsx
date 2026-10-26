@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Clock, Gauge, Info, Network, Pencil, Plus, QrCode, RefreshCw, RotateCcw, ScanSearch, Trash2, TriangleAlert, type LucideIcon } from "lucide-react";
-import { api, type Node, type SingBoxDiscovery, type SingBoxUser, type SingBoxUserInput } from "../api";
+import { api, type Node, type SingBoxDiscovery, type SingBoxPortMove, type SingBoxUser, type SingBoxUserInput } from "../api";
 import { CopyButton } from "../components/CopyButton";
 import { Flag } from "../components/Flag";
 import { ListToolbar } from "../components/ListToolbar";
@@ -115,6 +115,7 @@ export function SingBox() {
   const exportPending = useRef(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [warning, setWarning] = useState("");
   const [busy, setBusy] = useState(false);
   const [quotaDialog, setQuotaDialog] = useState<{ user: SingBoxUser; adopt: boolean; reduce: boolean } | null>(null);
   const [quotaGB, setQuotaGB] = useState("100");
@@ -122,6 +123,7 @@ export function SingBox() {
   const [infoUser, setInfoUser] = useState<SingBoxUser | null>(null);
   const [editUser, setEditUser] = useState<SingBoxUser | null>(null);
   const [editName, setEditName] = useState("");
+  const [editPort, setEditPort] = useState("");
   const [editQuotaGB, setEditQuotaGB] = useState("");
   const [editPeriodDays, setEditPeriodDays] = useState("30");
   const [editEnabled, setEditEnabled] = useState(true);
@@ -171,7 +173,7 @@ export function SingBox() {
   }
 
   async function action(fn: () => Promise<unknown>, ok: string) {
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setWarning("");
     try { await fn(); setNotice(ok); await load(); return true; }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); return false; }
     finally { setBusy(false); }
@@ -236,6 +238,7 @@ export function SingBox() {
     setError("");
     setEditUser(user);
     setEditName(user.name);
+    setEditPort(String(user.port));
     const currentQuota = user.base_quota_bytes + user.top_up_bytes;
     setEditQuotaGB(currentQuota ? String(currentQuota / 1024 ** 3) : "");
     setEditPeriodDays(String(user.period_days || 30));
@@ -256,8 +259,31 @@ export function SingBox() {
     if (!Number.isInteger(periodDays) || periodDays < 1 || periodDays > 3650) { setError("流量周期必须是 1-3650 天"); return; }
     const upload = Number(editUploadMbps), download = Number(editDownloadMbps);
     if (![upload, download].every((value) => Number.isInteger(value) && value >= 0 && value <= 100000)) { setError("限速必须是 0-100000 的整数 Mbps"); return; }
-    const saved = await action(() => api.updateSingBoxUser(editUser.id, { name: editName.trim(), quota_bytes: Math.round(quota), period_days: periodDays, expires_at: expiryAt ? (hasExpiry(editUser.expires_at) && expiryAt === toDateTimeLocal(new Date(editUser.expires_at)) ? editUser.expires_at : expiry.toISOString()) : null, enabled: editEnabled, upload_limit_mbps: upload, download_limit_mbps: download }), "客户端已更新");
-    if (saved) setEditUser(null);
+    const port = Number(editPort);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) { setError("端口必须是 1-65535 的整数"); return; }
+    const update = { name: editName.trim(), quota_bytes: Math.round(quota), period_days: periodDays, expires_at: expiryAt ? (hasExpiry(editUser.expires_at) && expiryAt === toDateTimeLocal(new Date(editUser.expires_at)) ? editUser.expires_at : expiry.toISOString()) : null, enabled: editEnabled, upload_limit_mbps: upload, download_limit_mbps: download };
+    if (port === editUser.port) {
+      if (await action(() => api.updateSingBoxUser(editUser.id, update), "客户端已更新")) setEditUser(null);
+      return;
+    }
+    // 端口先单独换：它要在机器上重写配置并重启服务，失败时机器会退回旧端口，
+    // 其余设置也就不该再提交。
+    setBusy(true); setError(""); setNotice(""); setWarning("");
+    let moved: SingBoxPortMove | null = null;
+    try {
+      moved = await api.changeSingBoxPort(editUser.id, port);
+      await api.updateSingBoxUser(editUser.id, update);
+      setNotice(`端口已改为 ${moved.port}，客户端里的端口也要跟着改成 ${moved.port}`);
+      const landing = moved.landing_routes ?? [];
+      if (landing.length) setWarning(`链路 ${landing.join("、")} 的落地地址还是旧端口 ${editUser.port}，请到链路页把落地地址改成新端口 ${moved.port}，否则这些链路会不通。`);
+      setEditUser(null);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setError(moved ? `端口已改为 ${moved.port}，但其他设置保存失败：${message}` : message);
+    } finally {
+      setBusy(false);
+      await load();
+    }
   }
 
   async function scanExternal() {
@@ -369,6 +395,7 @@ export function SingBox() {
       <PageHeader title="节点" actions={<button className="btn primary" onClick={() => { setError(""); setCreating(true); }}><Plus size={15} />创建节点</button>} />
       {error && !creating && !editUser && !quotaDialog && <Banner kind="err">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
+      {warning && <Banner kind="warn">{warning}</Banner>}
 
       <dl className="stat-strip">
         <SummaryFigure icon={Network} tone="lime" label="在线" value={managedUsers.filter((user) => user.enabled && user.status === "running").length} note={`/ ${managedUsers.length} 个`} />
@@ -546,7 +573,11 @@ export function SingBox() {
         <Modal title="编辑节点" subtitle={`${protocolMeta(editUser.protocol).label} · ${editUser.node_name ?? ""} : ${editUser.port}`} size="wide" onClose={() => setEditUser(null)}>
           <form className="dialog-form" onSubmit={(event) => { event.preventDefault(); void saveEditDialog(); }}>
             {error && <Banner kind="err">{error}</Banner>}
-            <label>节点名称<input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)} /></label>
+            <div className="advanced-grid two">
+              <label>节点名称<input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)} /></label>
+              <label>端口<input type="number" min={1} max={65535} value={editPort} onChange={(e) => setEditPort(e.target.value)} /></label>
+            </div>
+            {editPort !== String(editUser.port) && <p className="field-hint flush">改端口会重启这个节点的服务，正在连接的客户端会断开一次；客户端和以它为落地的链路都要改成新端口。</p>}
             <div className="advanced-grid two">
               <label>基础额度（GB）<input type="number" min={0} placeholder="不限" value={editQuotaGB} onChange={(e) => setEditQuotaGB(e.target.value)} /></label>
               <label>流量周期（天）<input type="number" min={1} max={3650} value={editPeriodDays} onChange={(e) => setEditPeriodDays(e.target.value)} /></label>

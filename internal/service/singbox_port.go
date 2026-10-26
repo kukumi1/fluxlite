@@ -122,7 +122,6 @@ func (s *Service) swapSingBoxConfig(ctx context.Context, client *ssh.Client, nod
 	}
 	dir := fmt.Sprintf("/etc/fluxlite/singbox/%d", u.ID)
 	data := fmt.Sprintf("/var/lib/fluxlite-singbox/%d", u.ID)
-	owner := singBoxLinuxUser(u.ID)
 	if err := sshx.WriteFile(ctx, client, dir+"/config.json.new", config, "0600"); err != nil {
 		return err
 	}
@@ -131,7 +130,7 @@ func (s *Service) swapSingBoxConfig(ctx context.Context, client *ssh.Client, nod
 	if err != nil {
 		return err
 	}
-	cmd := swapConfigScript(dir, data, owner, active, restart)
+	cmd := swapConfigScript(dir, data, active, restart)
 
 	res, err := sshx.Run(ctx, client, cmd)
 	if err != nil {
@@ -218,14 +217,19 @@ func (s *Service) routesLandingOn(ctx context.Context, node *model.Node, port in
 // sing-box accepts it, restarting the service only if it was running: a node
 // disabled or out of quota must not come back to life because its port moved.
 //
+// The new file takes the owner of the one it replaces. Nodes created before
+// each got its own system user still run as root and have no such user to
+// hand the file to. The staged file never outlives the script.
+//
 // Exit 10: the new config was rejected and nothing changed. Exit 11: the
 // service did not come back up, so the previous config was put back and the
 // service restarted on it. Exit 12: no sing-box binary.
-func swapConfigScript(dir, data, owner, active, restart string) string {
+func swapConfigScript(dir, data, active, restart string) string {
 	return fmt.Sprintf(`set -e
 dir=%s
+trap 'rm -f "$dir/config.json.new"' EXIT
 bin=$(command -v sing-box || command -v /usr/local/bin/sing-box) || exit 12
-chown %s:%s "$dir/config.json.new"
+chown "$(stat -c %%u:%%g "$dir/config.json")" "$dir/config.json.new"
 if ! "$bin" check -D %s -c "$dir/config.json.new"; then rm -f "$dir/config.json.new"; exit 10; fi
 running=0
 if %s; then running=1; fi
@@ -237,5 +241,5 @@ if [ "$running" = 1 ] && ! { %s; }; then
     exit 11
 fi
 rm -f "$dir/config.json.prev"`,
-		shellQuote(dir), shellQuote(owner), shellQuote(owner), shellQuote(data), active, restart, restart)
+		shellQuote(dir), shellQuote(data), active, restart, restart)
 }

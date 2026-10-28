@@ -151,9 +151,26 @@
 .routes-management .ticket-state.unknown { color: var(--warn); }
 .routes-management .ticket-state.off { color: var(--muted-foreground); }
 .routes-management .route-ticket .management-chain .arrow { flex-basis: 64px; }
+.routes-management .route-grid.dense .management-chain .arrow { flex-basis: 44px; }
 .routes-management .route-grid.dense .ticket-main { padding: 18px 18px 16px; gap: 14px; }
-.routes-management .route-grid.dense .ticket-stub { flex-basis: 108px; padding: 20px 14px 16px; }
-.routes-management .route-grid.dense .ticket-traffic dd { font-size: 15px; }
+/* A stub at the side costs the route its width, so on any ticket short of
+ * room for both (the compact grid, two to a row, a phone) it is torn off along
+ * the bottom instead. The body is what turns: a container query cannot
+ * restyle the container itself. */
+.routes-management .route-ticket { container-type: inline-size; }
+.routes-management .ticket-body { flex: 1; min-width: 0; display: flex; }
+@container (max-width: 720px) {
+  .routes-management .ticket-body { flex-direction: column; }
+  .routes-management .ticket-main { flex: 1 0 auto; }
+  .routes-management .ticket-stub { flex: none; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding: 14px 20px 16px; border-left: 0; border-top: 2px dashed var(--border); }
+  .routes-management .ticket-stub::before,
+  .routes-management .ticket-stub::after { top: -11px; bottom: auto; }
+  .routes-management .ticket-stub::before { left: -10px; }
+  .routes-management .ticket-stub::after { left: auto; right: -10px; }
+  .routes-management .ticket-traffic { grid-auto-flow: column; gap: 18px; }
+  .routes-management .ticket-traffic dd { font-size: 15px; }
+  .routes-management .ticket-state { margin: 0 0 0 auto; }
+}
 
 .routes-management .route-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .routes-management .route-head .sort-handle { margin-left: -6px; }
@@ -286,14 +303,6 @@
   .routes-management .management-chain .arrow { flex-basis: 34px; }
   .routes-management .management-chain .arrow::before { left: 50%; right: auto; top: 4px; bottom: 4px; border-top: 0; border-left: 1.5px dashed color-mix(in srgb, var(--foreground) 22%, transparent); }
   .routes-management .route-head { flex-wrap: wrap; }
-  .routes-management .route-ticket { flex-direction: column; }
-  .routes-management .ticket-stub { flex-basis: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding: 16px 22px 18px; border-left: 0; border-top: 2px dashed var(--border); }
-  .routes-management .ticket-stub::before,
-  .routes-management .ticket-stub::after { top: -11px; bottom: auto; }
-  .routes-management .ticket-stub::before { left: -10px; }
-  .routes-management .ticket-stub::after { left: auto; right: -10px; }
-  .routes-management .ticket-traffic { grid-auto-flow: column; gap: 18px; }
-  .routes-management .ticket-state { margin: 0 0 0 auto; }
 }
 .dark .routes-management .hop-region:not(.landing) { background: color-mix(in srgb, var(--tone) 18%, transparent); box-shadow: inset 0 0 0 1.5px var(--tone); }
 

@@ -642,6 +642,7 @@ export function Routes() {
               const target = order.targetProps(route.id, visibleIDs);
               return (
               <Card index={cardIndex} key={route.id} {...target} className={`route-card route-ticket health-${healthOf(route)} ${target.className}`}>
+                <div className="ticket-body">
                 <div className="ticket-main">
                   <div className="route-head">
                     <SortHandle {...order.handleProps(route.id, route.name, visibleIDs)} />
@@ -660,6 +661,7 @@ export function Routes() {
                   {actionsOf(route)}
                 </div>
                 {stubOf(route)}
+                </div>
               </Card>
               );
             })}

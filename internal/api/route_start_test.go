@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -26,7 +27,7 @@ func tgSuccessfulApply() *applier.Result {
 func TestTelegramStartRouteEnablesOnlyAfterSuccessfulDeployment(t *testing.T) {
 	s, r := tgStartFixture(t, false)
 	calls := 0
-	err := s.telegramStartRoute(context.Background(), r.ID, func(ctx context.Context, id int64) (*applier.Result, error) {
+	_, err := s.startRoute(context.Background(), r.ID, func(ctx context.Context, id int64) (*applier.Result, error) {
 		calls++
 		current, e := s.svc.Store().RouteByID(ctx, id)
 		if e != nil || current.Enabled {
@@ -49,7 +50,7 @@ func TestTelegramStartRouteFailurePreservesPreviousEnabledFlag(t *testing.T) {
 				s, r := tgStartFixture(t, enabled)
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
-				err := s.telegramStartRoute(ctx, r.ID, func(context.Context, int64) (*applier.Result, error) {
+				_, err := s.startRoute(ctx, r.ID, func(context.Context, int64) (*applier.Result, error) {
 					switch kind {
 					case "partial":
 						return &applier.Result{Hops: []applier.HopOutcome{{Error: "private ssh error", Action: "unreachable"}}}, nil
@@ -85,7 +86,7 @@ func TestTelegramStartRouteCancellationRollbackUsesDetachedContext(t *testing.T)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if e := s.telegramEnableStartedRoute(ctx, r); e == nil {
+	if e := s.enableStartedRoute(ctx, r); e == nil {
 		t.Fatal("canceled write succeeded")
 	}
 	current, e := s.svc.Store().RouteByID(context.Background(), r.ID)
@@ -122,7 +123,7 @@ func TestTelegramStartRouteRejectsQuotaAndNewPause(t *testing.T) {
 				}
 			}
 			calls := 0
-			err := s.telegramStartRoute(ctx, r.ID, func(context.Context, int64) (*applier.Result, error) {
+			_, err := s.startRoute(ctx, r.ID, func(context.Context, int64) (*applier.Result, error) {
 				calls++
 				if kind == "during-apply" {
 					now := time.Now()
@@ -132,7 +133,7 @@ func TestTelegramStartRouteRejectsQuotaAndNewPause(t *testing.T) {
 				}
 				return tgSuccessfulApply(), nil
 			})
-			if !errors.Is(err, errTelegramRouteQuota) {
+			if !errors.Is(err, errRouteQuota) {
 				t.Fatalf("expected quota error: %v", err)
 			}
 			if kind != "during-apply" && calls != 0 {
@@ -159,11 +160,42 @@ func TestTelegramPartialDeploymentAuditsFailure(t *testing.T) {
 	_, e = s.telegramExecuteWithApply(ctx, telegramBotUser{ID: 42}, telegramConfirmation{Scope: scope, Action: "routes:apply", ID: r.ID, Identity: identity}, func(context.Context, int64) (*applier.Result, error) {
 		return &applier.Result{Hops: []applier.HopOutcome{{Error: "private SSH stderr", Action: "unreachable"}}}, nil
 	})
-	if !errors.Is(e, errTelegramRouteDeploy) {
+	if !errors.Is(e, errRouteDeploy) {
 		t.Fatal("partial apply did not fail")
 	}
 	var detail string
 	if e = s.svc.Store().DB().QueryRow(`SELECT detail FROM audit_logs WHERE action='telegram.routes:apply'`).Scan(&detail); e != nil || detail != "failed" {
 		t.Fatalf("bad audit %q: %v", detail, e)
+	}
+}
+
+func TestStoppedRouteMustBeStartedNotApplied(t *testing.T) {
+	srv, st, _, cookie := recoveryServer(t)
+	ctx := context.Background()
+	n := &model.Node{Name: "relay", Host: "192.0.2.10", SSHPort: 22, SSHUser: "root", AuthType: model.AuthPassword, AuthSecret: []byte("test"), PortStart: 10000, PortEnd: 11000}
+	if e := st.CreateNode(ctx, n); e != nil {
+		t.Fatal(e)
+	}
+	r := &model.Route{Name: "stopped", Slug: "stopped", EntryPort: 10001, Target: "example.com:443", Protocol: model.Protocol("tcp"), Hops: []model.RouteHop{{NodeID: n.ID, RelayPort: 10001, HopOrder: 0}}}
+	if e := st.CreateRoute(ctx, r); e != nil {
+		t.Fatal(e)
+	}
+	h := srv.Handler()
+
+	w := orderHTTP(t, h, "POST", fmt.Sprintf("/api/routes/%d/apply", r.ID), cookie, "192.0.2.3", nil)
+	if w.Code != 409 {
+		t.Fatalf("apply on a stopped route: %d %s", w.Code, w.Body)
+	}
+
+	now := time.Now()
+	if e := st.SetQuotaPaused(ctx, r.ID, &now); e != nil {
+		t.Fatal(e)
+	}
+	w = orderHTTP(t, h, "POST", fmt.Sprintf("/api/routes/%d/start", r.ID), cookie, "192.0.2.3", nil)
+	if w.Code != 409 {
+		t.Fatalf("start past quota: %d %s", w.Code, w.Body)
+	}
+	if got, e := st.RouteByID(ctx, r.ID); e != nil || got.Enabled {
+		t.Fatal("route enabled past its quota", e)
 	}
 }

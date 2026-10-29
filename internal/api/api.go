@@ -144,6 +144,7 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/routes/{id}/apply", s.handleApplyRoute)
 			r.Post("/routes/{id}/verify", s.handleVerifyRoute)
 			r.Post("/routes/{id}/stop", s.handleStopRoute)
+			r.Post("/routes/{id}/start", s.handleStartRoute)
 
 			r.Get("/routes/{id}/traffic", s.handleRouteTraffic)
 

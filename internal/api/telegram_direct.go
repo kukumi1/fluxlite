@@ -85,12 +85,12 @@ func (s *Server) telegramDirect(ctx context.Context, cfg telegramConfig, from te
 	}
 	if err != nil {
 		text = "操作未完成或已失效，请重新选择。若涉及远端操作，请在面板核实状态后再试。"
-		if errors.Is(err, errTelegramRouteDeploy) {
+		if errors.Is(err, errRouteDeploy) {
 			text = "链路部署未完成，可能存在远端残留服务。请在面板检查各跳点状态后再试。"
 		}
-		if errors.Is(err, errTelegramRouteQuota) {
+		if errors.Is(err, errRouteQuota) {
 			text = "链路因流量配额暂停或额度已用尽，不能直接部署。请先在面板检查额度与计费周期。"
-			if errors.Is(err, errTelegramRouteDeploy) {
+			if errors.Is(err, errRouteDeploy) {
 				text += "本次部署可能存在远端残留服务，请核实并停止。"
 			}
 		}
@@ -390,7 +390,7 @@ func (s *Server) telegramExecute(ctx context.Context, from telegramBotUser, c te
 	return s.telegramExecuteWithApply(ctx, from, c, s.svc.ApplyRoute)
 }
 
-func (s *Server) telegramExecuteWithApply(ctx context.Context, from telegramBotUser, c telegramConfirmation, apply telegramApplyRoute) (string, error) {
+func (s *Server) telegramExecuteWithApply(ctx context.Context, from telegramBotUser, c telegramConfirmation, apply routeApplier) (string, error) {
 	t := s.telegram
 	t.mu.Lock()
 	valid := s.telegramScopeValid(ctx, c.Scope) && from.ID == c.Scope.Actor
@@ -446,7 +446,7 @@ func (s *Server) telegramExecuteWithApply(ctx context.Context, from telegramBotU
 			text = fmt.Sprintf("链路已删除，但 %d 个远端服务可能残留，请在面板检查并清理。", len(leftovers))
 		}
 	case "routes:apply":
-		err = s.telegramStartRoute(ctx, c.ID, apply)
+		_, err = s.startRoute(ctx, c.ID, apply)
 		if err == nil {
 			text = "链路部署成功，已启用自动维护与流量配额控制。"
 		}

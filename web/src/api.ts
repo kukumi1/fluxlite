@@ -509,6 +509,7 @@ export const api = {
   applyRoute: (id: number) => post<ApplyResult>(`/routes/${id}/apply`),
   verifyRoute: (id: number) => post<VerifyReport>(`/routes/${id}/verify`),
   stopRoute: (id: number) => post<{ ok: boolean }>(`/routes/${id}/stop`),
+  startRoute: (id: number) => post<{ started: boolean; result: ApplyResult }>(`/routes/${id}/start`),
   routeTraffic: (id: number, days = 30) =>
     request<DailyTraffic[] | null>(`/routes/${id}/traffic?days=${days}`),
 

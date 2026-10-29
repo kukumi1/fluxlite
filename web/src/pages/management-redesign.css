@@ -287,6 +287,7 @@
 .routes-management .route-actions .btn.ghost { border-color: transparent; background: transparent; color: var(--muted-foreground); }
 .routes-management .route-actions .btn.ghost:hover { background: var(--muted); color: var(--foreground); }
 .routes-management .route-actions .btn.ghost.danger { color: var(--err); }
+.routes-management .route-actions .btn.ghost.start { color: var(--ok); font-weight: 600; }
 
 @media (max-width: 1100px) {
   .routes-management .route-grid,

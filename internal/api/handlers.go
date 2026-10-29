@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -409,6 +410,17 @@ func (s *Server) handleApplyRoute(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	route, err := s.svc.Store().RouteByID(r.Context(), id)
+	if err != nil {
+		writeError(w, statusForError(err), err.Error())
+		return
+	}
+	// Deploying a stopped route without enabling it would leave relays running
+	// that the panel neither counts nor caps; starting it is the way back.
+	if !route.Enabled {
+		writeError(w, http.StatusConflict, "链路已停用，请点「启动」")
+		return
+	}
 	result, err := s.svc.ApplyRoute(r.Context(), id)
 	if err != nil {
 		writeError(w, statusForError(err), err.Error())
@@ -461,6 +473,31 @@ func (s *Server) handleStopRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "route.stop", strconv.FormatInt(id, 10), "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleStartRoute brings a stopped route back. A route that could not be
+// brought up on every hop stays stopped, and the per-hop result comes back
+// with started false so the operator can see which machine refused.
+func (s *Server) handleStartRoute(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	result, err := s.startRoute(r.Context(), id, s.svc.ApplyRoute)
+	switch {
+	case errors.Is(err, errRouteQuota):
+		writeError(w, http.StatusConflict, "本周期额度已用完，调高额度后再启动")
+		return
+	case errors.Is(err, errRouteDeploy) && result != nil:
+		s.audit(r, "route.start", result.RouteName, "not started: deploy incomplete")
+		writeJSON(w, http.StatusOK, map[string]any{"started": false, "result": result})
+		return
+	case err != nil:
+		writeError(w, statusForError(err), err.Error())
+		return
+	}
+	s.audit(r, "route.start", result.RouteName, "started")
+	writeJSON(w, http.StatusOK, map[string]any{"started": true, "result": result})
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {

@@ -15,7 +15,7 @@ import {
   ipv6DialAddress,
   ipv6Reachable,
 } from "../api";
-import { ArrowDown, ArrowUp, BarChart3, DoorOpen, Gauge, Globe, LayoutGrid, List, MapPin, Pencil, Plus, Rows3, ShieldCheck, Signpost, Square, Trash2, Waypoints, X } from "lucide-react";
+import { ArrowDown, ArrowUp, BarChart3, DoorOpen, Gauge, Globe, LayoutGrid, List, MapPin, Pencil, Play, Plus, Rows3, ShieldCheck, Signpost, Square, Trash2, Waypoints, X } from "lucide-react";
 import { Banner, Modal } from "../components/Modal";
 import { useConfirm } from "../components/ConfirmDialog";
 import { ActionButton } from "../components/ActionButton";
@@ -452,6 +452,16 @@ export function Routes() {
         await api.stopRoute(route.id);
         setNotice(`链路 ${route.name} 已停止`);
       });
+    const start = () =>
+      void act(route.id, async () => {
+        const { started, result } = await api.startRoute(route.id);
+        if (started) {
+          setNotice(`链路 ${route.name} 已启动`);
+          return;
+        }
+        setWarning(`链路 ${route.name} 没有在所有机器上起来，仍保持停用`);
+        setApplyResult(result);
+      });
     const remove = async () => {
       const ok = await confirm({
         title: `删除链路 ${route.name}？`,
@@ -478,7 +488,12 @@ export function Routes() {
     return (
       <div className="route-actions">
         <div className="route-actions-main">
-          <button className="btn sm primary" disabled={busy} onClick={apply}>
+          <button
+            className="btn sm primary"
+            disabled={busy || !route.enabled}
+            title={route.enabled ? undefined : "链路已停用，点「启动」恢复"}
+            onClick={apply}
+          >
             {busyId === route.id ? "处理中…" : "下发"}
           </button>
           <ActionButton iconOnly={iconOnly} label="验证" icon={ShieldCheck} disabled={busy} onClick={verify} />
@@ -486,7 +501,11 @@ export function Routes() {
           <ActionButton iconOnly={iconOnly} label="编辑" icon={Pencil} disabled={order.pending} onClick={() => setEditing(route)} />
         </div>
         <div className="route-actions-side">
-          <ActionButton iconOnly={iconOnly} label="停止" icon={Square} className="ghost" title="停止各节点上的转发，保留链路配置" disabled={busy} onClick={stop} />
+          {route.enabled ? (
+            <ActionButton iconOnly={iconOnly} label="停止" icon={Square} className="ghost" title="停止各节点上的转发，保留链路配置" disabled={busy} onClick={stop} />
+          ) : (
+            <ActionButton iconOnly={iconOnly} label="启动" icon={Play} className="ghost start" title="在各节点上重新下发并恢复流量统计与额度" disabled={busy} onClick={start} />
+          )}
           <ActionButton iconOnly={iconOnly} label="删除" icon={Trash2} className="ghost danger" disabled={busy} onClick={() => void remove()} />
         </div>
       </div>
@@ -890,7 +909,9 @@ function RouteForm({ nodes, route, family, onClose, onSaved, onError }: RouteFor
       protocol,
       node_ids: hops,
       entry_port: entryPort ? Number(entryPort) : null,
-      enabled: true,
+      // Saving an edit must not quietly restart a stopped route: reconciliation
+      // redeploys every enabled route within minutes.
+      enabled: route ? route.enabled : true,
       listen_ipv6: listenIPv6,
       quota_bytes: quotaGB.trim() === "" ? null : Math.round(Number(quotaGB) * 1024 ** 3),
       quota_reset_day: resetDay,

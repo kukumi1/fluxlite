@@ -11,49 +11,55 @@ import (
 )
 
 var (
-	errTelegramRouteQuota  = errors.New("route is paused or its quota is exhausted")
-	errTelegramRouteDeploy = errors.New("route deployment incomplete; remote services may remain")
+	errRouteQuota  = errors.New("route is paused or its quota is exhausted")
+	errRouteDeploy = errors.New("route deployment incomplete; remote services may remain")
 )
 
-type telegramApplyRoute func(context.Context, int64) (*applier.Result, error)
+type routeApplier func(context.Context, int64) (*applier.Result, error)
 
-// Only the Bot's explicit deploy action enables a draft route. ApplyRoute's
-// existing API semantics remain unchanged. A disabled draft stays disabled
-// while remote work is in flight, so reconciliation cannot race that work.
-func (s *Server) telegramStartRoute(ctx context.Context, id int64, apply telegramApplyRoute) (err error) {
+// startRoute deploys a stopped or draft route and enables it only once every
+// hop is confirmed up. Plain ApplyRoute leaves the enabled flag alone, so a
+// stopped route redeployed that way runs on its machines while the panel
+// neither counts nor caps it. The route stays disabled while remote work is in
+// flight, so reconciliation cannot race that work, and a route whose quota is
+// spent is refused before anything is touched.
+//
+// The deploy result is returned whenever there is one, so a caller can say
+// which hop failed.
+func (s *Server) startRoute(ctx context.Context, id int64, apply routeApplier) (*applier.Result, error) {
 	route, err := s.svc.Store().RouteByID(ctx, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err = s.telegramCheckRouteQuota(ctx, route); err != nil {
-		return err
+	if err = s.checkRouteQuota(ctx, route); err != nil {
+		return nil, err
 	}
 	result, err := apply(ctx, id)
 	if err != nil {
-		return errors.Join(errTelegramRouteDeploy, err)
+		return result, errors.Join(errRouteDeploy, err)
 	}
 	if result == nil || result.Failed() || len(result.Hops) != len(route.Hops) {
-		return errTelegramRouteDeploy
+		return result, errRouteDeploy
 	}
 	for _, hop := range result.Hops {
 		if hop.Action == "skipped" || hop.Action == "unreachable" {
-			return errTelegramRouteDeploy
+			return result, errRouteDeploy
 		}
 	}
 	if err = ctx.Err(); err != nil {
-		return errors.Join(errTelegramRouteDeploy, err)
+		return result, errors.Join(errRouteDeploy, err)
 	}
 	current, err := s.svc.Store().RouteByID(ctx, id)
 	if err != nil {
-		return errors.Join(errTelegramRouteDeploy, err)
+		return result, errors.Join(errRouteDeploy, err)
 	}
-	if err = s.telegramCheckRouteQuota(ctx, current); err != nil {
-		return errors.Join(errTelegramRouteDeploy, err)
+	if err = s.checkRouteQuota(ctx, current); err != nil {
+		return result, errors.Join(errRouteDeploy, err)
 	}
-	return s.telegramEnableStartedRoute(ctx, route)
+	return result, s.enableStartedRoute(ctx, route)
 }
 
-func (s *Server) telegramEnableStartedRoute(ctx context.Context, route *model.Route) (err error) {
+func (s *Server) enableStartedRoute(ctx context.Context, route *model.Route) (err error) {
 	id := route.ID
 	// A canceled write may have reached SQLite. Roll back with an independent,
 	// bounded context rather than reusing the canceled request. Never undo a
@@ -78,30 +84,30 @@ func (s *Server) telegramEnableStartedRoute(ctx context.Context, route *model.Ro
 		}
 	}()
 	if err = s.svc.Store().SetRouteEnabled(ctx, id, true); err != nil {
-		return errors.Join(errTelegramRouteDeploy, err)
+		return errors.Join(errRouteDeploy, err)
 	}
 	if err = ctx.Err(); err != nil {
-		return errors.Join(errTelegramRouteDeploy, err)
+		return errors.Join(errRouteDeploy, err)
 	}
 	return nil
 }
 
-func (s *Server) telegramCheckRouteQuota(ctx context.Context, route *model.Route) error {
+func (s *Server) checkRouteQuota(ctx context.Context, route *model.Route) error {
 	if route.QuotaPausedAt != nil {
-		return errTelegramRouteQuota
+		return errRouteQuota
 	}
 	if route.QuotaBytes == nil {
 		return nil
 	}
 	if *route.QuotaBytes <= 0 {
-		return errTelegramRouteQuota
+		return errRouteQuota
 	}
 	used, measured, err := s.svc.Store().PeriodUsage(ctx, route.ID, service.QuotaPeriodStart(time.Now(), route.QuotaResetDay))
 	if err != nil {
 		return err
 	}
 	if measured && used >= *route.QuotaBytes {
-		return errTelegramRouteQuota
+		return errRouteQuota
 	}
 	return nil
 }

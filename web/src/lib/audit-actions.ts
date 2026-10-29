@@ -64,6 +64,7 @@ const LABELS: Record<string, string> = {
   "route.delete": "删除链路",
   "route.apply": "下发链路",
   "route.stop": "停止链路",
+  "route.start": "启动链路",
   "route.verify": "检测链路",
   "route.orphan_removed": "清理孤儿转发",
   "routes.reorder": "调整链路顺序",

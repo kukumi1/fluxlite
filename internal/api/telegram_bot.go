@@ -400,6 +400,23 @@ func telegramNodeStatus(status model.NodeStatus) string {
 	}
 }
 
+// NotifyTelegram pushes an alert to the bound Telegram account. With no bot
+// enabled or no account bound it does nothing: alerts ride on the binding the
+// operator already set up and are not worth an error when there is none.
+func (s *Server) NotifyTelegram(ctx context.Context, text string) error {
+	s.telegram.mu.Lock()
+	err := s.telegram.load(ctx)
+	cfg := s.telegram.cfg
+	s.telegram.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if !cfg.Enabled || cfg.Token == "" || cfg.BoundUserID <= 0 {
+		return nil
+	}
+	return s.sendTelegramMessage(ctx, cfg, cfg.BoundUserID, text, "dashboard")
+}
+
 // RunTelegram is a single worker; pacing before every send also spaces adjacent updates.
 // Only explicit 429s retry: retrying uncertain transport failures could duplicate messages.
 func (s *Server) sendTelegramMessage(ctx context.Context, cfg telegramConfig, chatID int64, text, page string) error {

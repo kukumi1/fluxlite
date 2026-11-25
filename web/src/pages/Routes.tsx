@@ -7,6 +7,7 @@ import {
   type Node,
   type DailyTraffic,
   type Route,
+  type RouteHop,
   type RouteInput,
   type QuotaState,
   type RouteStatus,
@@ -80,7 +81,7 @@ function hostOf(address: string): string {
 
 const HEALTH_LABEL: Record<"ok" | "down" | "unknown" | "off", string> = {
   ok: "运行中",
-  down: "有跳未运行",
+  down: "转发异常",
   unknown: "状态未知",
   off: "已停用",
 };
@@ -123,6 +124,14 @@ type HopState =
   | { kind: "down" }
   | { kind: "stale"; since: number; wasRunning: boolean };
 
+// linkDead is a hop whose relay runs but whose latest dial of its next hop or
+// landing failed. Only a recent verdict counts: an old one describes a link as
+// it was, and the sampler has since stopped reaching that machine.
+function linkDead(hop: RouteHop): boolean {
+  const age = ageOf(hop.reach_at);
+  return hop.reachable === false && age !== null && age <= staleAfterMs;
+}
+
 function hopStateHint(state: HopState): string | undefined {
   switch (state.kind) {
     case "unknown":
@@ -141,7 +150,14 @@ function hopStateHint(state: HopState): string | undefined {
 // Link is the arrow between a hop and whatever it forwards to, carrying that
 // leg's measured latency. An unmeasured leg shows no number rather than a
 // zero, which would read as "instant".
-function Link({ ms, at }: { ms: number | null; at: string | null }) {
+function Link({ ms, at, dead }: { ms: number | null; at: string | null; dead: boolean }) {
+  if (dead) {
+    return (
+      <span className="arrow" title="最近一次检测连不上下一跳或落地">
+        →<span className="lat dead">不通</span>
+      </span>
+    );
+  }
   if (ms === null) return <span className="arrow">→</span>;
   const age = ageOf(at);
   const stale = age !== null && age > staleAfterMs;
@@ -341,7 +357,7 @@ export function Routes() {
   function healthOf(route: Route): "ok" | "down" | "unknown" | "off" {
     if (!route.enabled) return "off";
     const states = route.hops.map((hop) => hopState(route.id, hop.hop_order).kind);
-    if (states.includes("down")) return "down";
+    if (states.includes("down") || route.hops.some(linkDead)) return "down";
     if (states.some((kind) => kind !== "up")) return "unknown";
     return "ok";
   }
@@ -366,7 +382,7 @@ export function Routes() {
                 {state.kind === "down" && <span className="muted"> ✕</span>}
                 {state.kind === "stale" && <span className="muted"> ⚠</span>}
               </span>
-              <Link ms={hop.latency_ms} at={hop.latency_at} />
+              <Link ms={hop.latency_ms} at={hop.latency_at} dead={linkDead(hop)} />
             </span>
           );
         })}

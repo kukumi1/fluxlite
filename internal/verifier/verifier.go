@@ -99,32 +99,27 @@ func (v *Verifier) Verify(ctx context.Context, plan *planner.Plan) (*Report, err
 	return report, nil
 }
 
-// MeasureLatencies times each hop's reach to whatever it forwards to, keyed by
-// hop order.
+// MeasureLinks dials, from each hop, whatever that hop forwards to, and
+// reports the outcome keyed by hop order: a pass with its latency, a fail when
+// the address did not answer, or unknown when the hop could not be asked.
 //
 // This is the reachability half of Verify without the marker injection and
 // packet capture, which are far too expensive to run on a schedule. It proves
 // nothing about delivery — only Verify does that — but it is cheap enough to
-// keep the route list's numbers current.
-//
-// Hops that could not be timed are absent from the result rather than present
-// as zero, so a node without a usable timer never overwrites a good reading.
-func (v *Verifier) MeasureLatencies(ctx context.Context, plan *planner.Plan) (map[int]int, error) {
+// keep the route list current and to notice a link that has gone dead.
+func (v *Verifier) MeasureLinks(ctx context.Context, plan *planner.Plan) (map[int]Check, error) {
 	host, port, err := splitTarget(plan.Route.Target)
 	if err != nil {
 		return nil, err
 	}
 
-	out := make(map[int]int, len(plan.Hops))
+	out := make(map[int]Check, len(plan.Hops))
 	for i, hop := range plan.Hops {
 		dialHost, dialPort := host, port
 		if i < len(plan.Hops)-1 {
 			dialHost, dialPort = plan.Hops[i+1].Node.Host, plan.Hops[i+1].Listen
 		}
-		check := v.checkReachable(ctx, hop.Node, dialHost, dialPort, "latency")
-		if check.LatencyMS != nil {
-			out[hop.HopOrder] = *check.LatencyMS
-		}
+		out[hop.HopOrder] = v.checkReachable(ctx, hop.Node, dialHost, dialPort, "latency")
 	}
 	return out, nil
 }

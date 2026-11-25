@@ -163,6 +163,10 @@ export interface RouteHop {
   // Liveness as of the last background sample; null means never checked.
   running: boolean | null;
   checked_at: string | null;
+  // Whether this hop could last connect to its next hop or landing; null
+  // until tried, or when the hop could not be asked.
+  reachable: boolean | null;
+  reach_at: string | null;
 }
 
 export interface Route {

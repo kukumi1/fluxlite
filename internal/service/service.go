@@ -50,7 +50,8 @@ type Service struct {
 	singBoxAdoptionOnce sync.Once
 	singBoxAdoptionGate chan struct{}
 
-	reach reachability
+	reach  reachability
+	alerts alertTracker
 }
 
 func New(st *store.Store, sealer *cryptox.Sealer, pool *sshx.Pool, ap *applier.Applier, vf *verifier.Verifier, realm applier.RealmSource, log *slog.Logger) *Service {
@@ -753,9 +754,29 @@ func (s *Service) SampleRoute(ctx context.Context, id int64) error {
 		}
 	}
 
-	latencies, err := s.verifier.MeasureLatencies(ctx, plan)
+	links, err := s.verifier.MeasureLinks(ctx, plan)
 	if err != nil {
 		return err
+	}
+	// A hop that could not be asked keeps its previous verdict and reading:
+	// not knowing is not the same as the link being down, and a node without
+	// a usable timer must not erase a good latency.
+	latencies := make(map[int]int, len(links))
+	for hopOrder, check := range links {
+		switch check.Verdict {
+		case verifier.VerdictPass:
+			if check.LatencyMS != nil {
+				latencies[hopOrder] = *check.LatencyMS
+			}
+			err = s.store.SetHopReachable(ctx, id, hopOrder, true)
+		case verifier.VerdictFail:
+			err = s.store.SetHopReachable(ctx, id, hopOrder, false)
+		default:
+			continue
+		}
+		if err != nil {
+			return err
+		}
 	}
 	if err := s.store.SetHopLatencies(ctx, id, latencies); err != nil {
 		return err

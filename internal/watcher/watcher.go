@@ -24,7 +24,11 @@ type Watcher struct {
 	interval time.Duration
 	sample   time.Duration
 	traffic  time.Duration
+	notify   Notifier
 }
+
+// Notifier delivers an alert to the operator.
+type Notifier func(ctx context.Context, text string) error
 
 // Config configures the watcher.
 type Config struct {
@@ -48,6 +52,9 @@ type Config struct {
 	// to run often, but the counters are cumulative — polling faster only
 	// changes how promptly the panel notices, never the totals.
 	TrafficInterval time.Duration
+
+	// Notify receives machine and route alerts. Nil drops them.
+	Notify Notifier
 }
 
 func New(cfg Config) *Watcher {
@@ -65,7 +72,7 @@ func New(cfg Config) *Watcher {
 	}
 	return &Watcher{
 		svc: cfg.Service, store: cfg.Store, log: cfg.Logger,
-		interval: interval, sample: sample, traffic: traffic,
+		interval: interval, sample: sample, traffic: traffic, notify: cfg.Notify,
 	}
 }
 
@@ -78,7 +85,7 @@ func New(cfg Config) *Watcher {
 // sample interval promises.
 func (w *Watcher) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(6)
+	wg.Add(7)
 
 	go func() {
 		defer wg.Done()
@@ -104,6 +111,10 @@ func (w *Watcher) Run(ctx context.Context) {
 		defer wg.Done()
 		w.loop(ctx, connAuditInterval, w.collectConnAudit, true)
 	}()
+	go func() {
+		defer wg.Done()
+		w.loop(ctx, w.sample, w.checkAlerts, false)
+	}()
 
 	wg.Wait()
 }
@@ -111,6 +122,24 @@ func (w *Watcher) Run(ctx context.Context) {
 // sampleNodeMetrics refreshes resource snapshots independently of route
 // liveness. A node with no routes still appears live on the dashboard, and a
 // slow route probe cannot delay its CPU/memory/disk reading.
+// checkAlerts reports machines and routes whose state changed since the
+// last pass. A delivery that fails is logged and not retried: resending a
+// message whose fate is unknown risks the same alert twice, and the next
+// change is reported regardless.
+func (w *Watcher) checkAlerts(ctx context.Context) {
+	text, err := w.svc.AlertDigest(ctx)
+	if err != nil {
+		w.log.Error("evaluate alerts", "error", err)
+		return
+	}
+	if text == "" || w.notify == nil {
+		return
+	}
+	if err := w.notify(ctx, text); err != nil {
+		w.log.Warn("alert not delivered", "error", err)
+	}
+}
+
 func (w *Watcher) sampleNodeMetrics(ctx context.Context) {
 	nodes, err := w.store.ListNodes(ctx)
 	if err != nil {

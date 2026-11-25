@@ -121,6 +121,7 @@ func run() error {
 		Interval:        *interval,
 		SampleInterval:  *sample,
 		TrafficInterval: *trafficPoll,
+		Notify:          srv.NotifyTelegram,
 	})
 	go w.Run(ctx)
 	go srv.RunTelegram(ctx)

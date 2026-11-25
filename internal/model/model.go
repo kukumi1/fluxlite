@@ -331,6 +331,12 @@ type RouteHop struct {
 	// CheckedAt dates the liveness sample. A sample that stopped refreshing
 	// describes a node that stopped answering, not a healthy relay.
 	CheckedAt *time.Time `json:"checked_at"`
+
+	// Reachable is whether this hop could last connect to what it forwards to,
+	// nil until it has been tried. A running relay whose next hop or landing
+	// does not answer carries nothing.
+	Reachable *bool      `json:"reachable"`
+	ReachAt   *time.Time `json:"reach_at"`
 }
 
 var (

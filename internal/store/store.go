@@ -410,6 +410,14 @@ func init() {
 	for range 8 {
 		migrations = append(migrations, retiredMigration)
 	}
+
+	// A relay can be running and still go nowhere: its next hop or landing has
+	// stopped answering. The sampler already dials that address to time it;
+	// keeping the verdict lets a dead link be told apart from one that simply
+	// has not been measured lately.
+	migrations = append(migrations,
+		`ALTER TABLE route_hops ADD COLUMN reachable INTEGER`,
+		`ALTER TABLE route_hops ADD COLUMN reach_at DATETIME`)
 }
 
 // retiredMigration holds the place of a migration whose feature was withdrawn

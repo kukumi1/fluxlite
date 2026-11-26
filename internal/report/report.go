@@ -92,34 +92,35 @@ type faces struct {
 }
 
 var (
-	faceOnce sync.Once
-	faceSet  faces
-	faceErr  error
+	fontOnce      sync.Once
+	regular, bold *opentype.Font
+	fontErr       error
 )
 
+// loadFaces makes the faces for one image. The parsed fonts are shared, but
+// a face keeps scratch buffers while it draws, so images drawn at the same
+// time each need their own.
 func loadFaces() (faces, error) {
-	faceOnce.Do(func() {
-		regular, err := opentype.Parse(regularTTF)
-		if err != nil {
-			faceErr = err
+	fontOnce.Do(func() {
+		if regular, fontErr = opentype.Parse(regularTTF); fontErr != nil {
 			return
 		}
-		bold, err := opentype.Parse(boldTTF)
-		if err != nil {
-			faceErr = err
-			return
-		}
-		face := func(f *opentype.Font, size float64) font.Face {
-			if faceErr != nil {
-				return nil
-			}
-			var fc font.Face
-			fc, faceErr = opentype.NewFace(f, &opentype.FaceOptions{Size: size * scale, DPI: 72, Hinting: font.HintingFull})
-			return fc
-		}
-		faceSet = faces{title: face(bold, 22), head: face(bold, 15), body: face(regular, 14), small: face(regular, 12)}
+		bold, fontErr = opentype.Parse(boldTTF)
 	})
-	return faceSet, faceErr
+	if fontErr != nil {
+		return faces{}, fontErr
+	}
+	var err error
+	face := func(f *opentype.Font, size float64) font.Face {
+		if err != nil {
+			return nil
+		}
+		var fc font.Face
+		fc, err = opentype.NewFace(f, &opentype.FaceOptions{Size: size * scale, DPI: 72, Hinting: font.HintingFull})
+		return fc
+	}
+	set := faces{title: face(bold, 22), head: face(bold, 15), body: face(regular, 14), small: face(regular, 12)}
+	return set, err
 }
 
 type canvas struct {

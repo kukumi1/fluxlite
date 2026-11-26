@@ -168,7 +168,9 @@ func (s *Server) handleSpeedImage(w http.ResponseWriter, r *http.Request) {
 }
 
 // sendTelegramPhoto sends a PNG with a caption and buttons to the bound
-// account, under the same authorization checks as a message.
+// account, under the same authorization checks as a message. Unlike the
+// panel's other messages it is not protected: a speed report is meant to be
+// saved and shared, and it shows no address in full.
 func (s *Server) sendTelegramPhoto(ctx context.Context, png []byte, caption string, buttons telegramButtons) error {
 	s.telegram.mu.Lock()
 	err := s.telegram.load(ctx)
@@ -192,7 +194,7 @@ func (s *Server) sendTelegramPhoto(ctx context.Context, png []byte, caption stri
 	form := multipart.NewWriter(&body)
 	for k, v := range map[string]string{
 		"chat_id": strconv.FormatInt(cfg.BoundUserID, 10), "caption": caption, "parse_mode": "HTML",
-		"protect_content": "true", "reply_markup": string(markup),
+		"reply_markup": string(markup),
 	} {
 		if err := form.WriteField(k, v); err != nil {
 			return err

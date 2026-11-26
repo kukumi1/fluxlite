@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image/png"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -49,5 +50,25 @@ func TestRender(t *testing.T) {
 		if err := os.WriteFile(out, b, 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// The page asks for every machine's report at once.
+func TestRenderConcurrently(t *testing.T) {
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := Render(sample()); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
 	}
 }

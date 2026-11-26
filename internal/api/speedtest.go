@@ -38,7 +38,7 @@ func (s *Server) handleStartSpeedtest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "speedtest.run", fmt.Sprintf("%d 台机器", len(req.NodeIDs)),
-		fmt.Sprintf("IPv%d %s：%s", req.Family, req.Mode, strings.Join(req.Points, "、")))
+		fmt.Sprintf("%s %s：%s", familyLabel(req.Family), req.Mode, strings.Join(req.Points, "、")))
 	writeJSON(w, http.StatusOK, map[string]int64{"id": id})
 }
 

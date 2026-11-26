@@ -788,7 +788,8 @@ export interface SpeedRequest {
   node_ids: number[];
   points: string[];
   mode: SpeedMode;
-  family: IPFamily;
+  /** 46 表示 IPv4 和 IPv6 一起测（双栈）。 */
+  family: SpeedFamily;
   /** 检测项目：回程、大包回程、UDP 回程、测速；旧记录没有这一项，视为只测速。 */
   items: SpeedItem[];
   origin?: "telegram";
@@ -796,10 +797,13 @@ export interface SpeedRequest {
 
 export type SpeedItem = "route" | "large" | "udp" | "speed";
 
+export type SpeedFamily = IPFamily | 46;
+
 export interface QualityResult {
   node_id: number;
   point: string;
   item: Exclude<SpeedItem, "speed">;
+  family: IPFamily;
   line?: string;
   ms: number | null;
   loss: number | null;
@@ -821,6 +825,7 @@ export interface SpeedResult {
   node_id: number;
   point: string;
   mode: "single" | "multi";
+  family: IPFamily;
   rtt: string;
   down: number | null;
   up: number | null;

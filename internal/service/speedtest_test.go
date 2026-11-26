@@ -72,10 +72,10 @@ func TestSpeedScriptParses(t *testing.T) {
 
 func TestMaskEgress(t *testing.T) {
 	cases := map[string]string{
-		"203.0.113.9 香港 PCCW":                "203.0.*.* 香港 PCCW",
+		"203.0.113.9 香港 PCCW":              "203.0.*.* 香港 PCCW",
 		"2404:3881:1:2::5 美因河畔法兰克福 Cogent": "2404:3881:**** 美因河畔法兰克福 Cogent",
-		"":                                    "",
-		"香港 PCCW":                             "香港 PCCW",
+		"":        "",
+		"香港 PCCW": "香港 PCCW",
 	}
 	for in, want := range cases {
 		if got := MaskEgress(in); got != want {

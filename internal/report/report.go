@@ -35,6 +35,7 @@ var (
 type Speed struct {
 	Point   string
 	Mode    string
+	Family  int
 	RTT     string
 	Down    *float64
 	Up      *float64
@@ -44,18 +45,19 @@ type Speed struct {
 
 // Quality is one point's return-quality item.
 type Quality struct {
-	Point string
-	Item  string
-	Line  string
-	MS    *int
-	Loss  *int
-	Error string
+	Point  string
+	Item   string
+	Family int
+	Line   string
+	MS     *int
+	Loss   *int
+	Error  string
 }
 
 // Input is everything one machine's report shows.
 type Input struct {
 	Name     string
-	Family   int
+	Families []int
 	Settings string
 	Egress   string
 	Points   []string
@@ -232,45 +234,50 @@ func Render(in Input) ([]byte, error) {
 			cols = append(cols, c)
 		}
 	}
-	quality := func(item string) map[string]Quality {
+	quality := func(item string, family int) map[string]Quality {
 		m := map[string]Quality{}
 		for _, q := range in.Quality {
-			if q.Item == item {
+			if q.Item == item && q.Family == family {
 				m[q.Point] = q
 			}
 		}
 		return m
 	}
-	route, large, udp := quality("route"), quality("large"), quality("udp")
 
 	type section struct {
 		height int
 		draw   func(c *canvas, y int)
 	}
 	var sections []section
-	fam := fmt.Sprintf("IPv%d", in.Family)
 	tableH := func(rows int) int { return 64 + rows*rowH }
-	if slices.Contains(in.Items, "route") {
-		sections = append(sections, section{tableH(len(provs)), func(c *canvas, y int) {
-			drawQualityTable(c, y, fam+"回程", provs, cols, route, route, true)
-		}})
-	}
-	if slices.Contains(in.Items, "large") {
-		sections = append(sections, section{tableH(len(provs)), func(c *canvas, y int) {
-			drawQualityTable(c, y, fam+"大包回程（1400B）", provs, cols, large, route, true)
-		}})
-	}
-	if slices.Contains(in.Items, "udp") {
-		sections = append(sections, section{tableH(len(provs)) - 22, func(c *canvas, y int) {
-			drawQualityTable(c, y, "UDP回程 · "+fam, provs, cols, udp, udp, false)
-		}})
-	}
-	if slices.Contains(in.Items, "speed") {
+	// Each family's sections follow one another, IPv4 first, the way the
+	// reports this one copies are read.
+	for _, family := range in.Families {
+		fam := fmt.Sprintf("IPv%d", family)
+		route, large, udp := quality("route", family), quality("large", family), quality("udp", family)
+		if slices.Contains(in.Items, "route") && len(route) > 0 {
+			sections = append(sections, section{tableH(len(provs)), func(c *canvas, y int) {
+				drawQualityTable(c, y, fam+"回程", provs, cols, route, route, true)
+			}})
+		}
+		if slices.Contains(in.Items, "large") && len(large) > 0 {
+			sections = append(sections, section{tableH(len(provs)), func(c *canvas, y int) {
+				drawQualityTable(c, y, fam+"大包回程（1400B）", provs, cols, large, route, true)
+			}})
+		}
+		if slices.Contains(in.Items, "udp") && len(udp) > 0 {
+			sections = append(sections, section{tableH(len(provs)) - 22, func(c *canvas, y int) {
+				drawQualityTable(c, y, fam+" UDP回程", provs, cols, udp, udp, false)
+			}})
+		}
+		if !slices.Contains(in.Items, "speed") {
+			continue
+		}
 		for _, mode := range in.Modes {
 			var rows []Speed
 			for _, p := range in.Points {
 				for _, s := range in.Speeds {
-					if s.Point == p && s.Mode == mode {
+					if s.Point == p && s.Mode == mode && s.Family == family {
 						rows = append(rows, s)
 					}
 				}
@@ -278,7 +285,7 @@ func Render(in Input) ([]byte, error) {
 			if len(rows) == 0 {
 				continue
 			}
-			label := map[string]string{"single": "单线程测速", "multi": "多线程测速"}[mode]
+			label := fam + map[string]string{"single": " 单线程测速", "multi": " 多线程测速"}[mode]
 			sections = append(sections, section{36 + 28 + len(rows)*rowH, func(c *canvas, y int) {
 				drawSpeedTable(c, y, label, fam, rows)
 			}})

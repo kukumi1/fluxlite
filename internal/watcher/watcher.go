@@ -85,7 +85,7 @@ func New(cfg Config) *Watcher {
 // sample interval promises.
 func (w *Watcher) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(10)
+	wg.Add(11)
 
 	go func() {
 		defer wg.Done()
@@ -127,6 +127,10 @@ func (w *Watcher) Run(ctx context.Context) {
 		defer wg.Done()
 		w.loop(ctx, routeTraceCheck, w.checkBlocks, false)
 	}()
+	go func() {
+		defer wg.Done()
+		w.loop(ctx, routeTraceCheck, w.pruneSpeedtests, true)
+	}()
 
 	wg.Wait()
 }
@@ -155,6 +159,12 @@ func (w *Watcher) traceReturnRoutes(ctx context.Context) {
 func (w *Watcher) checkBlocks(ctx context.Context) {
 	if err := w.svc.BlockCheckDue(ctx); err != nil {
 		w.log.Warn("block check", "error", err)
+	}
+}
+
+func (w *Watcher) pruneSpeedtests(ctx context.Context) {
+	if err := w.svc.PruneSpeedtests(ctx); err != nil {
+		w.log.Warn("prune speed tests", "error", err)
 	}
 }
 

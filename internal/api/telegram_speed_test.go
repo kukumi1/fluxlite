@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -19,10 +20,10 @@ func speedJobFixture(mode string) *service.SpeedJobView {
 		Runs: []store.SpeedRun{{NodeID: 3, Egress: "2404:3881:**** 美因河畔法兰克福 <Cogent>", TrafficBytes: 3_554_000_000,
 			RxBytes: 1_836_000_000, TxBytes: 1_718_000_000, StartedAt: 1_764_160_163, FinishedAt: 1_764_160_440}},
 		Results: []store.SpeedResult{
-			{NodeID: 3, Point: "广东联通", Mode: "single", RTT: "155ms", Down: mbps(157), Up: mbps(178), Retrans: mbps(0.02)},
-			{NodeID: 3, Point: "广东联通", Mode: "multi", RTT: "150ms", Down: mbps(514), Up: mbps(552)},
-			{NodeID: 3, Point: "广东移动", Mode: "single", RTT: "25ms", Down: mbps(113), Up: mbps(0), Retrans: mbps(9.64), Error: "服务器忙"},
-			{NodeID: 3, Point: "广东移动", Mode: "multi", RTT: "25ms", Down: mbps(511), Up: mbps(470)},
+			{NodeID: 3, Point: "广东联通", Mode: "single", Family: 6, RTT: "155ms", Down: mbps(157), Up: mbps(178), Retrans: mbps(0.02)},
+			{NodeID: 3, Point: "广东联通", Mode: "multi", Family: 6, RTT: "150ms", Down: mbps(514), Up: mbps(552)},
+			{NodeID: 3, Point: "广东移动", Mode: "single", Family: 6, RTT: "25ms", Down: mbps(113), Up: mbps(0), Retrans: mbps(9.64), Error: "服务器忙"},
+			{NodeID: 3, Point: "广东移动", Mode: "multi", Family: 6, RTT: "25ms", Down: mbps(511), Up: mbps(470)},
 		},
 	}
 }
@@ -140,5 +141,28 @@ func TestTelegramSpeedItems(t *testing.T) {
 	}
 	if !strings.Contains(text, "项目：回程、UDP回程") {
 		t.Fatal(text)
+	}
+}
+
+func TestReportFamiliesFollowResults(t *testing.T) {
+	job := &service.SpeedJobView{Request: service.SpeedRequest{Family: service.FamilyBoth}}
+	if got := reportFamilies(job, 1); len(got) != 2 {
+		t.Fatalf("nothing measured yet shows what was asked: %v", got)
+	}
+	job.Quality = []store.QualityResult{{NodeID: 1, Family: 4}, {NodeID: 2, Family: 6}}
+	if got := reportFamilies(job, 1); len(got) != 1 || got[0] != 4 {
+		t.Fatalf("a machine measured over IPv4 alone shows IPv4: %v", got)
+	}
+	if familyLabel(service.FamilyBoth) != "IPv4 + IPv6" || familyLabel(6) != "IPv6" {
+		t.Fatal("labels")
+	}
+}
+
+func TestTelegramOffersDualStackToIPv6Machines(t *testing.T) {
+	d := &telegramSpeedDraft{NodeName: "Lab", HasV6: true, telegramSpeedPrefs: telegramSpeedPrefs{
+		Family: service.FamilyBoth, Carriers: []string{"电信"}, Provinces: []string{"四川"}, Mode: "single", Items: []string{"route"}}}
+	text, buttons := telegramSpeedSettings(d)
+	if !strings.Contains(text, "协议：IPv4 + IPv6") || !strings.Contains(fmt.Sprint(buttons), "✅ 双栈") {
+		t.Fatalf("%s %v", text, buttons)
 	}
 }

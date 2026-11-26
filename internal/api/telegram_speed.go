@@ -286,9 +286,12 @@ func (s *Server) telegramSpeedToggle(ctx context.Context, actor int64, action, a
 	}
 	switch action {
 	case "fam":
-		if arg == "6" && d.HasV6 {
+		switch {
+		case arg == "6" && d.HasV6:
 			d.Family = 6
-		} else {
+		case arg == strconv.Itoa(service.FamilyBoth) && d.HasV6:
+			d.Family = service.FamilyBoth
+		default:
 			d.Family = 4
 		}
 	case "isp":
@@ -349,7 +352,8 @@ func telegramSpeedSettings(d *telegramSpeedDraft) (string, telegramButtons) {
 	rows = append(rows, items)
 	fam := []map[string]any{tgButton(tgCheck(d.Family == 4, "IPv4"), "sp:fam:4")}
 	if d.HasV6 {
-		fam = append(fam, tgButton(tgCheck(d.Family == 6, "IPv6"), "sp:fam:6"))
+		fam = append(fam, tgButton(tgCheck(d.Family == 6, "IPv6"), "sp:fam:6"),
+			tgButton(tgCheck(d.Family == service.FamilyBoth, "双栈"), fmt.Sprintf("sp:fam:%d", service.FamilyBoth)))
 	}
 	rows = append(rows, fam)
 	isp := []map[string]any{}
@@ -403,8 +407,8 @@ func telegramSpeedSummary(family int, carriers, provinces []string, mode string,
 	if len(items) == 0 {
 		items = []string{service.ItemSpeed}
 	}
-	return fmt.Sprintf("协议：IPv%d | 运营商：%s | 测速点：%s | 项目：%s",
-		family, orDash(strings.Join(isp, "、")), orDash(strings.Join(provinces, "、")), orDash(speedItemsLabel(items, mode)))
+	return fmt.Sprintf("协议：%s | 运营商：%s | 测速点：%s | 项目：%s",
+		familyLabel(family), orDash(strings.Join(isp, "、")), orDash(strings.Join(provinces, "、")), orDash(speedItemsLabel(items, mode)))
 }
 
 // telegramSpeedMinutes is a rough duration: about a minute and a half per
@@ -481,7 +485,7 @@ func (s *Server) telegramSpeedStart(ctx context.Context, actor int64, name strin
 		return "", nil, false, err
 	}
 	s.telegramSpeedAudit(ctx, actor, "speedtest.run", "1 台机器",
-		fmt.Sprintf("IPv%d %s：%s", req.Family, req.Mode, strings.Join(req.Points, "、")))
+		fmt.Sprintf("%s %s：%s", familyLabel(req.Family), req.Mode, strings.Join(req.Points, "、")))
 	provinces, carriers := splitPoints(req.Points)
 	text := fmt.Sprintf("⏳ <b>测速中：%s</b>\n%s\n测完会自动发报告图，大约 %d 分钟。",
 		html.EscapeString(name), html.EscapeString(telegramSpeedSummary(req.Family, carriers, provinces, req.Mode, req.Items)),
@@ -583,7 +587,7 @@ func telegramSpeedReport(job *service.SpeedJobView, nodeID int64, name string) s
 	}
 
 	showSingle, showMulti := req.Mode != "multi", req.Mode != "single"
-	head := []string{fmt.Sprintf("IPv%d", req.Family), "延迟"}
+	head := []string{familyLabel(req.Family), "延迟"}
 	if showSingle {
 		head = append(head, "单↓", "单↑")
 	}
@@ -592,46 +596,53 @@ func telegramSpeedReport(job *service.SpeedJobView, nodeID int64, name string) s
 	}
 	var speedRows, retransRows [][]string
 	var notes []string
-	find := func(point, mode string) *store.SpeedResult {
+	find := func(point, mode string, family int) *store.SpeedResult {
 		for i := range job.Results {
 			r := &job.Results[i]
-			if r.NodeID == nodeID && r.Point == point && r.Mode == mode {
+			if r.NodeID == nodeID && r.Point == point && r.Mode == mode && r.Family == family {
 				return r
 			}
 		}
 		return nil
 	}
-	for _, point := range req.Points {
-		single, multi := find(point, "single"), find(point, "multi")
-		if single == nil && multi == nil {
-			continue
-		}
-		first := single
-		if first == nil {
-			first = multi
-		}
-		row := []string{point, orDash(strings.TrimSuffix(first.RTT, "ms"))}
-		if showSingle {
-			row = append(row, speedCell(single, true), speedCell(single, false))
-		}
-		if showMulti {
-			row = append(row, speedCell(multi, true), speedCell(multi, false))
-		}
-		speedRows = append(speedRows, row)
-		var retrans *float64
-		for _, r := range []*store.SpeedResult{single, multi} {
-			if r == nil {
+	families := requestFamilies(req.Family)
+	for _, family := range families {
+		for _, point := range req.Points {
+			single, multi := find(point, "single", family), find(point, "multi", family)
+			if single == nil && multi == nil {
 				continue
 			}
-			if retrans == nil {
-				retrans = r.Retrans
+			label := point
+			if len(families) > 1 {
+				label = fmt.Sprintf("%s v%d", point, family)
 			}
-			if r.Error != "" {
-				notes = append(notes, fmt.Sprintf("%s %s：%s", point, tgSpeedModeNames[r.Mode], r.Error))
+			first := single
+			if first == nil {
+				first = multi
 			}
-		}
-		if retrans != nil {
-			retransRows = append(retransRows, []string{fmt.Sprintf("%s v%d", point, req.Family), fmt.Sprintf("%.2f%%", *retrans)})
+			row := []string{label, orDash(strings.TrimSuffix(first.RTT, "ms"))}
+			if showSingle {
+				row = append(row, speedCell(single, true), speedCell(single, false))
+			}
+			if showMulti {
+				row = append(row, speedCell(multi, true), speedCell(multi, false))
+			}
+			speedRows = append(speedRows, row)
+			var retrans *float64
+			for _, r := range []*store.SpeedResult{single, multi} {
+				if r == nil {
+					continue
+				}
+				if retrans == nil {
+					retrans = r.Retrans
+				}
+				if r.Error != "" {
+					notes = append(notes, fmt.Sprintf("%s %s：%s", label, tgSpeedModeNames[r.Mode], r.Error))
+				}
+			}
+			if retrans != nil {
+				retransRows = append(retransRows, []string{fmt.Sprintf("%s v%d", point, family), fmt.Sprintf("%.2f%%", *retrans)})
+			}
 		}
 	}
 

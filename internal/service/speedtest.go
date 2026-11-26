@@ -21,7 +21,10 @@ import (
 )
 
 const (
-	speedJobsKeep    = 40
+	// speedJobsKeep and speedJobsFor bound the history: the latest ten,
+	// none older than a day.
+	speedJobsKeep    = 10
+	speedJobsFor     = 24 * time.Hour
 	speedMaxPoints   = 9
 	speedMaxNodes    = 10
 	speedConcurrency = 2
@@ -83,7 +86,17 @@ func (r SpeedRequest) units() int {
 	if r.has(ItemSpeed) {
 		n += len(r.Points) * len(r.modes())
 	}
-	return n
+	return n * len(r.families())
+}
+
+// FamilyBoth asks for IPv4 and IPv6 in one job.
+const FamilyBoth = 46
+
+func (r SpeedRequest) families() []int {
+	if r.Family == FamilyBoth {
+		return []int{4, 6}
+	}
+	return []int{r.Family}
 }
 
 func (r SpeedRequest) modes() []string {
@@ -95,7 +108,7 @@ func (r SpeedRequest) modes() []string {
 
 func (r SpeedRequest) validate() error {
 	if len(r.NodeIDs) == 0 || len(r.NodeIDs) > speedMaxNodes || len(r.Points) == 0 || len(r.Points) > r.maxPoints() ||
-		!slices.Contains([]string{"single", "multi", "both"}, r.Mode) || (r.Family != 4 && r.Family != 6) {
+		!slices.Contains([]string{"single", "multi", "both"}, r.Mode) || !slices.Contains([]int{4, 6, FamilyBoth}, r.Family) {
 		return ErrSpeedRequest
 	}
 	for i, item := range r.Items {
@@ -151,6 +164,11 @@ func (s *Service) SetSpeedTool(t TraceTool) { s.speedTool = t }
 // SetSpeedDone is called with every job once it ends, however it ended.
 func (s *Service) SetSpeedDone(fn func(ctx context.Context, jobID int64, req SpeedRequest)) {
 	s.speedDone = fn
+}
+
+// PruneSpeedtests drops finished tests older than a day.
+func (s *Service) PruneSpeedtests(ctx context.Context) error {
+	return s.store.PruneSpeedJobs(ctx, time.Now().Add(-speedJobsFor).Unix())
 }
 
 // InterruptSpeedJobs closes jobs a previous run of the panel left open.
@@ -270,9 +288,13 @@ func (s *Service) speedNode(ctx context.Context, id int64, run *speedJobRun, req
 		rec.FinishedAt = time.Now().Unix()
 		s.recordSpeedRun(id, rec)
 	}()
-	if req.Family == 6 && node.IPv6Address == "" {
-		rec.Error = "这台机器没有 IPv6"
-		return
+	families := req.families()
+	if node.IPv6Address == "" {
+		families = slices.DeleteFunc(families, func(f int) bool { return f == 6 })
+		if len(families) == 0 {
+			rec.Error = "这台机器没有 IPv6"
+			return
+		}
 	}
 	nodeCtx, cancel := context.WithTimeout(ctx, speedBudget(req))
 	defer cancel()
@@ -295,13 +317,19 @@ func (s *Service) speedNode(ctx context.Context, id int64, run *speedJobRun, req
 	}()
 
 	done := 0
+	if len(families) < len(req.families()) {
+		rec.Error = "这台机器没有 IPv6，只测了 IPv4"
+		done += req.units() / len(req.families())
+	}
 	if req.quality() {
-		s.setSpeedProgress(run, node.ID, done, "回程检测")
-		if err := s.qualityNode(nodeCtx, client.Client, id, req, node); err != nil {
-			rec.Error = err.Error()
+		for _, family := range families {
+			s.setSpeedProgress(run, node.ID, done, fmt.Sprintf("IPv%d 回程检测", family))
+			if err := s.qualityNode(nodeCtx, client.Client, id, req, node, family); err != nil {
+				rec.Error = err.Error()
+			}
+			done += len(req.Points)
+			s.setSpeedProgress(run, node.ID, done, "")
 		}
-		done += len(req.Points)
-		s.setSpeedProgress(run, node.ID, done, "")
 	}
 	if !req.has(ItemSpeed) {
 		return
@@ -311,36 +339,50 @@ func (s *Service) speedNode(ctx context.Context, id int64, run *speedJobRun, req
 		rec.Error = err.Error()
 		return
 	}
-	for _, point := range req.Points {
-		for _, mode := range req.modes() {
-			if nodeCtx.Err() != nil {
-				if ctx.Err() != nil {
-					rec.Error = "已取消"
-				} else {
-					rec.Error = "测速超时"
+	for _, family := range families {
+		for _, point := range req.Points {
+			for _, mode := range req.modes() {
+				if !s.speedRun(nodeCtx, ctx, client.Client, bin, id, run, node, &rec, &done, point, mode, family) {
+					return
 				}
-				return
 			}
-			s.setSpeedProgress(run, node.ID, done, point)
-			res, err := sshx.Run(nodeCtx, client.Client, speedScript(bin, point, mode, req.Family))
-			result := store.SpeedResult{JobID: id, NodeID: node.ID, Point: point, Mode: mode}
-			if err != nil {
-				result.Error = "执行失败：" + err.Error()
-			} else {
-				egress, parsed := parseSpeed(res.Stdout, mode)
-				if egress != "" {
-					rec.Egress = egress
-				}
-				result.RTT, result.Down, result.Up, result.Retrans, result.Retried, result.Error =
-					parsed.RTT, parsed.Down, parsed.Up, parsed.Retrans, parsed.Retried, parsed.Error
-			}
-			if err := s.store.AddSpeedResult(context.Background(), result); err != nil {
-				s.log.Error("record speed result", "job", id, "error", err)
-			}
-			done++
-			s.setSpeedProgress(run, node.ID, done, "")
 		}
 	}
+}
+
+// speedRun tests one point in one mode over one family, and reports whether
+// the machine's job should go on.
+func (s *Service) speedRun(nodeCtx, jobCtx context.Context, client *ssh.Client, bin string, id int64, run *speedJobRun,
+	node *model.Node, rec *store.SpeedRun, done *int, point, mode string, family int) bool {
+	if nodeCtx.Err() != nil {
+		if jobCtx.Err() != nil {
+			rec.Error = "已取消"
+		} else {
+			rec.Error = "测速超时"
+		}
+		return false
+	}
+	s.setSpeedProgress(run, node.ID, *done, fmt.Sprintf("IPv%d %s", family, point))
+	res, err := sshx.Run(nodeCtx, client, speedScript(bin, point, mode, family))
+	result := store.SpeedResult{JobID: id, NodeID: node.ID, Point: point, Mode: mode, Family: family}
+	if err != nil {
+		result.Error = "执行失败：" + err.Error()
+	} else {
+		egress, parsed := parseSpeed(res.Stdout, mode)
+		// The report shows where the machine leaves over IPv4, or
+		// over IPv6 when that is all it was tested on.
+		if egress != "" && (rec.Egress == "" || family == 4) {
+			rec.Egress = egress
+		}
+		result.RTT, result.Down, result.Up, result.Retrans, result.Retried, result.Error =
+			parsed.RTT, parsed.Down, parsed.Up, parsed.Retrans, parsed.Retried, parsed.Error
+	}
+	if err := s.store.AddSpeedResult(context.Background(), result); err != nil {
+		s.log.Error("record speed result", "job", id, "error", err)
+	}
+	*done++
+	s.setSpeedProgress(run, node.ID, *done, "")
+	return true
 }
 
 // speedBudget bounds one machine's part of a job: each batch of points
@@ -348,6 +390,7 @@ func (s *Service) speedNode(ctx context.Context, id int64, run *speedJobRun, req
 // run its own.
 func speedBudget(req SpeedRequest) time.Duration {
 	d := time.Minute
+	defer func() { d *= time.Duration(len(req.families())) }()
 	if req.quality() {
 		batches := (len(req.Points) + qualityParallel - 1) / qualityParallel
 		d += time.Duration(batches) * (5*qualityTimeout + 30*time.Second)

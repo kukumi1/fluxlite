@@ -37,6 +37,7 @@ type SpeedResult struct {
 	NodeID  int64    `json:"node_id"`
 	Point   string   `json:"point"`
 	Mode    string   `json:"mode"`
+	Family  int      `json:"family"`
 	RTT     string   `json:"rtt"`
 	Down    *float64 `json:"down"`
 	Up      *float64 `json:"up"`
@@ -111,9 +112,9 @@ func (s *Store) SetSpeedRun(ctx context.Context, r SpeedRun) error {
 
 func (s *Store) AddSpeedResult(ctx context.Context, r SpeedResult) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT OR REPLACE INTO speed_results (job_id, node_id, point, mode, rtt, down, up, retrans, retried, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.JobID, r.NodeID, r.Point, r.Mode, r.RTT, r.Down, r.Up, r.Retrans, r.Retried, r.Error)
+		INSERT OR REPLACE INTO speed_results (job_id, node_id, point, mode, family, rtt, down, up, retrans, retried, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.JobID, r.NodeID, r.Point, r.Mode, r.Family, r.RTT, r.Down, r.Up, r.Retrans, r.Retried, r.Error)
 	if err != nil {
 		return fmt.Errorf("record speed result: %w", err)
 	}
@@ -161,7 +162,7 @@ func (s *Store) SpeedJobs(ctx context.Context) ([]SpeedJob, map[int64][]SpeedRun
 
 	results := make(map[int64][]SpeedResult)
 	resRows, err := s.db.QueryContext(ctx, `
-		SELECT job_id, node_id, point, mode, rtt, down, up, retrans, retried, error
+		SELECT job_id, node_id, point, mode, family, rtt, down, up, retrans, retried, error
 		FROM speed_results ORDER BY job_id, node_id, rowid`)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("query speed results: %w", err)
@@ -170,7 +171,7 @@ func (s *Store) SpeedJobs(ctx context.Context) ([]SpeedJob, map[int64][]SpeedRun
 	for resRows.Next() {
 		var r SpeedResult
 		var down, up, retrans sql.NullFloat64
-		if err := resRows.Scan(&r.JobID, &r.NodeID, &r.Point, &r.Mode, &r.RTT, &down, &up, &retrans, &r.Retried, &r.Error); err != nil {
+		if err := resRows.Scan(&r.JobID, &r.NodeID, &r.Point, &r.Mode, &r.Family, &r.RTT, &down, &up, &retrans, &r.Retried, &r.Error); err != nil {
 			return nil, nil, nil, fmt.Errorf("scan speed result: %w", err)
 		}
 		r.Down, r.Up, r.Retrans = nullFloat(down), nullFloat(up), nullFloat(retrans)
@@ -193,6 +194,7 @@ type QualityResult struct {
 	NodeID int64  `json:"node_id"`
 	Point  string `json:"point"`
 	Item   string `json:"item"`
+	Family int    `json:"family"`
 	Line   string `json:"line,omitempty"`
 	MS     *int   `json:"ms"`
 	Loss   *int   `json:"loss"`
@@ -201,9 +203,9 @@ type QualityResult struct {
 
 func (s *Store) AddQualityResult(ctx context.Context, r QualityResult) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT OR REPLACE INTO quality_results (job_id, node_id, point, item, line, ms, loss, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.JobID, r.NodeID, r.Point, r.Item, r.Line, r.MS, r.Loss, r.Error)
+		INSERT OR REPLACE INTO quality_results (job_id, node_id, point, item, family, line, ms, loss, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.JobID, r.NodeID, r.Point, r.Item, r.Family, r.Line, r.MS, r.Loss, r.Error)
 	if err != nil {
 		return fmt.Errorf("record quality result: %w", err)
 	}
@@ -213,7 +215,7 @@ func (s *Store) AddQualityResult(ctx context.Context, r QualityResult) error {
 // QualityResults returns every kept job's return-quality results.
 func (s *Store) QualityResults(ctx context.Context) (map[int64][]QualityResult, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT job_id, node_id, point, item, line, ms, loss, error FROM quality_results ORDER BY job_id, node_id, rowid`)
+		SELECT job_id, node_id, point, item, family, line, ms, loss, error FROM quality_results ORDER BY job_id, node_id, rowid`)
 	if err != nil {
 		return nil, fmt.Errorf("query quality results: %w", err)
 	}
@@ -222,7 +224,7 @@ func (s *Store) QualityResults(ctx context.Context) (map[int64][]QualityResult, 
 	for rows.Next() {
 		var r QualityResult
 		var ms, loss sql.NullInt64
-		if err := rows.Scan(&r.JobID, &r.NodeID, &r.Point, &r.Item, &r.Line, &ms, &loss, &r.Error); err != nil {
+		if err := rows.Scan(&r.JobID, &r.NodeID, &r.Point, &r.Item, &r.Family, &r.Line, &ms, &loss, &r.Error); err != nil {
 			return nil, fmt.Errorf("scan quality result: %w", err)
 		}
 		if ms.Valid {
@@ -236,4 +238,12 @@ func (s *Store) QualityResults(ctx context.Context) (map[int64][]QualityResult, 
 		out[r.JobID] = append(out[r.JobID], r)
 	}
 	return out, rows.Err()
+}
+
+// PruneSpeedJobs removes finished jobs created before the given time.
+func (s *Store) PruneSpeedJobs(ctx context.Context, before int64) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM speed_jobs WHERE created_at < ? AND status != 'running'`, before); err != nil {
+		return fmt.Errorf("prune speed jobs: %w", err)
+	}
+	return nil
 }

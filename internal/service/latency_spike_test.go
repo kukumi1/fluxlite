@@ -17,8 +17,8 @@ func TestSpikeVerdict(t *testing.T) {
 	sub := spikeSubject(online, []spikeReading{
 		link("广东联通", 6, 182, 69),
 		link("北京移动", 6, 186, 42),
-		link("上海电信", 4, 70, 20), // 3.5x but only 50ms up: counts
-		link("上海联通", 4, 60, 20), // 3x but only 40ms up: does not
+		link("上海电信", 4, 70, 20),  // 3.5x but only 50ms up: counts
+		link("上海联通", 4, 60, 20),  // 3x but only 40ms up: does not
 		link("广东电信", 4, 130, 80), // 50ms up but under 2x: does not
 	})
 	if sub.state != obsFailing || len(sub.reasons) != 3 {

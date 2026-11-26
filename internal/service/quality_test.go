@@ -102,3 +102,19 @@ func TestRouteLineFromTraces(t *testing.T) {
 		t.Fatalf("%q %v", line, err)
 	}
 }
+
+func TestDualStackRequests(t *testing.T) {
+	both := SpeedRequest{NodeIDs: []int64{1}, Points: []string{"四川电信", "四川联通"}, Mode: "both", Family: FamilyBoth, Items: []string{ItemRoute, ItemSpeed}}
+	if err := both.validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := both.families(); len(got) != 2 || got[0] != 4 || got[1] != 6 {
+		t.Fatal(got)
+	}
+	if both.units() != (2+2*2)*2 {
+		t.Fatalf("every step runs once per family: %d", both.units())
+	}
+	if (SpeedRequest{NodeIDs: []int64{1}, Points: []string{"四川电信"}, Mode: "single", Family: 5, Items: []string{ItemRoute}}).validate() == nil {
+		t.Fatal("only 4, 6 or both")
+	}
+}

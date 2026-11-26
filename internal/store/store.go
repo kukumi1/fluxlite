@@ -544,6 +544,50 @@ func init() {
 			error   TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (job_id, node_id, point, item)
 		)`)
+
+	// A test can run over IPv4 and IPv6 together, so every result says which
+	// it was; those recorded so far were the job's one family.
+	migrations = append(migrations,
+		`CREATE TABLE speed_results_v2 (
+			job_id  INTEGER NOT NULL REFERENCES speed_jobs(id) ON DELETE CASCADE,
+			node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+			point   TEXT NOT NULL,
+			mode    TEXT NOT NULL,
+			rtt     TEXT NOT NULL DEFAULT '',
+			down    REAL,
+			up      REAL,
+			retrans REAL,
+			retried INTEGER NOT NULL DEFAULT 0,
+			error   TEXT NOT NULL DEFAULT '',
+			family  INTEGER NOT NULL,
+			PRIMARY KEY (job_id, node_id, point, mode, family)
+		)`,
+		`INSERT INTO speed_results_v2
+			SELECT r.job_id, r.node_id, r.point, r.mode, r.rtt, r.down, r.up, r.retrans, r.retried, r.error,
+				COALESCE(json_extract(j.params, '$.family'), 4)
+			FROM speed_results r JOIN speed_jobs j ON j.id = r.job_id`,
+		`DROP TABLE speed_results`,
+		`ALTER TABLE speed_results_v2 RENAME TO speed_results`,
+		`CREATE TABLE quality_results_v2 (
+			job_id  INTEGER NOT NULL REFERENCES speed_jobs(id) ON DELETE CASCADE,
+			node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+			point   TEXT NOT NULL,
+			item    TEXT NOT NULL,
+			line    TEXT NOT NULL DEFAULT '',
+			ms      INTEGER,
+			loss    INTEGER,
+			error   TEXT NOT NULL DEFAULT '',
+			family  INTEGER NOT NULL,
+			PRIMARY KEY (job_id, node_id, point, item, family)
+		)`,
+		`INSERT INTO quality_results_v2
+			SELECT q.job_id, q.node_id, q.point, q.item, q.line, q.ms, q.loss, q.error,
+				COALESCE(json_extract(j.params, '$.family'), 4)
+			FROM quality_results q JOIN speed_jobs j ON j.id = q.job_id`,
+		`DROP TABLE quality_results`,
+		`ALTER TABLE quality_results_v2 RENAME TO quality_results`,
+		`CREATE INDEX IF NOT EXISTS idx_speed_results_job ON speed_results(job_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_quality_results_job ON quality_results(job_id)`)
 }
 
 // retiredMigration holds the place of a migration whose feature was withdrawn

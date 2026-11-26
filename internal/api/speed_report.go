@@ -43,7 +43,7 @@ func speedReportInput(job *service.SpeedJobView, nodeID int64, name string) repo
 	req := job.Request
 	provinces, carriers := splitPoints(req.Points)
 	in := report.Input{
-		Name: name, Family: req.Family, Points: req.Points, Items: req.Items,
+		Name: name, Families: reportFamilies(job, nodeID), Points: req.Points, Items: req.Items,
 		Settings: telegramSpeedSummary(req.Family, carriers, provinces, req.Mode, req.Items),
 		Finished: time.Unix(job.FinishedAt, 0),
 	}
@@ -79,15 +79,59 @@ func speedReportInput(job *service.SpeedJobView, nodeID int64, name string) repo
 	}
 	for _, q := range job.Quality {
 		if q.NodeID == nodeID {
-			in.Quality = append(in.Quality, report.Quality{Point: q.Point, Item: q.Item, Line: q.Line, MS: q.MS, Loss: q.Loss, Error: q.Error})
+			in.Quality = append(in.Quality, report.Quality{Point: q.Point, Item: q.Item, Family: q.Family, Line: q.Line, MS: q.MS, Loss: q.Loss, Error: q.Error})
 		}
 	}
 	for _, r := range job.Results {
 		if r.NodeID == nodeID {
-			in.Speeds = append(in.Speeds, report.Speed{Point: r.Point, Mode: r.Mode, RTT: r.RTT, Down: r.Down, Up: r.Up, Retrans: r.Retrans, Error: r.Error})
+			in.Speeds = append(in.Speeds, report.Speed{Point: r.Point, Mode: r.Mode, Family: r.Family, RTT: r.RTT, Down: r.Down, Up: r.Up, Retrans: r.Retrans, Error: r.Error})
 		}
 	}
 	return in
+}
+
+// familyLabel names a request's family: IPv4, IPv6 or both.
+func familyLabel(family int) string {
+	if family == service.FamilyBoth {
+		return "IPv4 + IPv6"
+	}
+	return fmt.Sprintf("IPv%d", family)
+}
+
+// requestFamilies are the families a request asked for, IPv4 first.
+func requestFamilies(family int) []int {
+	if family == service.FamilyBoth {
+		return []int{4, 6}
+	}
+	return []int{family}
+}
+
+// reportFamilies are the families a machine has results for, or those
+// asked for while it has none yet: a machine without IPv6 asked for both
+// shows IPv4 alone.
+func reportFamilies(job *service.SpeedJobView, nodeID int64) []int {
+	asked := requestFamilies(job.Request.Family)
+	seen := map[int]bool{}
+	for _, q := range job.Quality {
+		if q.NodeID == nodeID {
+			seen[q.Family] = true
+		}
+	}
+	for _, r := range job.Results {
+		if r.NodeID == nodeID {
+			seen[r.Family] = true
+		}
+	}
+	if len(seen) == 0 {
+		return asked
+	}
+	var out []int
+	for _, f := range asked {
+		if seen[f] {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func (s *Server) nodeName(ctx context.Context, id int64) string {

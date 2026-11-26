@@ -231,16 +231,16 @@ func routeLine(out, ip string) (string, error) {
 
 // qualityNode runs the return-quality items on one machine and records a
 // result for every point and item.
-func (s *Service) qualityNode(ctx context.Context, client *ssh.Client, id int64, req SpeedRequest, node *model.Node) error {
+func (s *Service) qualityNode(ctx context.Context, client *ssh.Client, id int64, req SpeedRequest, node *model.Node, family int) error {
 	if s.traceTool == nil {
 		return fmt.Errorf("面板未配置路由追踪工具")
 	}
 	targets := make([]qualityTarget, len(req.Points))
 	for i, p := range req.Points {
 		targets[i].point = p
-		ip, err := resolveIP(ctx, qualityHost(p, req.Family), req.Family)
+		ip, err := resolveIP(ctx, qualityHost(p, family), family)
 		if err != nil {
-			targets[i].err = fmt.Sprintf("%s 没有 IPv%d 节点", p, req.Family)
+			targets[i].err = fmt.Sprintf("%s 没有 IPv%d 节点", p, family)
 			continue
 		}
 		targets[i].ip = ip
@@ -259,7 +259,7 @@ func (s *Service) qualityNode(ctx context.Context, client *ssh.Client, id int64,
 			if !req.has(item) {
 				continue
 			}
-			r := store.QualityResult{JobID: id, NodeID: node.ID, Point: t.point, Item: item}
+			r := store.QualityResult{JobID: id, NodeID: node.ID, Point: t.point, Item: item, Family: family}
 			out := sections[fmt.Sprintf("%s %d", item, i)]
 			switch {
 			case t.err != "":

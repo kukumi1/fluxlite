@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Gauge, Play, Trash2, X } from "lucide-react";
 import {
   api, ApiError,
-  type IPFamily, type Node, type SpeedItem, type SpeedJob, type SpeedMode, type SpeedOverview,
+  type Node, type SpeedFamily, type SpeedItem, type SpeedJob, type SpeedMode, type SpeedOverview,
 } from "../api";
 import { Banner } from "../components/Modal";
 import { useConfirm } from "../components/ConfirmDialog";
@@ -36,6 +36,12 @@ const toggled = <T,>(set: Set<T>, value: T) => {
 const when = (unix: number) => new Date(unix * 1000).toLocaleString("zh-CN", { hour12: false });
 
 // The settings line of a job: 协议：IPv4 | 运营商：联通、移动 | 测速点：广东 | 单线程.
+const FAMILIES: ReadonlyArray<readonly [SpeedFamily, string]> = [[4, "IPv4"], [6, "IPv6"], [46, "双栈"]];
+
+function familyLabel(family: SpeedFamily) {
+  return family === 46 ? "IPv4 + IPv6" : `IPv${family}`;
+}
+
 function summary(job: SpeedJob, carriers: string[]) {
   const provinces: string[] = [];
   const used = new Set<string>();
@@ -48,7 +54,7 @@ function summary(job: SpeedJob, carriers: string[]) {
   }
   const mode = MODES.find(([m]) => m === job.request.mode)?.[1] ?? job.request.mode;
   const items = ITEMS.filter(([i]) => job.request.items.includes(i)).map(([i, label]) => (i === "speed" ? `${mode}测速` : label));
-  return `协议：IPv${job.request.family} | 运营商：${carriers.filter((c) => used.has(c)).join("、")} | 测速点：${provinces.join("、")} | 项目：${items.join("、")}`;
+  return `协议：${familyLabel(job.request.family)} | 运营商：${carriers.filter((c) => used.has(c)).join("、")} | 测速点：${provinces.join("、")} | 项目：${items.join("、")}`;
 }
 
 export function Speedtest() {
@@ -60,7 +66,7 @@ export function Speedtest() {
   const [points, setPoints] = useState<Set<string>>(() => new Set(["电信", "联通", "移动"].map((c) => DEFAULT_PROVINCE + c)));
   const [items, setItems] = useState<Set<SpeedItem>>(() => new Set<SpeedItem>(["route", "large", "udp", "speed"]));
   const [mode, setMode] = useState<SpeedMode>("single");
-  const [family, setFamily] = useState<IPFamily>(4);
+  const [family, setFamily] = useState<SpeedFamily>(4);
   const [starting, setStarting] = useState(false);
   const [confirm, confirmDialog] = useConfirm();
 
@@ -87,7 +93,7 @@ export function Speedtest() {
 
   const busyNodes = new Set((overview?.jobs ?? []).filter((j) => j.status === "running").flatMap((j) => j.request.node_ids));
   const withSpeed = items.has("speed");
-  const runsPerMachine = withSpeed ? points.size * (mode === "both" ? 2 : 1) : 0;
+  const runsPerMachine = withSpeed ? points.size * (mode === "both" ? 2 : 1) * (family === 46 ? 2 : 1) : 0;
   const maxPoints = withSpeed ? MAX_SPEED_POINTS : (overview?.provinces.length ?? 31) * 3;
   const quick = (provinces: string[]) => setPoints(new Set(provinces.flatMap((p) => (overview?.carriers ?? []).map((c) => p + c))));
 
@@ -214,8 +220,10 @@ export function Speedtest() {
             </div>
           )}
           <div className="segmented labels" role="radiogroup" aria-label="协议">
-            {([4, 6] as const).map((f) => (
-              <button key={f} type="button" role="radio" aria-checked={family === f} className={family === f ? "active" : ""} onClick={() => { setFamily(f); setMachines(new Set()); }}>IPv{f}</button>
+            {FAMILIES.map(([f, label]) => (
+              <button key={f} type="button" role="radio" aria-checked={family === f} className={family === f ? "active" : ""}
+                title={f === 46 ? "IPv4 和 IPv6 各测一遍；没有 IPv6 的机器只测 IPv4" : undefined}
+                onClick={() => { setFamily(f); setMachines(new Set()); }}>{label}</button>
             ))}
           </div>
           <span className="muted speed-estimate">
@@ -235,7 +243,7 @@ export function Speedtest() {
         </div>
       )}
       {overview?.jobs.map((job) => <JobCard key={job.id} job={job} nodes={nodes} carriers={overview.carriers} onCancel={() => void cancel(job)} onDelete={() => void remove(job)} />)}
-      {overview?.tool && <p className="muted speed-foot">测速程序 {overview.tool}（taierspeedtest-mod，「全球网测」的命令行客户端），面板校验后传到机器，机器本身不连 GitHub。只保留最近 40 次记录。</p>}
+      {overview?.tool && <p className="muted speed-foot">测速程序 {overview.tool}（taierspeedtest-mod，「全球网测」的命令行客户端），面板校验后传到机器，机器本身不连 GitHub。只保留最近 10 次记录，超过 24 小时自动删除。</p>}
       {confirmDialog}
     </div>
   );

@@ -122,6 +122,9 @@ var privateRanges = []netip.Prefix{
 }
 
 func isPrivate(a netip.Addr) bool {
+	if !a.Is4() {
+		return a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsLoopback() || a.IsUnspecified()
+	}
 	for _, p := range privateRanges {
 		if p.Contains(a) {
 			return true
@@ -133,10 +136,19 @@ func isPrivate(a netip.Addr) bool {
 // Annotate fills in each hop's origin AS and backbone. The prefix table
 // decides for the carriers' networks; elsewhere an AS the tracer already
 // reported is kept.
+//
+// IPv6 has no prefix table and no backbone ranges set apart the way 202.97
+// is, so a hop there is judged by the AS the tracer reported: the premium
+// networks have ASes of their own, and an AS that holds both a backbone and
+// provincial networks counts as its backbone, as other tools report it.
 func Annotate(hops []Hop) {
 	for i := range hops {
 		addr, err := netip.ParseAddr(hops[i].IP)
-		if err != nil || !addr.Is4() || isPrivate(addr) {
+		if err != nil || isPrivate(addr) {
+			continue
+		}
+		if !addr.Is4() {
+			hops[i].Net = backboneOfV6(hops[i].ASN)
 			continue
 		}
 		if asn := ASNOf(hops[i].IP); asn != 0 {
@@ -144,6 +156,18 @@ func Annotate(hops []Hop) {
 		}
 		hops[i].Net = backboneOf(addr, hops[i].ASN)
 	}
+}
+
+func backboneOfV6(asn int) string {
+	switch asn {
+	case 4134:
+		return net163
+	case 4837:
+		return net169
+	case 9808:
+		return netCMNET
+	}
+	return backboneOf(netip.Addr{}, asn)
 }
 
 type pubHop struct {

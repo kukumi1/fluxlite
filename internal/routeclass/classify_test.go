@@ -100,3 +100,35 @@ func TestComparable(t *testing.T) {
 		t.Fatal("comparable")
 	}
 }
+
+// IPv6 hops carry the AS the tracer reported; there is no prefix table to
+// overrule it.
+func TestClassifyIPv6ByAS(t *testing.T) {
+	v6 := func(asns ...int) []Hop {
+		hops := []Hop{{TTL: 1, IP: "fe80::1"}}
+		for i, asn := range asns {
+			hops = append(hops, Hop{TTL: i + 2, IP: "2001:db8::" + string(rune('a'+i)), ASN: asn})
+		}
+		Annotate(hops)
+		return hops
+	}
+	cases := []struct {
+		asns []int
+		line string
+	}{
+		{[]int{3257, 4134, 4134, 4134}, "163"},
+		{[]int{4809, 4809, 4134}, "CN2 GIA"},
+		{[]int{3257, 4837, 4837, 4837}, "4837"},
+		{[]int{58807, 9808, 9808}, "CMIN2"},
+		{[]int{58453, 9808, 9808}, "CMI"},
+	}
+	for _, c := range cases {
+		hops := v6(c.asns...)
+		if v := Classify(hops, hops[len(hops)-1].IP); v.Line != c.line {
+			t.Errorf("%v: %q (%s)", c.asns, v.Line, v.Evidence)
+		}
+	}
+	if hops := v6(4134); hops[0].Net != "" {
+		t.Fatal("a link-local hop is nobody's backbone")
+	}
+}

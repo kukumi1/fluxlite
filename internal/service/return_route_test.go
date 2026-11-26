@@ -80,7 +80,7 @@ func TestReturnSettingsDefaultSkipsNAT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Targets) != 12 || !slices.Equal(cfg.SkipNodes, []int64{nat.ID}) {
+	if !slices.Equal(cfg.Targets, []string{"四川电信", "四川联通", "四川移动"}) || !slices.Equal(cfg.SkipNodes, []int64{nat.ID}) {
 		t.Fatalf("%+v", cfg)
 	}
 

@@ -185,3 +185,55 @@ func nullFloat(v sql.NullFloat64) *float64 {
 	}
 	return &v.Float64
 }
+
+// QualityResult is one return-quality item for one point: Line for the
+// route and UDP items, MS and Loss (percent) for the route and large items.
+type QualityResult struct {
+	JobID  int64  `json:"-"`
+	NodeID int64  `json:"node_id"`
+	Point  string `json:"point"`
+	Item   string `json:"item"`
+	Line   string `json:"line,omitempty"`
+	MS     *int   `json:"ms"`
+	Loss   *int   `json:"loss"`
+	Error  string `json:"error,omitempty"`
+}
+
+func (s *Store) AddQualityResult(ctx context.Context, r QualityResult) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT OR REPLACE INTO quality_results (job_id, node_id, point, item, line, ms, loss, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.JobID, r.NodeID, r.Point, r.Item, r.Line, r.MS, r.Loss, r.Error)
+	if err != nil {
+		return fmt.Errorf("record quality result: %w", err)
+	}
+	return nil
+}
+
+// QualityResults returns every kept job's return-quality results.
+func (s *Store) QualityResults(ctx context.Context) (map[int64][]QualityResult, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT job_id, node_id, point, item, line, ms, loss, error FROM quality_results ORDER BY job_id, node_id, rowid`)
+	if err != nil {
+		return nil, fmt.Errorf("query quality results: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[int64][]QualityResult)
+	for rows.Next() {
+		var r QualityResult
+		var ms, loss sql.NullInt64
+		if err := rows.Scan(&r.JobID, &r.NodeID, &r.Point, &r.Item, &r.Line, &ms, &loss, &r.Error); err != nil {
+			return nil, fmt.Errorf("scan quality result: %w", err)
+		}
+		if ms.Valid {
+			v := int(ms.Int64)
+			r.MS = &v
+		}
+		if loss.Valid {
+			v := int(loss.Int64)
+			r.Loss = &v
+		}
+		out[r.JobID] = append(out[r.JobID], r)
+	}
+	return out, rows.Err()
+}

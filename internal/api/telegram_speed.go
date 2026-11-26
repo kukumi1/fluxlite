@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kukumi1/fluxlite/internal/model"
+	"github.com/kukumi1/fluxlite/internal/report"
 	"github.com/kukumi1/fluxlite/internal/service"
 	"github.com/kukumi1/fluxlite/internal/store"
 )
@@ -33,6 +34,18 @@ type telegramSpeedPrefs struct {
 	Carriers  []string `json:"carriers"`
 	Provinces []string `json:"provinces"`
 	Mode      string   `json:"mode"`
+	Items     []string `json:"items"`
+}
+
+// tgItems are the item buttons, in the order the report shows them.
+var tgItems = [][2]string{{service.ItemRoute, "回程"}, {service.ItemLarge, "大包"}, {service.ItemUDP, "UDP"}, {service.ItemSpeed, "测速"}}
+
+// maxPoints mirrors the service: nine with a speed test, all without.
+func (p telegramSpeedPrefs) maxPoints() int {
+	if slices.Contains(p.Items, service.ItemSpeed) {
+		return 9
+	}
+	return len(service.SpeedProvinces) * len(service.SpeedCarriers)
 }
 
 type telegramSpeedDraft struct {
@@ -57,7 +70,17 @@ func (d *telegramSpeedDraft) points() []string {
 }
 
 func (d *telegramSpeedDraft) request() service.SpeedRequest {
-	return service.SpeedRequest{NodeIDs: []int64{d.NodeID}, Points: d.points(), Mode: d.Mode, Family: d.Family, Origin: "telegram"}
+	return service.SpeedRequest{NodeIDs: []int64{d.NodeID}, Points: d.points(), Mode: d.Mode, Family: d.Family, Items: d.orderedItems(), Origin: "telegram"}
+}
+
+func (d *telegramSpeedDraft) orderedItems() []string {
+	var out []string
+	for _, it := range tgItems {
+		if slices.Contains(d.Items, it[0]) {
+			out = append(out, it[0])
+		}
+	}
+	return out
 }
 
 func toggleString(list []string, v string) []string {
@@ -126,7 +149,7 @@ func (s *Server) telegramSpeedStep(ctx context.Context, actor int64, cmd string)
 			return "", nil, false, errTelegramDraft
 		}
 		return s.telegramSpeedPick(ctx, actor, id)
-	case "fam", "isp", "prov", "mode", "more", "less":
+	case "fam", "isp", "prov", "mode", "more", "less", "item":
 		return s.telegramSpeedToggle(ctx, actor, action, arg)
 	case "go":
 		return s.telegramSpeedGo(ctx, actor)
@@ -205,7 +228,8 @@ func (s *Server) telegramSpeedNodes(ctx context.Context, page int) (string, tele
 }
 
 func (s *Server) telegramSpeedPrefs(ctx context.Context) telegramSpeedPrefs {
-	prefs := telegramSpeedPrefs{Family: 4, Carriers: slices.Clone(service.SpeedCarriers), Provinces: []string{"北京", "上海", "广东"}, Mode: "single"}
+	prefs := telegramSpeedPrefs{Family: 4, Carriers: slices.Clone(service.SpeedCarriers), Provinces: []string{"四川"}, Mode: "single",
+		Items: []string{service.ItemRoute, service.ItemLarge, service.ItemUDP, service.ItemSpeed}}
 	raw, ok, err := s.svc.Store().Setting(ctx, telegramSpeedPrefsKey)
 	if err != nil || !ok {
 		return prefs
@@ -213,6 +237,10 @@ func (s *Server) telegramSpeedPrefs(ctx context.Context) telegramSpeedPrefs {
 	var saved telegramSpeedPrefs
 	if json.Unmarshal([]byte(raw), &saved) != nil {
 		return prefs
+	}
+	// Choices saved before items could be picked were a speed test.
+	if len(saved.Items) == 0 {
+		saved.Items = []string{service.ItemSpeed}
 	}
 	return saved
 }
@@ -275,6 +303,10 @@ func (s *Server) telegramSpeedToggle(ctx context.Context, actor int64, action, a
 		if _, ok := tgSpeedModeNames[arg]; ok {
 			d.Mode = arg
 		}
+	case "item":
+		if _, ok := itemNames[arg]; ok {
+			d.Items = toggleString(d.Items, arg)
+		}
 	case "more":
 		d.AllProvs = true
 	case "less":
@@ -294,21 +326,27 @@ func tgCheck(on bool, label string) string {
 func telegramSpeedSettings(d *telegramSpeedDraft) (string, telegramButtons) {
 	points := d.points()
 	var b strings.Builder
-	fmt.Fprintf(&b, "🚀 <b>测速 · %s</b>\n%s\n", html.EscapeString(d.NodeName), html.EscapeString(telegramSpeedSummary(d.Family, d.Carriers, d.Provinces, d.Mode)))
+	fmt.Fprintf(&b, "🚀 <b>测速 · %s</b>\n%s\n", html.EscapeString(d.NodeName), html.EscapeString(telegramSpeedSummary(d.Family, d.Carriers, d.Provinces, d.Mode, d.Items)))
 	switch {
+	case len(d.Items) == 0:
+		b.WriteString("\n至少选一个检测项目。")
 	case len(points) == 0:
 		b.WriteString("\n至少选一个运营商和一个省份。")
-	case len(points) > 9:
-		fmt.Fprintf(&b, "\n⚠️ 共 %d 个测速点，一次最多 9 个，请少选一些。", len(points))
+	case len(points) > d.maxPoints():
+		fmt.Fprintf(&b, "\n⚠️ 共 %d 个测速点，含测速时一次最多 9 个，请少选一些。", len(points))
 	default:
-		runs := len(points)
-		if d.Mode == "both" {
-			runs *= 2
+		fmt.Fprintf(&b, "\n共 %d 个测速点，大约 %d 分钟。", len(points), telegramSpeedMinutes(len(points), d.Mode, d.Items))
+		if slices.Contains(d.Items, service.ItemSpeed) {
+			b.WriteString("测速单线程每次几百 MB，多线程可能上 GB。")
 		}
-		fmt.Fprintf(&b, "\n共 %d 个测速点，跑 %d 次，大约 %d 分钟；单线程每次几百 MB，多线程可能上 GB。", len(points), runs, max(1, runs*25/60))
 	}
 
 	rows := telegramButtons{}
+	items := []map[string]any{}
+	for _, it := range tgItems {
+		items = append(items, tgButton(tgCheck(slices.Contains(d.Items, it[0]), it[1]), "sp:item:"+it[0]))
+	}
+	rows = append(rows, items)
 	fam := []map[string]any{tgButton(tgCheck(d.Family == 4, "IPv4"), "sp:fam:4")}
 	if d.HasV6 {
 		fam = append(fam, tgButton(tgCheck(d.Family == 6, "IPv6"), "sp:fam:6"))
@@ -342,26 +380,49 @@ func telegramSpeedSettings(d *telegramSpeedDraft) (string, telegramButtons) {
 	} else {
 		rows = append(rows, []map[string]any{tgButton("更多省份 ›", "sp:more")})
 	}
-	mode := []map[string]any{}
-	for _, m := range tgSpeedModes {
-		mode = append(mode, tgButton(tgCheck(d.Mode == m[0], m[1]), "sp:mode:"+m[0]))
+	if slices.Contains(d.Items, service.ItemSpeed) {
+		mode := []map[string]any{}
+		for _, m := range tgSpeedModes {
+			mode = append(mode, tgButton(tgCheck(d.Mode == m[0], m[1]), "sp:mode:"+m[0]))
+		}
+		rows = append(rows, mode)
 	}
-	rows = append(rows, mode)
 	rows = append(rows, []map[string]any{tgButton("▶️ 开始", "sp:go"), tgButton("‹ 换机器", "sp:menu")})
 	return b.String(), rows
 }
 
 // telegramSpeedSummary is the settings line shared by the settings page,
 // the running notice and the result: 协议：IPv4 | 运营商：… | 测速点：… | 模式.
-func telegramSpeedSummary(family int, carriers, provinces []string, mode string) string {
+func telegramSpeedSummary(family int, carriers, provinces []string, mode string, items []string) string {
 	isp := make([]string, 0, len(carriers))
 	for _, c := range service.SpeedCarriers {
 		if slices.Contains(carriers, c) {
 			isp = append(isp, c)
 		}
 	}
-	return fmt.Sprintf("协议：IPv%d | 运营商：%s | 测速点：%s | %s",
-		family, orDash(strings.Join(isp, "、")), orDash(strings.Join(provinces, "、")), tgSpeedModeNames[mode])
+	if len(items) == 0 {
+		items = []string{service.ItemSpeed}
+	}
+	return fmt.Sprintf("协议：IPv%d | 运营商：%s | 测速点：%s | 项目：%s",
+		family, orDash(strings.Join(isp, "、")), orDash(strings.Join(provinces, "、")), orDash(speedItemsLabel(items, mode)))
+}
+
+// telegramSpeedMinutes is a rough duration: about a minute and a half per
+// batch of four points for the return-quality items, and 25 seconds per
+// speed test run.
+func telegramSpeedMinutes(points int, mode string, items []string) int {
+	seconds := 0
+	if slices.ContainsFunc(items, func(i string) bool { return i != service.ItemSpeed }) {
+		seconds += (points + 3) / 4 * 90
+	}
+	if slices.Contains(items, service.ItemSpeed) {
+		runs := points
+		if mode == "both" {
+			runs *= 2
+		}
+		seconds += runs * 25
+	}
+	return max(1, (seconds+59)/60)
 }
 
 func orDash(s string) string {
@@ -397,7 +458,7 @@ func (s *Server) telegramSpeedGo(ctx context.Context, actor int64) (string, tele
 		t.mu.Unlock()
 		return "", nil, false, err
 	}
-	if n := len(d.points()); n == 0 || n > 9 {
+	if n := len(d.points()); n == 0 || n > d.maxPoints() || len(d.Items) == 0 {
 		text, b := telegramSpeedSettings(d)
 		t.mu.Unlock()
 		return text, b, true, nil
@@ -422,12 +483,9 @@ func (s *Server) telegramSpeedStart(ctx context.Context, actor int64, name strin
 	s.telegramSpeedAudit(ctx, actor, "speedtest.run", "1 台机器",
 		fmt.Sprintf("IPv%d %s：%s", req.Family, req.Mode, strings.Join(req.Points, "、")))
 	provinces, carriers := splitPoints(req.Points)
-	runs := len(req.Points)
-	if req.Mode == "both" {
-		runs *= 2
-	}
-	text := fmt.Sprintf("⏳ <b>测速中：%s</b>\n%s\n测完会自动发结果，大约 %d 分钟。",
-		html.EscapeString(name), html.EscapeString(telegramSpeedSummary(req.Family, carriers, provinces, req.Mode)), max(1, runs*25/60))
+	text := fmt.Sprintf("⏳ <b>测速中：%s</b>\n%s\n测完会自动发报告图，大约 %d 分钟。",
+		html.EscapeString(name), html.EscapeString(telegramSpeedSummary(req.Family, carriers, provinces, req.Mode, req.Items)),
+		telegramSpeedMinutes(len(req.Points), req.Mode, req.Items))
 	return text, telegramButtons{{tgButton("❌ 取消测速", fmt.Sprintf("sp:cancel:%d", id))}}, true, nil
 }
 
@@ -484,6 +542,15 @@ func (s *Server) telegramSpeedDone(ctx context.Context, jobID int64, req service
 		if n, err := s.svc.Store().NodeByID(ctx, id); err == nil {
 			name = n.Name
 		}
+		png, err := report.Render(speedReportInput(job, id, name))
+		if err == nil {
+			caption := fmt.Sprintf("%s<b>测速 | %s</b>\n%s", telegramFlag(name), html.EscapeString(name),
+				html.EscapeString(speedReportInput(job, id, name).Settings))
+			if err = s.sendTelegramPhoto(ctx, png, caption, buttons); err == nil {
+				continue
+			}
+		}
+		s.log.Warn("send speed test report image to Telegram, sending text instead", "job", jobID, "error", err)
 		if err := s.notifyTelegramRich(ctx, telegramSpeedReport(job, id, name), buttons); err != nil {
 			s.log.Warn("send speed test result to Telegram", "job", jobID, "error", err)
 		}
@@ -504,7 +571,7 @@ func telegramSpeedReport(job *service.SpeedJobView, nodeID int64, name string) s
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s<b>测速 | %s</b>\n%s\n", telegramFlag(name), html.EscapeString(name),
-		html.EscapeString(telegramSpeedSummary(req.Family, carriers, provinces, req.Mode)))
+		html.EscapeString(telegramSpeedSummary(req.Family, carriers, provinces, req.Mode, req.Items)))
 	if run.Egress != "" {
 		fmt.Fprintf(&b, "出口：%s\n", html.EscapeString(run.Egress))
 	}

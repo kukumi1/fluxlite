@@ -29,17 +29,10 @@
 .speed-progress { display: inline-flex; align-items: center; gap: 8px; color: var(--tone-sky-ink); }
 .speed-bar { width: 120px; height: 6px; overflow: hidden; border-radius: 999px; background: var(--muted); }
 .speed-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--tone-sky-ink); transition: width 0.4s ease; }
-.speed-table { width: 100%; }
-.speed-table td.mono { font-variant-numeric: tabular-nums; }
-.speed-fail { color: var(--err); font-family: var(--font-sans, inherit); }
-.speed-note { font-size: 12px; }
 .speed-foot { margin-top: 4px; font-size: 12px; }
 .dark .speed-status.s-running, .dark .speed-progress { color: var(--tone-sky); }
 .dark .speed-bar > span { background: var(--tone-sky); }
+.speed-report { display: block; width: 100%; max-width: 1000px; height: auto; border-radius: 14px; }
+.speed-open { margin-left: auto; font-size: 12.5px; }
+.speed-waiting { font-size: 13px; }
 .speed-summary { margin: -4px 0 0; font-size: 13px; color: var(--muted-foreground); }
-.speed-traffic { margin: -2px 0 8px; font-size: 12.5px; }
-.speed-table th.num, .speed-table td.num, .speed-retrans th.num, .speed-retrans td.num { text-align: right; }
-.speed-legend { margin: 6px 0 0; font-size: 12px; }
-.speed-subhead { margin: 14px 0 6px; font-size: 13px; font-weight: 600; }
-.speed-retrans { width: auto; min-width: 320px; }
-.speed-table th, .speed-retrans th { text-transform: none; letter-spacing: 0; }

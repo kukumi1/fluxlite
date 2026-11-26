@@ -59,9 +59,9 @@ type BlockResult struct {
 	Families []BlockFamily `json:"families"`
 }
 
-// blockFallback is measured for a family no latency point is switched on
-// for, so every machine is checked over both whatever the page shows.
-var blockFallback = []string{"广东电信", "上海联通", "北京移动"}
+// A family no latency point is switched on for is checked against the
+// points on by default, so every machine is checked over both whatever the
+// page shows.
 
 func (s *Service) blockTargets(ctx context.Context) ([]resolvedTarget, error) {
 	targets, err := s.resolveTargets(ctx)
@@ -74,7 +74,7 @@ func (s *Service) blockTargets(ctx context.Context) ([]resolvedTarget, error) {
 		}
 		var fallback []LatencyTarget
 		for _, p := range LatencyPresets() {
-			if slices.Contains(blockFallback, p.Name) {
+			if (family == 4 && p.Enabled) || (family == 6 && p.EnabledV6) {
 				p.Enabled, p.EnabledV6 = family == 4, family == 6
 				fallback = append(fallback, p)
 			}

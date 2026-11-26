@@ -789,7 +789,21 @@ export interface SpeedRequest {
   points: string[];
   mode: SpeedMode;
   family: IPFamily;
+  /** 检测项目：回程、大包回程、UDP 回程、测速；旧记录没有这一项，视为只测速。 */
+  items: SpeedItem[];
   origin?: "telegram";
+}
+
+export type SpeedItem = "route" | "large" | "udp" | "speed";
+
+export interface QualityResult {
+  node_id: number;
+  point: string;
+  item: Exclude<SpeedItem, "speed">;
+  line?: string;
+  ms: number | null;
+  loss: number | null;
+  error?: string;
 }
 
 export interface SpeedRun {
@@ -830,6 +844,7 @@ export interface SpeedJob {
   request: SpeedRequest;
   runs: SpeedRun[];
   results: SpeedResult[];
+  quality: QualityResult[];
   progress: SpeedProgress[];
 }
 

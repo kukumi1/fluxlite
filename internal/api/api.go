@@ -184,6 +184,7 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/speedtest", s.handleStartSpeedtest)
 			r.Post("/speedtest/{id}/cancel", s.handleCancelSpeedtest)
 			r.Delete("/speedtest/{id}", s.handleDeleteSpeedtest)
+			r.Get("/speedtest/{id}/image", s.handleSpeedImage)
 			r.Get("/audit", s.handleAudit)
 			r.Get("/traffic-audit", s.handleTrafficAudit)
 

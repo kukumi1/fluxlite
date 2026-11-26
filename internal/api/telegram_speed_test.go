@@ -31,7 +31,7 @@ func TestTelegramSpeedReport(t *testing.T) {
 	text := telegramSpeedReport(speedJobFixture("both"), 3, "V6VPS-HK")
 	for _, want := range []string{
 		"🇭🇰 <b>测速 | V6VPS-HK</b>",
-		"协议：IPv6 | 运营商：联通、移动 | 测速点：广东 | 单线程 + 多线程",
+		"协议：IPv6 | 运营商：联通、移动 | 测速点：广东 | 项目：单线程 + 多线程测速",
 		"出口：2404:3881:**** 美因河畔法兰克福 &lt;Cogent&gt;",
 		"🚀 <b>速度（Mbps）</b>",
 		"<pre>IPv6      延迟  单↓   单↑  多↓  多↑\n广东联通   155  157   178  514  552\n广东移动    25  113  失败  511  470</pre>",
@@ -60,9 +60,10 @@ func TestTelegramSpeedReportSingleModeHasFewerColumns(t *testing.T) {
 
 func TestTelegramSpeedSettings(t *testing.T) {
 	d := &telegramSpeedDraft{NodeName: "DMIT-JP", HasV6: false, telegramSpeedPrefs: telegramSpeedPrefs{
-		Family: 4, Carriers: []string{"电信", "联通", "移动"}, Provinces: []string{"北京", "上海", "广东", "四川"}, Mode: "both"}}
+		Family: 4, Carriers: []string{"电信", "联通", "移动"}, Provinces: []string{"北京", "上海", "广东", "四川"}, Mode: "both",
+		Items: []string{"route", "speed"}}}
 	text, buttons := telegramSpeedSettings(d)
-	if !strings.Contains(text, "共 12 个测速点，一次最多 9 个") {
+	if !strings.Contains(text, "共 12 个测速点，含测速时一次最多 9 个") {
 		t.Fatalf("too many points is called out: %s", text)
 	}
 	flat := ""
@@ -116,4 +117,28 @@ func TestTelegramCallsTheBotMakesAreAllowed(t *testing.T) {
 		}
 	}
 	t.Fatal("/speed is in the command menu")
+}
+
+
+func TestTelegramSpeedItems(t *testing.T) {
+	d := &telegramSpeedDraft{NodeName: "Lab", telegramSpeedPrefs: telegramSpeedPrefs{
+		Family: 4, Carriers: []string{"电信", "联通", "移动"}, Provinces: []string{"北京", "上海", "广东", "四川"}, Mode: "single",
+		Items: []string{"udp", "route"}}}
+	text, buttons := telegramSpeedSettings(d)
+	if !strings.Contains(text, "共 12 个测速点，大约 5 分钟") || strings.Contains(text, "GB") {
+		t.Fatalf("without a speed test every point is allowed and no traffic warning: %s", text)
+	}
+	for _, row := range buttons {
+		for _, b := range row {
+			if strings.HasPrefix(b["callback_data"].(string), "sp:mode:") {
+				t.Fatal("threads only matter to a speed test")
+			}
+		}
+	}
+	if got := d.request().Items; strings.Join(got, ",") != "route,udp" {
+		t.Fatalf("items go in report order: %v", got)
+	}
+	if !strings.Contains(text, "项目：回程、UDP回程") {
+		t.Fatal(text)
+	}
 }

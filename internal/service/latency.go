@@ -63,25 +63,23 @@ var ErrLatencyTargets = errors.New("测试点设置无效")
 // before handing the address to a machine.
 func LatencyPresets() []LatencyTarget {
 	carriers := [][2]string{{"电信", "ct"}, {"联通", "cu"}, {"移动", "cm"}}
-	recommended := map[string]bool{"广东电信": true, "上海联通": true, "北京移动": true}
 	var out []LatencyTarget
 	for _, c := range [][2]string{{"北京", "bj"}, {"上海", "sh"}, {"广东", "gd"}} {
 		for _, k := range carriers {
-			name := c[0] + k[0]
 			out = append(out, LatencyTarget{
-				Name: name, Host: fmt.Sprintf("%s-%s-v4.ip.zstaticcdn.com", c[1], k[1]),
-				HostV6: fmt.Sprintf("%s-%s-v6.ip.zstaticcdn.com", c[1], k[1]),
-				Port:   80, Enabled: recommended[name], EnabledV6: recommended[name],
+				Name: c[0] + k[0], Host: fmt.Sprintf("%s-%s-v4.ip.zstaticcdn.com", c[1], k[1]),
+				HostV6: fmt.Sprintf("%s-%s-v6.ip.zstaticcdn.com", c[1], k[1]), Port: 80,
 			})
 		}
 	}
+	// Chengdu over IPv4 and Sichuan over IPv6 are on until chosen otherwise.
 	out = append(out,
-		LatencyTarget{Name: "成都电信", Host: "118.123.218.132", Port: 443},
-		LatencyTarget{Name: "成都联通", Host: "101.207.252.191", Port: 443},
-		LatencyTarget{Name: "成都移动", Host: "sc-chengdu-cm-v4.ip.zstaticcdn.com", Port: 443},
+		LatencyTarget{Name: "成都电信", Host: "118.123.218.132", Port: 443, Enabled: true},
+		LatencyTarget{Name: "成都联通", Host: "101.207.252.191", Port: 443, Enabled: true},
+		LatencyTarget{Name: "成都移动", Host: "sc-chengdu-cm-v4.ip.zstaticcdn.com", Port: 443, Enabled: true},
 	)
 	for _, k := range carriers {
-		out = append(out, LatencyTarget{Name: "四川" + k[0], HostV6: fmt.Sprintf("sc-%s-v6.ip.zstaticcdn.com", k[1]), Port: 80})
+		out = append(out, LatencyTarget{Name: "四川" + k[0], HostV6: fmt.Sprintf("sc-%s-v6.ip.zstaticcdn.com", k[1]), Port: 80, EnabledV6: true})
 	}
 	return out
 }

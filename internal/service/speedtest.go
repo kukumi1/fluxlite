@@ -42,6 +42,9 @@ var SpeedProvinces = []string{
 
 var SpeedCarriers = []string{"电信", "联通", "移动"}
 
+// defaultCity is the province every test starts out with.
+const defaultCity = "四川"
+
 var (
 	ErrSpeedRequest = errors.New("测速设置无效")
 	ErrSpeedBusy    = errors.New("有机器正在测速，等它测完再开始")
@@ -54,9 +57,33 @@ type SpeedRequest struct {
 	Points  []string `json:"points"`
 	Mode    string   `json:"mode"`
 	Family  int      `json:"family"`
+	// Items are what to test: the return-quality items and the speed test.
+	Items []string `json:"items,omitempty"`
 	// Origin is "telegram" for a test started from the bot, whose result
 	// goes back there when it is done.
 	Origin string `json:"origin,omitempty"`
+}
+
+// maxPoints is nine with a speed test, which costs traffic and minutes per
+// point, and every point without.
+func (r SpeedRequest) maxPoints() int {
+	if r.has(ItemSpeed) {
+		return speedMaxPoints
+	}
+	return len(SpeedProvinces) * len(SpeedCarriers)
+}
+
+// units are the steps a machine's progress counts: the return-quality
+// check as one step per point, and each speed test run.
+func (r SpeedRequest) units() int {
+	n := 0
+	if r.quality() {
+		n += len(r.Points)
+	}
+	if r.has(ItemSpeed) {
+		n += len(r.Points) * len(r.modes())
+	}
+	return n
 }
 
 func (r SpeedRequest) modes() []string {
@@ -67,9 +94,14 @@ func (r SpeedRequest) modes() []string {
 }
 
 func (r SpeedRequest) validate() error {
-	if len(r.NodeIDs) == 0 || len(r.NodeIDs) > speedMaxNodes || len(r.Points) == 0 || len(r.Points) > speedMaxPoints ||
+	if len(r.NodeIDs) == 0 || len(r.NodeIDs) > speedMaxNodes || len(r.Points) == 0 || len(r.Points) > r.maxPoints() ||
 		!slices.Contains([]string{"single", "multi", "both"}, r.Mode) || (r.Family != 4 && r.Family != 6) {
 		return ErrSpeedRequest
+	}
+	for i, item := range r.Items {
+		if !slices.Contains(speedItems, item) || slices.Contains(r.Items[:i], item) {
+			return ErrSpeedRequest
+		}
 	}
 	seen := map[string]bool{}
 	for _, p := range r.Points {
@@ -166,7 +198,7 @@ func (s *Service) StartSpeedtest(ctx context.Context, req SpeedRequest) (int64, 
 	}
 	jobCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	run := &speedJobRun{cancel: cancel, progress: map[int64]*SpeedProgress{}}
-	total := len(req.Points) * len(req.modes())
+	total := req.units()
 	for _, n := range nodes {
 		s.speed.busy[n.ID] = id
 		run.nodes = append(run.nodes, n.ID)
@@ -242,16 +274,11 @@ func (s *Service) speedNode(ctx context.Context, id int64, run *speedJobRun, req
 		rec.Error = "这台机器没有 IPv6"
 		return
 	}
-	nodeCtx, cancel := context.WithTimeout(ctx, time.Duration(len(req.Points)*len(req.modes())*(speedRunSeconds+20)+60)*time.Second)
+	nodeCtx, cancel := context.WithTimeout(ctx, speedBudget(req))
 	defer cancel()
 	client, err := s.pool.Get(nodeCtx, node)
 	if err != nil {
 		rec.Error = "连不上机器：" + err.Error()
-		return
-	}
-	bin, err := ensureTool(nodeCtx, client.Client, node, s.speedTool, "taierspeedtest", "测速工具")
-	if err != nil {
-		rec.Error = err.Error()
 		return
 	}
 	before, err := machineTraffic(nodeCtx, client.Client)
@@ -268,6 +295,22 @@ func (s *Service) speedNode(ctx context.Context, id int64, run *speedJobRun, req
 	}()
 
 	done := 0
+	if req.quality() {
+		s.setSpeedProgress(run, node.ID, done, "回程检测")
+		if err := s.qualityNode(nodeCtx, client.Client, id, req, node); err != nil {
+			rec.Error = err.Error()
+		}
+		done += len(req.Points)
+		s.setSpeedProgress(run, node.ID, done, "")
+	}
+	if !req.has(ItemSpeed) {
+		return
+	}
+	bin, err := ensureTool(nodeCtx, client.Client, node, s.speedTool, "taierspeedtest", "测速工具")
+	if err != nil {
+		rec.Error = err.Error()
+		return
+	}
 	for _, point := range req.Points {
 		for _, mode := range req.modes() {
 			if nodeCtx.Err() != nil {
@@ -298,6 +341,21 @@ func (s *Service) speedNode(ctx context.Context, id int64, run *speedJobRun, req
 			s.setSpeedProgress(run, node.ID, done, "")
 		}
 	}
+}
+
+// speedBudget bounds one machine's part of a job: each batch of points
+// probed at once may run every item to its timeout, and each speed test
+// run its own.
+func speedBudget(req SpeedRequest) time.Duration {
+	d := time.Minute
+	if req.quality() {
+		batches := (len(req.Points) + qualityParallel - 1) / qualityParallel
+		d += time.Duration(batches) * (5*qualityTimeout + 30*time.Second)
+	}
+	if req.has(ItemSpeed) {
+		d += time.Duration(len(req.Points)*len(req.modes())*(speedRunSeconds+20)) * time.Second
+	}
+	return d
 }
 
 // CancelSpeedtest stops a running job and the clients it started.
@@ -334,14 +392,15 @@ func (s *Service) DeleteSpeedtest(ctx context.Context, id int64) error {
 }
 
 type SpeedJobView struct {
-	ID         int64               `json:"id"`
-	CreatedAt  int64               `json:"created_at"`
-	FinishedAt int64               `json:"finished_at"`
-	Status     string              `json:"status"`
-	Request    SpeedRequest        `json:"request"`
-	Runs       []store.SpeedRun    `json:"runs"`
-	Results    []store.SpeedResult `json:"results"`
-	Progress   []SpeedProgress     `json:"progress"`
+	ID         int64                 `json:"id"`
+	CreatedAt  int64                 `json:"created_at"`
+	FinishedAt int64                 `json:"finished_at"`
+	Status     string                `json:"status"`
+	Request    SpeedRequest          `json:"request"`
+	Runs       []store.SpeedRun      `json:"runs"`
+	Results    []store.SpeedResult   `json:"results"`
+	Quality    []store.QualityResult `json:"quality"`
+	Progress   []SpeedProgress       `json:"progress"`
 }
 
 type SpeedOverview struct {
@@ -356,6 +415,10 @@ func (s *Service) SpeedOverview(ctx context.Context) (*SpeedOverview, error) {
 	if err != nil {
 		return nil, err
 	}
+	quality, err := s.store.QualityResults(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := &SpeedOverview{Provinces: SpeedProvinces, Carriers: SpeedCarriers, Jobs: []SpeedJobView{}}
 	if s.speedTool != nil {
 		out.Tool = "taierspeedtest " + s.speedTool.Version()
@@ -364,7 +427,7 @@ func (s *Service) SpeedOverview(ctx context.Context) (*SpeedOverview, error) {
 	defer s.speed.mu.Unlock()
 	for _, j := range jobs {
 		v := SpeedJobView{ID: j.ID, CreatedAt: j.CreatedAt, FinishedAt: j.FinishedAt, Status: j.Status,
-			Runs: runs[j.ID], Results: results[j.ID], Progress: []SpeedProgress{}}
+			Runs: runs[j.ID], Results: results[j.ID], Quality: quality[j.ID], Progress: []SpeedProgress{}}
 		if err := json.Unmarshal([]byte(j.Params), &v.Request); err != nil {
 			return nil, fmt.Errorf("decode speed job %d: %w", j.ID, err)
 		}
@@ -377,6 +440,10 @@ func (s *Service) SpeedOverview(ctx context.Context) (*SpeedOverview, error) {
 		if v.Results == nil {
 			v.Results = []store.SpeedResult{}
 		}
+		if v.Quality == nil {
+			v.Quality = []store.QualityResult{}
+		}
+		v.Request.Items = v.Request.items()
 		if run := s.speed.jobs[j.ID]; run != nil {
 			for _, n := range run.nodes {
 				v.Progress = append(v.Progress, *run.progress[n])

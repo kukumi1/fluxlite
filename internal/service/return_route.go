@@ -74,8 +74,8 @@ type ReturnSettings struct {
 
 var ErrReturnSettings = errors.New("回程设置无效")
 
-// ReturnSettings returns the saved choice, or every test point traced from
-// every machine but the NAT shares when nothing was saved yet.
+// ReturnSettings returns the saved choice, or Sichuan's three carriers traced
+// from every machine but the NAT shares when nothing was saved yet.
 func (s *Service) ReturnSettings(ctx context.Context) (ReturnSettings, error) {
 	raw, ok, err := s.store.Setting(ctx, returnSettingsKey)
 	if err != nil {
@@ -94,7 +94,9 @@ func (s *Service) ReturnSettings(ctx context.Context) (ReturnSettings, error) {
 	}
 	cfg := ReturnSettings{}
 	for _, p := range ReturnPresets() {
-		cfg.Targets = append(cfg.Targets, p.Name)
+		if p.City == defaultCity {
+			cfg.Targets = append(cfg.Targets, p.Name)
+		}
 	}
 	for _, n := range nodes {
 		if looksLikeNAT(n) {

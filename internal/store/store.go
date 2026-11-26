@@ -529,6 +529,21 @@ func init() {
 		`ALTER TABLE speed_runs ADD COLUMN tx_bytes INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE speed_runs ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE speed_runs ADD COLUMN finished_at INTEGER NOT NULL DEFAULT 0`)
+
+	// A test can also check the route back to each point: the line, TCP
+	// latency and loss, large-packet latency and loss, and the UDP line.
+	migrations = append(migrations,
+		`CREATE TABLE IF NOT EXISTS quality_results (
+			job_id  INTEGER NOT NULL REFERENCES speed_jobs(id) ON DELETE CASCADE,
+			node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+			point   TEXT NOT NULL,
+			item    TEXT NOT NULL,
+			line    TEXT NOT NULL DEFAULT '',
+			ms      INTEGER,
+			loss    INTEGER,
+			error   TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (job_id, node_id, point, item)
+		)`)
 }
 
 // retiredMigration holds the place of a migration whose feature was withdrawn

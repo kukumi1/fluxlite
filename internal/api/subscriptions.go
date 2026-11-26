@@ -123,7 +123,7 @@ func (s *Server) renderSubscription(w http.ResponseWriter, r *http.Request, id i
 	w.Header().Set("Cache-Control", "no-store")
 	format := r.URL.Query().Get("format")
 	if format == "" {
-		format = "base64"
+		format = subscription.FormatForUserAgent(r.UserAgent())
 	}
 	v, e := s.svc.RenderSubscription(r.Context(), id, token, format)
 	if e != nil && !(id != 0 && errors.Is(e, subscription.ErrNoCompatible)) {

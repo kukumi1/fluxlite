@@ -131,7 +131,7 @@ func (v *Verifier) checkReachable(ctx context.Context, from *model.Node, host st
 		return Check{Name: name, Verdict: VerdictUnknown, Detail: "cannot reach node: " + err.Error()}
 	}
 
-	res, err := sshx.Run(ctx, client.Client, tcpProbeCommand(host, port))
+	res, err := sshx.Run(ctx, client.Client, TCPProbeCommand(host, port))
 	if err != nil {
 		return Check{Name: name, Verdict: VerdictUnknown, Detail: "probe failed: " + err.Error()}
 	}
@@ -170,7 +170,7 @@ func (v *Verifier) checkReachable(ctx context.Context, from *model.Node, host st
 // nothing and costs the whole sampling round its time.
 const probeTimeoutSeconds = 3
 
-// tcpProbeCommand builds a portable connectivity check.
+// TCPProbeCommand builds a portable connectivity check.
 //
 // bash's /dev/tcp is unavailable on dash and on Alpine's busybox shell, so the
 // probe falls back through several implementations. Output is always
@@ -205,7 +205,7 @@ const probeTimeoutSeconds = 3
 // still fall back to A, which is what create_connection was doing for us
 // before. bash gets the same protection more cheaply by asking for A records
 // first and only widening to any family when there are none.
-func tcpProbeCommand(host string, port int) string {
+func TCPProbeCommand(host string, port int) string {
 	return fmt.Sprintf(`
 if command -v python3 >/dev/null 2>&1; then
   python3 -c 'import socket,time

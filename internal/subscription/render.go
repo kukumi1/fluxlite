@@ -16,7 +16,24 @@ import (
 type Node struct {
 	Name, Link string
 	Config     json.RawMessage
+	// Info marks a placeholder that only carries text in its name, such as
+	// the expiry date, for clients that show nothing else.
+	Info bool
 }
+
+// InfoNode returns a placeholder named text. It points at a closed local
+// port, so selecting it connects nowhere instead of somewhere unexpected.
+func InfoNode(text string) Node {
+	// SS2022 is the one cipher every format here converts; the key is a
+	// valid, empty 16-byte one.
+	const method, password = "2022-blake3-aes-128-gcm", "AAAAAAAAAAAAAAAAAAAAAA=="
+	userinfo := base64.RawURLEncoding.EncodeToString([]byte(method + ":" + password))
+	config, _ := json.Marshal(map[string]any{"outbounds": []any{map[string]any{
+		"type": "shadowsocks", "server": "127.0.0.1", "server_port": 1, "method": method, "password": password,
+	}}})
+	return Node{Name: text, Link: "ss://" + userinfo + "@127.0.0.1:1#" + url.PathEscape(text), Config: config, Info: true}
+}
+
 type Result struct {
 	Content       []byte
 	ContentType   string
@@ -68,8 +85,13 @@ func Render(format string, nodes []Node) (Result, error) {
 	lines := []string{}
 	proxies := []map[string]any{}
 	names := []string{}
+	infoNames := []string{}
+	real, realIncluded := 0, 0
 	seen := map[string]int{}
 	for i, n := range nodes {
+		if !n.Info {
+			real++
+		}
 		name := strings.Join(strings.Fields(n.Name), " ")
 		if name == "" {
 			name = fmt.Sprintf("节点%d", i+1)
@@ -120,19 +142,32 @@ func Render(format string, nodes []Node) (Result, error) {
 			continue
 		}
 		r.IncludedCount++
-		names = append(names, name)
+		if n.Info {
+			infoNames = append(infoNames, name)
+		} else {
+			realIncluded++
+			names = append(names, name)
+		}
 		if format == "clash" {
 			proxies = append(proxies, proxy)
 		} else {
 			lines = append(lines, line)
 		}
 	}
-	if r.IncludedCount == 0 {
+	if r.IncludedCount == 0 || (real > 0 && realIncluded == 0) {
 		return r, ErrNoCompatible
 	}
 	if format == "clash" {
+		// A select group starts on its first member. Placeholders go last so
+		// a fresh import never starts on one; with no real node left, direct
+		// comes first, so the person loses the proxy rather than their whole
+		// connection.
+		group := append(names, infoNames...)
+		if realIncluded == 0 {
+			group = append([]string{"DIRECT"}, infoNames...)
+		}
 		// JSON is valid YAML; serialization preserves quoting for arbitrary names and credentials.
-		r.Content, _ = json.MarshalIndent(map[string]any{"mixed-port": 7890, "mode": "rule", "proxies": proxies, "proxy-groups": []any{map[string]any{"name": "订阅节点", "type": "select", "proxies": names}}, "rules": []string{"MATCH,订阅节点"}}, "", "  ")
+		r.Content, _ = json.MarshalIndent(map[string]any{"mixed-port": 7890, "mode": "rule", "proxies": proxies, "proxy-groups": []any{map[string]any{"name": "订阅节点", "type": "select", "proxies": group}}, "rules": []string{"MATCH,订阅节点"}}, "", "  ")
 		r.ContentType = "application/yaml; charset=utf-8"
 	} else {
 		raw := strings.Join(lines, "\n") + "\n"
@@ -140,23 +175,6 @@ func Render(format string, nodes []Node) (Result, error) {
 			raw = base64.StdEncoding.EncodeToString([]byte(raw))
 		}
 		r.Content = []byte(raw)
-	}
-	return r, nil
-}
-// Empty renders a subscription with no nodes in it that clients still accept,
-// so they keep reading its usage after every node has run out. Clash gets a
-// profile that goes direct rather than one that rejects everything: a person
-// whose nodes all lapsed should lose the proxy, not their whole connection.
-func Empty(format string) (Result, error) {
-	r := Result{ContentType: "text/plain; charset=utf-8", Unsupported: []string{}}
-	switch format {
-	case "clash":
-		r.Content, _ = json.MarshalIndent(map[string]any{"mixed-port": 7890, "mode": "rule", "proxies": []any{}, "proxy-groups": []any{map[string]any{"name": "订阅节点", "type": "select", "proxies": []string{"DIRECT"}}}, "rules": []string{"MATCH,订阅节点"}}, "", "  ")
-		r.ContentType = "application/yaml; charset=utf-8"
-	case "base64", "shadowrocket", "loon", "qx":
-		r.Content = []byte{}
-	default:
-		return r, ErrFormat
 	}
 	return r, nil
 }
@@ -360,4 +378,22 @@ func loon(o outbound, name, host, port string) (string, error) {
 	}
 	args = append(args, "udp=true")
 	return prefix + "," + strings.Join(args, ","), nil
+}
+
+// FormatForUserAgent picks the format a client asking without ?format=
+// understands, from its User-Agent. Stash reads Clash profiles. Anything
+// unrecognised, v2rayN included, gets the share-link list every client reads.
+func FormatForUserAgent(ua string) string {
+	ua = strings.ToLower(ua)
+	switch {
+	case strings.Contains(ua, "shadowrocket"):
+		return "shadowrocket"
+	case strings.Contains(ua, "loon"):
+		return "loon"
+	case strings.Contains(ua, "quantumult"):
+		return "qx"
+	case strings.Contains(ua, "stash"), strings.Contains(ua, "clash"), strings.Contains(ua, "mihomo"):
+		return "clash"
+	}
+	return "base64"
 }

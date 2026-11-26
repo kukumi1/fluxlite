@@ -18,6 +18,8 @@ export interface Subscription {
   expires_at: string | null;
   created_at: string;
   members: Array<SubscriptionEntry & { user_id: number }>;
+  /** 在节点列表里加「到期」「剩余流量」两个占位节点，给不显示订阅信息的客户端看。 */
+  info_nodes: boolean;
 }
 export interface SubscriptionCandidate {
   user_id: number;
@@ -445,6 +447,18 @@ export const api = {
     post<{ subscription: Subscription; token: string }>("/subscriptions", input),
   updateSubscription: (id: number, input: Pick<SubscriptionInput, "name">) =>
     request<Subscription>(`/subscriptions/${id}`, { method: "PATCH", body: JSON.stringify({ name: input.name }) }),
+  setSubscriptionInfoNodes: (id: number, on: boolean) =>
+    request<Subscription>(`/subscriptions/${id}`, { method: "PATCH", body: JSON.stringify({ info_nodes: on }) }),
+  alertSettings: () => request<{ settings: AlertSettings; telegram_bound: boolean }>("/alerts/settings"),
+  saveAlertSettings: (settings: AlertSettings) =>
+    request<AlertSettings>("/alerts/settings", { method: "PUT", body: JSON.stringify(settings) }),
+  testAlert: () => post<{ ok: boolean }>("/alerts/test"),
+  latencyOverview: () => request<LatencyOverview>("/latency", { cache: "no-store" }),
+  saveLatencyTargets: (targets: LatencyTarget[]) =>
+    request<LatencyTarget[]>("/latency/targets", { method: "PUT", body: JSON.stringify(targets) }),
+  latencyHistory: (nodeID: number, hours: number) => request<LatencySample[]>(`/latency/nodes/${nodeID}/history?hours=${hours}`),
+  probeLatency: (nodeID: number) => post<{ ok: boolean }>(`/latency/nodes/${nodeID}/probe`),
+  traceReturnRoutes: (nodeID: number) => post<{ ok: boolean }>(`/latency/nodes/${nodeID}/trace`),
   deleteSubscription: (id: number) => request<{ ok: boolean }>(`/subscriptions/${id}`, { method: "DELETE" }),
   resetSubscriptionToken: (id: number) => post<{ token: string }>(`/subscriptions/${id}/reset-token`),
   getSubscriptionLink: (id: number) => request<{ token: string }>(`/subscriptions/${id}/link`, { method: "GET", cache: "no-store" }),
@@ -617,4 +631,61 @@ export interface SingBoxUserUpdate {
   enabled: boolean;
   upload_limit_mbps: number;
   download_limit_mbps: number;
+}
+
+export interface AlertSettings {
+  events: {
+    node_offline: boolean;
+    route_down: boolean;
+    quota: boolean;
+    expiry: boolean;
+    latency: boolean;
+    route_change: boolean;
+    daily: boolean;
+  };
+  /** 每日汇总在 UTC+8 的哪个小时发。 */
+  daily_hour: number;
+  loss_percent: number;
+  /** 0 表示不按延迟提醒，只看丢包。 */
+  latency_ms: number;
+  muted_nodes: number[];
+}
+
+export interface LatencyTarget {
+  name: string;
+  host: string;
+  port: number;
+  enabled: boolean;
+}
+
+/** 一轮测量。avg_ms 为 null：一次都没连上，或机器上没有能计时的工具。 */
+export interface LatencySample {
+  node_id: number;
+  target: string;
+  at: number;
+  avg_ms: number | null;
+  loss: number;
+}
+
+export interface ReturnRouteHop {
+  ttl: number;
+  ip?: string;
+  ms?: string;
+  net?: string;
+}
+
+export interface ReturnRoute {
+  node_id: number;
+  target: string;
+  route: string;
+  error: string;
+  checked_at: number;
+  hops: ReturnRouteHop[];
+}
+
+export interface LatencyOverview {
+  targets: LatencyTarget[];
+  presets: LatencyTarget[];
+  samples: LatencySample[];
+  routes: ReturnRoute[];
 }

@@ -418,6 +418,33 @@ func init() {
 	migrations = append(migrations,
 		`ALTER TABLE route_hops ADD COLUMN reachable INTEGER`,
 		`ALTER TABLE route_hops ADD COLUMN reach_at DATETIME`)
+
+	// Panel-wide preferences: alert choices, latency test points. Values are
+	// JSON owned by the service; the store only keeps them.
+	migrations = append(migrations,
+		`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
+
+	// Each machine's latency to the test points, every few minutes, kept for a
+	// week. Times are unix seconds so history can be bucketed in SQL.
+	migrations = append(migrations,
+		`CREATE TABLE IF NOT EXISTS latency_samples (
+			node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+			target  TEXT NOT NULL,
+			at      INTEGER NOT NULL,
+			avg_ms  INTEGER,
+			loss    INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_latency_samples_node_at ON latency_samples(node_id, at)`,
+		`CREATE TABLE IF NOT EXISTS return_routes (
+			node_id    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+			target     TEXT NOT NULL,
+			route      TEXT NOT NULL DEFAULT '',
+			hops       TEXT NOT NULL DEFAULT '[]',
+			error      TEXT NOT NULL DEFAULT '',
+			checked_at INTEGER NOT NULL,
+			PRIMARY KEY (node_id, target)
+		)`,
+		`ALTER TABLE subscriptions ADD COLUMN info_nodes INTEGER NOT NULL DEFAULT 0`)
 }
 
 // retiredMigration holds the place of a migration whose feature was withdrawn

@@ -8,7 +8,10 @@ import (
 )
 
 type Subscription struct {
-	Mode          string               `json:"mode"`
+	Mode string `json:"mode"`
+	// InfoNodes adds placeholder nodes naming the expiry and remaining
+	// traffic, for clients that do not show subscription usage.
+	InfoNodes     bool                 `json:"info_nodes"`
 	LinkAvailable bool                 `json:"link_available"`
 	ID            int64                `json:"id"`
 	Name          string               `json:"name"`
@@ -47,7 +50,7 @@ func (s *Store) CreateSubscription(ctx context.Context, v *Subscription, hash []
 func (s *Store) SubscriptionByID(ctx context.Context, id int64) (*Subscription, error) {
 	v := &Subscription{Members: []SubscriptionMember{}}
 	var expiry sql.NullTime
-	e := s.db.QueryRowContext(ctx, `SELECT id,name,enabled,status,quota_bytes,used_bytes,expires_at,created_at,COALESCE(length(token_secret)>0,0),mode FROM subscriptions WHERE id=?`, id).Scan(&v.ID, &v.Name, &v.Enabled, &v.Status, &v.QuotaBytes, &v.UsedBytes, &expiry, &v.CreatedAt, &v.LinkAvailable, &v.Mode)
+	e := s.db.QueryRowContext(ctx, `SELECT id,name,enabled,status,quota_bytes,used_bytes,expires_at,created_at,COALESCE(length(token_secret)>0,0),mode,info_nodes FROM subscriptions WHERE id=?`, id).Scan(&v.ID, &v.Name, &v.Enabled, &v.Status, &v.QuotaBytes, &v.UsedBytes, &expiry, &v.CreatedAt, &v.LinkAvailable, &v.Mode, &v.InfoNodes)
 	if errors.Is(e, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -111,6 +114,14 @@ func (s *Store) SubscriptionByHash(ctx context.Context, hash []byte) (*Subscript
 func (s *Store) UpdateSubscription(ctx context.Context, v *Subscription) error {
 	_, e := s.db.ExecContext(ctx, `UPDATE subscriptions SET name=?,enabled=?,status=?,quota_bytes=?,expires_at=? WHERE id=?`, v.Name, v.Enabled, v.Status, v.QuotaBytes, v.ExpiresAt, v.ID)
 	return e
+}
+
+func (s *Store) SetSubscriptionInfoNodes(ctx context.Context, id int64, on bool) error {
+	r, err := s.db.ExecContext(ctx, `UPDATE subscriptions SET info_nodes=? WHERE id=?`, on, id)
+	if err != nil {
+		return err
+	}
+	return checkAffected(r, "subscription", id)
 }
 
 func (s *Store) RenameSubscription(ctx context.Context, id int64, name string) error {

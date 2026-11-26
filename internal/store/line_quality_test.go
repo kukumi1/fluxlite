@@ -1,0 +1,84 @@
+package store
+
+import (
+	"context"
+	"testing"
+)
+
+func TestLatencySamplesLatestHistoryAndPrune(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	route := seedRoute(t, st)
+	node := route.Hops[0].NodeID
+	ms := func(v int) *int { return &v }
+
+	if err := st.AddLatencySamples(ctx, []LatencySample{
+		{NodeID: node, Target: "广东电信", At: 1000, AvgMS: ms(40), Loss: 0},
+		{NodeID: node, Target: "广东电信", At: 1100, AvgMS: ms(60), Loss: 25},
+		{NodeID: node, Target: "广东电信", At: 1300, AvgMS: nil, Loss: 100},
+		{NodeID: node, Target: "上海联通", At: 1100, AvgMS: ms(80), Loss: 0},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	latest, err := st.LatestLatency(ctx, 1050)
+	if err != nil || len(latest) != 2 {
+		t.Fatalf("%+v %v", latest, err)
+	}
+	for _, l := range latest {
+		if l.Target == "广东电信" && (l.At != 1300 || l.AvgMS != nil || l.Loss != 100) {
+			t.Fatalf("latest picked the wrong sample: %+v", l)
+		}
+	}
+
+	history, err := st.LatencyHistory(ctx, node, 0, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 1000 and 1100 share the bucket at 1000; 1300 has one of its own.
+	var first *LatencySample
+	for i := range history {
+		if history[i].Target == "广东电信" && history[i].At == 1000 {
+			first = &history[i]
+		}
+	}
+	if first == nil || first.AvgMS == nil || *first.AvgMS != 50 || first.Loss != 13 {
+		t.Fatalf("bucket average wrong: %+v", history)
+	}
+
+	if err := st.PruneLatency(ctx, 1200); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := st.LatencyHistory(ctx, node, 0, 200); len(left) != 1 {
+		t.Fatalf("prune kept %+v", left)
+	}
+}
+
+func TestReturnRouteUpsertAndSettings(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	node := seedRoute(t, st).Hops[0].NodeID
+
+	for _, route := range []string{"电信 CN2 GIA", "电信 163"} {
+		if err := st.SetReturnRoute(ctx, ReturnRoute{NodeID: node, Target: "广东电信", Route: route, Hops: "[]", CheckedAt: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	routes, err := st.ReturnRoutes(ctx)
+	if err != nil || len(routes) != 1 || routes[0].Route != "电信 163" {
+		t.Fatalf("%+v %v", routes, err)
+	}
+
+	if _, ok, err := st.Setting(ctx, "missing"); ok || err != nil {
+		t.Fatal("missing setting reported present")
+	}
+	if err := st.SetSetting(ctx, "k", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting(ctx, "k", "2"); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok, err := st.Setting(ctx, "k"); v != "2" || !ok || err != nil {
+		t.Fatalf("%q %v %v", v, ok, err)
+	}
+}

@@ -37,6 +37,7 @@ type SubscriptionPatch struct {
 	Enabled    *bool           `json:"enabled"`
 	QuotaBytes *int64          `json:"quota_bytes"`
 	ExpiresAt  json.RawMessage `json:"expires_at"`
+	InfoNodes  *bool           `json:"info_nodes"`
 }
 
 func newSubscriptionToken() (string, []byte, error) {
@@ -199,17 +200,28 @@ func (s *Service) UpdateSubscription(ctx context.Context, id int64, p Subscripti
 		return nil, e
 	}
 	if v.Mode == "collection" {
-		if p.Name == nil || p.Enabled != nil || p.QuotaBytes != nil || p.ExpiresAt != nil {
+		if (p.Name == nil && p.InfoNodes == nil) || p.Enabled != nil || p.QuotaBytes != nil || p.ExpiresAt != nil {
 			return nil, ErrSubscriptionPolicy
 		}
-		if e = model.ValidateDisplayName(*p.Name); e != nil {
-			return nil, e
+		if p.Name != nil {
+			if e = model.ValidateDisplayName(*p.Name); e != nil {
+				return nil, e
+			}
+			v.Name = strings.TrimSpace(*p.Name)
+			if e = s.store.RenameSubscription(ctx, id, v.Name); e != nil {
+				return nil, e
+			}
 		}
-		v.Name = strings.TrimSpace(*p.Name)
-		if e = s.store.RenameSubscription(ctx, id, v.Name); e != nil {
-			return nil, e
+		if p.InfoNodes != nil {
+			v.InfoNodes = *p.InfoNodes
+			if e = s.store.SetSubscriptionInfoNodes(ctx, id, v.InfoNodes); e != nil {
+				return nil, e
+			}
 		}
 		return v, nil
+	}
+	if p.InfoNodes != nil {
+		return nil, ErrSubscriptionPolicy
 	}
 	if p.Name != nil {
 		if e = model.ValidateDisplayName(*p.Name); e != nil {
@@ -516,19 +528,59 @@ func (s *Service) RenderSubscription(ctx context.Context, id int64, token, forma
 		}
 		nodes = append(nodes, subscription.Node{Name: u.Name + " / " + n.Name + " / " + string(u.Protocol), Link: link, Config: config})
 	}
-	var r subscription.Result
-	if v.Mode == "collection" && len(nodes) == 0 {
-		r, e = subscription.Empty(format)
-	} else {
-		r, e = subscription.Render(format, nodes)
-	}
-	r.Name = v.Name
+	var usage subscription.Usage
 	if v.Mode == "collection" {
-		r.Usage = collectionUsage(members)
+		usage = collectionUsage(members)
 	} else {
-		r.Usage = subscription.Usage{Download: v.UsedBytes, Total: v.QuotaBytes, Expire: v.ExpiresAt}
+		usage = subscription.Usage{Download: v.UsedBytes, Total: v.QuotaBytes, Expire: v.ExpiresAt}
 	}
+	// With no node left to serve, the link still answers: one placeholder
+	// says why, so the person sees it after updating instead of an error.
+	var notices []subscription.Node
+	if v.Mode == "collection" && len(nodes) == 0 {
+		notices = append(notices, subscription.InfoNode(unavailableNotice(members, time.Now())))
+	}
+	if v.InfoNodes {
+		notices = append(notices, usageInfoNodes(usage)...)
+	}
+	r, e := subscription.Render(format, append(notices, nodes...))
+	r.Name = v.Name
+	r.Usage = usage
 	return r, e
+}
+
+// usageInfoNodes names the expiry and the remaining traffic as placeholder
+// nodes, for clients that ignore the subscription-userinfo header.
+func usageInfoNodes(u subscription.Usage) []subscription.Node {
+	expiry := "⏳ 长期有效"
+	if u.Expire != nil {
+		expiry = "⏳ 到期 " + u.Expire.In(trafficZone).Format("2006-01-02")
+	}
+	used := u.Upload + u.Download
+	traffic := fmt.Sprintf("📊 已用 %s（不限量）", formatBytes(used))
+	if u.Total > 0 {
+		traffic = fmt.Sprintf("📊 剩余 %s / %s", formatBytes(max(u.Total-used, 0)), formatBytes(u.Total))
+	}
+	return []subscription.Node{subscription.InfoNode(expiry), subscription.InfoNode(traffic)}
+}
+
+// unavailableNotice says why a collection has no node to serve.
+func unavailableNotice(members []*model.SingBoxUser, now time.Time) string {
+	if len(members) == 0 {
+		return "⚠️ 订阅里没有节点，请联系管理员"
+	}
+	expired, spent := true, true
+	for _, u := range members {
+		expired = expired && (u.Status == model.SingBoxStatusExpired || (!u.ExpiresAt.IsZero() && !now.Before(u.ExpiresAt)))
+		spent = spent && (u.QuotaPausedAt != nil || u.Status == model.SingBoxStatusExhausted)
+	}
+	switch {
+	case expired:
+		return "⚠️ 订阅已到期，请联系管理员"
+	case spent:
+		return "⚠️ 流量已用完，请联系管理员"
+	}
+	return "⚠️ 节点暂不可用，请联系管理员"
 }
 
 // collectionUsage totals every node in a collection, including the ones it no

@@ -1,5 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
+  Activity,
+  BellRing,
   LayoutDashboard,
   Radar,
   Menu,
@@ -31,11 +33,13 @@ import { TrafficAudit } from "./pages/TrafficAudit";
 import { Account } from "./pages/Account";
 import { SingBox } from "./pages/SingBox";
 import { Subscriptions } from "./pages/Subscriptions";
+import { LineQuality } from "./pages/LineQuality";
+import { Notifications } from "./pages/Notifications";
 
 // 终端页连同 xterm 一起单独打包：不开终端的人不该为它下载一份终端模拟器。
 const Console = lazy(() => import("./pages/Console").then((m) => ({ default: m.Console })));
 
-type Tab = "dashboard" | "routes" | "nodes" | "singbox" | "subscriptions" | "traffic-audit" | "console" | "audit" | "account";
+type Tab = "dashboard" | "routes" | "nodes" | "line-quality" | "singbox" | "subscriptions" | "traffic-audit" | "console" | "notifications" | "audit" | "account";
 type AuthState = "checking" | "in" | "out";
 
 // Each place keeps one tone, so its icon chip in the sidebar is how it is
@@ -44,13 +48,17 @@ const MAIN_NAV = [
   { id: "dashboard", label: "仪表盘", icon: LayoutDashboard, tone: "lime" },
   { id: "routes", label: "链路", icon: Waypoints, tone: "lilac" },
   { id: "nodes", label: "机器", icon: Server, tone: "sky" },
+  { id: "line-quality", label: "线路质量", icon: Activity, tone: "sun" },
   { id: "singbox", label: "节点", icon: Network, tone: "peach" },
   { id: "subscriptions", label: "订阅", icon: ScrollText, tone: "sun" },
   { id: "traffic-audit", label: "流量审计", icon: Radar, tone: "sky" },
   { id: "console", label: "终端", icon: TerminalSquare, tone: "lime" },
 ] as const;
 
-const ADMIN_NAV = [{ id: "audit", label: "审计日志", icon: ScrollText, tone: "lilac" }] as const;
+const ADMIN_NAV = [
+  { id: "notifications", label: "通知", icon: BellRing, tone: "peach" },
+  { id: "audit", label: "审计日志", icon: ScrollText, tone: "lilac" },
+] as const;
 
 export function App() {
   const theme = useThemeState();
@@ -235,6 +243,7 @@ function Shell() {
           {tab === "dashboard" && <Dashboard onNavigate={navigate} />}
           {tab === "routes" && <Routes />}
           {tab === "nodes" && <Nodes onOpenConsole={openConsole} />}
+          {tab === "line-quality" && <LineQuality />}
           {tab === "singbox" && <SingBox />}
           {tab === "subscriptions" && <Subscriptions />}
           {tab === "traffic-audit" && <TrafficAudit />}
@@ -243,6 +252,7 @@ function Shell() {
               <Console initialNode={consoleNode} />
             </Suspense>
           )}
+          {tab === "notifications" && <Notifications />}
           {tab === "audit" && <Audit />}
           {tab === "account" && (
             <Account

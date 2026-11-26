@@ -23,6 +23,24 @@ export function subscriptionURL(origin: string, token: string, format: Subscript
   return `${origin}/sub/${encodeURIComponent(token)}?format=${format}`;
 }
 
+/** The app's own import link for a subscription URL, or null where the client
+ *  has none and the link has to be pasted by hand. */
+export function subscriptionImportURL(format: SubscriptionFormat, url: string, name: string): string | null {
+  const enc = encodeURIComponent;
+  switch (format) {
+    case "clash":
+      return `clash://install-config?url=${enc(url)}&name=${enc(name)}`;
+    case "shadowrocket":
+      return `shadowrocket://add/sub://${btoa(url)}?remark=${enc(name)}`;
+    case "loon":
+      return `loon://import?nodelist=${enc(url)}`;
+    case "qx":
+      return `quantumult-x:///add-resource?remote-resource=${enc(JSON.stringify({ server_remote: [`${url}, tag=${name}`] }))}`;
+    default:
+      return null;
+  }
+}
+
 export function subscriptionName(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) throw new Error("请输入订阅名称");

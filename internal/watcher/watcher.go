@@ -85,7 +85,7 @@ func New(cfg Config) *Watcher {
 // sample interval promises.
 func (w *Watcher) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(7)
+	wg.Add(9)
 
 	go func() {
 		defer wg.Done()
@@ -115,6 +115,14 @@ func (w *Watcher) Run(ctx context.Context) {
 		defer wg.Done()
 		w.loop(ctx, w.sample, w.checkAlerts, false)
 	}()
+	go func() {
+		defer wg.Done()
+		w.loop(ctx, service.LatencyInterval, w.sampleLatency, true)
+	}()
+	go func() {
+		defer wg.Done()
+		w.loop(ctx, routeTraceCheck, w.traceReturnRoutes, false)
+	}()
 
 	wg.Wait()
 }
@@ -122,6 +130,22 @@ func (w *Watcher) Run(ctx context.Context) {
 // sampleNodeMetrics refreshes resource snapshots independently of route
 // liveness. A node with no routes still appears live on the dashboard, and a
 // slow route probe cannot delay its CPU/memory/disk reading.
+// routeTraceCheck is how often the watcher looks for return routes due for a
+// trace. Each one is traced about once a day; this only bounds how late.
+const routeTraceCheck = 10 * time.Minute
+
+func (w *Watcher) sampleLatency(ctx context.Context) {
+	if err := w.svc.SampleLatency(ctx); err != nil {
+		w.log.Warn("latency sampling", "error", err)
+	}
+}
+
+func (w *Watcher) traceReturnRoutes(ctx context.Context) {
+	if err := w.svc.TraceReturnRoutes(ctx); err != nil {
+		w.log.Warn("return route tracing", "error", err)
+	}
+}
+
 // checkAlerts reports machines and routes whose state changed since the
 // last pass. A delivery that fails is logged and not retried: resending a
 // message whose fate is unknown risks the same alert twice, and the next

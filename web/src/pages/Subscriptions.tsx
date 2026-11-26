@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { Check, Info, KeyRound, Layers, Link2, Pencil, Plus, RefreshCw, Rss, Trash2, Unplug, type LucideIcon } from "lucide-react";
+import { Check, ExternalLink, Info, KeyRound, Layers, Link2, Pencil, Plus, RefreshCw, Rss, Trash2, Unplug, type LucideIcon } from "lucide-react";
 import { api, ApiError } from "../api";
 import type { Subscription, SubscriptionCandidate, SubscriptionFormat, SubscriptionInput } from "../api";
 import { useConfirm } from "../components/ConfirmDialog";
@@ -10,7 +10,8 @@ import { Flag } from "../components/Flag";
 import { Banner, Modal } from "../components/Modal";
 import { PageHeader } from "../components/PageHeader";
 import { regionOf, TONE_CYCLE } from "../lib/region";
-import { subscriptionFormats, subscriptionInput, subscriptionMemberDetails, subscriptionName, subscriptionURL } from "../lib/subscriptions";
+import { subscriptionFormats, subscriptionImportURL, subscriptionInput, subscriptionMemberDetails, subscriptionName, subscriptionURL } from "../lib/subscriptions";
+import { SwitchField } from "../components/DrawerForm";
 import "./management-redesign.css";
 import { protocolMeta } from "./SingBoxCreate";
 
@@ -138,6 +139,11 @@ export function Subscriptions() {
     }
   }
 
+  async function setInfoNodes(id: number, on: boolean) {
+    const updated = await api.setSubscriptionInfoNodes(id, on);
+    setSubscriptions((current) => current.map((subscription) => subscription.id === id ? { ...subscription, info_nodes: updated.info_nodes } : subscription));
+  }
+
   async function rename(name: string) {
     if (!renaming) return;
     const updated = await api.updateSubscription(renaming.id, { name });
@@ -220,7 +226,10 @@ export function Subscriptions() {
     {editor && <SubscriptionEditor candidates={candidates} onSave={save} onClose={() => setEditor(false)} />}
     {viewingMembers && <SubscriptionMembers subscription={viewingMembers} candidates={candidates} onClose={() => setViewingMembers(null)} />}
     {renaming && <SubscriptionNameEditor key={renaming.id} name={renaming.name} onSave={rename} onClose={() => setRenaming(null)} />}
-    {issued && <SubscriptionLink key={issued.id} name={issued.name} token={issued.token} onClose={() => setIssued(null)} />}
+    {issued && <SubscriptionLink key={issued.id} name={issued.name} token={issued.token}
+      infoNodes={subscriptions.find((subscription) => subscription.id === issued.id)?.info_nodes ?? false}
+      onInfoNodes={(on) => setInfoNodes(issued.id, on)}
+      onClose={() => setIssued(null)} />}
     {confirmDialog}
   </div>;
 }
@@ -228,10 +237,28 @@ export function Subscriptions() {
 // One client at a time: the formats differ only in the query string, so five
 // stacked inputs were mostly the same text. Picking the client first also
 // makes it obvious which link goes where.
-function SubscriptionLink({ name, token, onClose }: { name: string; token: string; onClose: () => void }) {
+function SubscriptionLink({ name, token, infoNodes, onInfoNodes, onClose }: {
+  name: string; token: string; infoNodes: boolean; onInfoNodes: (on: boolean) => Promise<void>; onClose: () => void;
+}) {
   const [format, setFormat] = useState<SubscriptionFormat>("clash");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   const url = subscriptionURL(window.location.origin, token, format);
-  return <Modal title="订阅链接" subtitle={`${name} · 选好客户端，复制链接导入`} size="wide" onClose={onClose}>
+  const importURL = subscriptionImportURL(format, url, name);
+
+  async function toggleInfo(on: boolean) {
+    setSaving(true);
+    setError("");
+    try {
+      await onInfoNodes(on);
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "保存失败");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <Modal title="订阅链接" subtitle={`${name} · 选好客户端，一键导入或复制链接`} size="wide" onClose={onClose}>
     <div className="segmented labels sub-formats" role="radiogroup" aria-label="客户端">
       {subscriptionFormats.map(([value, label]) => (
         <button key={value} type="button" role="radio" aria-checked={format === value} className={format === value ? "active" : ""} onClick={() => setFormat(value)}>{label}</button>
@@ -241,11 +268,20 @@ function SubscriptionLink({ name, token, onClose }: { name: string; token: strin
       <div className="terminal-bar">
         <span className="terminal-dots" aria-hidden><i /><i /><i /></span>
         <span className="terminal-title">{subscriptionFormats.find(([value]) => value === format)?.[1]}</span>
+        {importURL && <a className="btn sm sub-import" href={importURL}><ExternalLink size={14} />一键导入</a>}
         <CopyButton text={url} label="复制链接" />
       </div>
       <code className="terminal-body">{url}</code>
     </div>
-    <p className="dialog-note"><Info size={14} />链接含访问凭据，请勿公开。各客户端仅导出兼容节点；Clash 链接面向 Mihomo，旧版 Clash 不保证支持。</p>
+    {error && <Banner kind="err">{error}</Banner>}
+    <SwitchField
+      label="在节点列表里显示到期和剩余流量"
+      note="多出「⏳ 到期」「📊 剩余」两个连不上的占位节点，给不显示订阅信息的客户端看；Clash 里排在最后，不会被默认选中"
+      checked={infoNodes}
+      disabled={saving}
+      onChange={(on) => void toggleInfo(on)}
+    />
+    <p className="dialog-note"><Info size={14} />链接含访问凭据，请勿公开。各客户端仅导出兼容节点；Clash 链接面向 Mihomo，旧版 Clash 不保证支持。「一键导入」要在装了该客户端的设备上点；不带 format 的通用链接会按客户端自动返回对应格式。节点全部到期或用完时，订阅会返回一个写明原因的占位节点。</p>
   </Modal>;
 }
 

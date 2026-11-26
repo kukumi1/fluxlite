@@ -20,7 +20,7 @@ func runProbe(t *testing.T, host string, port int) []string {
 			t.Skipf("这台机器上没有 %s，跳过", bin)
 		}
 	}
-	out, err := exec.Command("sh", "-c", tcpProbeCommand(host, port)).Output()
+	out, err := exec.Command("sh", "-c", TCPProbeCommand(host, port)).Output()
 	if err != nil {
 		t.Fatalf("跑探测脚本失败: %v (输出 %q)", err, out)
 	}
@@ -81,7 +81,7 @@ func TestTCPProbeReportsFailWhenNothingListens(t *testing.T) {
 // very flaw the test existed to prevent — it overstated a 27ms link as 30-38ms
 // until a hand measurement caught it.
 func TestTCPProbeStartsClockAfterResolution(t *testing.T) {
-	script := tcpProbeCommand("example.invalid", 443)
+	script := TCPProbeCommand("example.invalid", 443)
 
 	for _, tc := range []struct {
 		branch  string
@@ -136,7 +136,7 @@ func runProbeWithoutPython3(t *testing.T, host string, port int) []string {
 			strings.TrimSpace(string(out)))
 	}
 
-	cmd := exec.Command(shPath, "-c", tcpProbeCommand(host, port))
+	cmd := exec.Command(shPath, "-c", TCPProbeCommand(host, port))
 	cmd.Env = env
 	out, err := cmd.Output()
 	if err != nil {

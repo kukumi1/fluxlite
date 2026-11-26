@@ -1,0 +1,127 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+)
+
+// LatencySample is one round of probes from a machine to one test point.
+// AvgMS is nil when no probe connected, or when the machine could connect
+// but had nothing to time the connection with.
+type LatencySample struct {
+	NodeID int64  `json:"node_id"`
+	Target string `json:"target"`
+	At     int64  `json:"at"`
+	AvgMS  *int   `json:"avg_ms"`
+	Loss   int    `json:"loss"`
+}
+
+func (s *Store) AddLatencySamples(ctx context.Context, samples []LatencySample) error {
+	if len(samples) == 0 {
+		return nil
+	}
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		for _, l := range samples {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO latency_samples (node_id, target, at, avg_ms, loss) VALUES (?, ?, ?, ?, ?)`,
+				l.NodeID, l.Target, l.At, l.AvgMS, l.Loss); err != nil {
+				return fmt.Errorf("record latency sample: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+// LatestLatency returns each machine's most recent sample per test point
+// taken at or after since.
+func (s *Store) LatestLatency(ctx context.Context, since int64) ([]LatencySample, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT l.node_id, l.target, l.at, l.avg_ms, l.loss FROM latency_samples l
+		JOIN (SELECT node_id, target, MAX(at) AS at FROM latency_samples WHERE at >= ? GROUP BY node_id, target) m
+		  ON m.node_id = l.node_id AND m.target = l.target AND m.at = l.at`, since)
+	if err != nil {
+		return nil, fmt.Errorf("query latest latency: %w", err)
+	}
+	return scanLatency(rows)
+}
+
+// LatencyHistory averages a machine's samples into buckets of the given
+// width, so a week of three-minute samples comes back as a chartable series.
+// A bucket where nothing connected has a nil average and full loss.
+func (s *Store) LatencyHistory(ctx context.Context, nodeID, since, bucket int64) ([]LatencySample, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT node_id, target, (at / ?) * ?, CAST(ROUND(AVG(avg_ms)) AS INTEGER), CAST(ROUND(AVG(loss)) AS INTEGER)
+		FROM latency_samples WHERE node_id = ? AND at >= ?
+		GROUP BY target, at / ? ORDER BY 3`, bucket, bucket, nodeID, since, bucket)
+	if err != nil {
+		return nil, fmt.Errorf("query latency history: %w", err)
+	}
+	return scanLatency(rows)
+}
+
+func scanLatency(rows *sql.Rows) ([]LatencySample, error) {
+	defer rows.Close()
+	var out []LatencySample
+	for rows.Next() {
+		var l LatencySample
+		var avg sql.NullInt64
+		if err := rows.Scan(&l.NodeID, &l.Target, &l.At, &avg, &l.Loss); err != nil {
+			return nil, fmt.Errorf("scan latency sample: %w", err)
+		}
+		if avg.Valid {
+			ms := int(avg.Int64)
+			l.AvgMS = &ms
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) PruneLatency(ctx context.Context, before int64) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM latency_samples WHERE at < ?`, before); err != nil {
+		return fmt.Errorf("prune latency samples: %w", err)
+	}
+	return nil
+}
+
+// ReturnRoute is the latest trace from a machine back to one test point.
+// Hops is the trace as JSON; Error says why there is no route to show.
+type ReturnRoute struct {
+	NodeID    int64  `json:"node_id"`
+	Target    string `json:"target"`
+	Route     string `json:"route"`
+	Hops      string `json:"-"`
+	Error     string `json:"error"`
+	CheckedAt int64  `json:"checked_at"`
+}
+
+func (s *Store) ReturnRoutes(ctx context.Context) ([]ReturnRoute, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT node_id, target, route, hops, error, checked_at FROM return_routes ORDER BY node_id, target`)
+	if err != nil {
+		return nil, fmt.Errorf("query return routes: %w", err)
+	}
+	defer rows.Close()
+	var out []ReturnRoute
+	for rows.Next() {
+		var r ReturnRoute
+		if err := rows.Scan(&r.NodeID, &r.Target, &r.Route, &r.Hops, &r.Error, &r.CheckedAt); err != nil {
+			return nil, fmt.Errorf("scan return route: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SetReturnRoute(ctx context.Context, r ReturnRoute) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO return_routes (node_id, target, route, hops, error, checked_at) VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(node_id, target) DO UPDATE SET
+			route = excluded.route, hops = excluded.hops, error = excluded.error, checked_at = excluded.checked_at`,
+		r.NodeID, r.Target, r.Route, r.Hops, r.Error, r.CheckedAt)
+	if err != nil {
+		return fmt.Errorf("record return route: %w", err)
+	}
+	return nil
+}

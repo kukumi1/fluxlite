@@ -794,6 +794,8 @@
 .sb-qr img { width: 100%; max-width: 192px; height: auto; border-radius: 12px; background: #fff; padding: 8px; }
 .sb-qr p { margin: 0; font-size: 12px; text-align: center; color: var(--muted-foreground); }
 .sb-link { display: flex; flex-direction: column; min-width: 0; }
+.sb-link .sub-import { border-color: var(--ink-line); background: transparent; color: var(--ink-text); text-decoration: none; }
+.sb-link .sub-import:hover { border-color: var(--signal); color: var(--signal); }
 .sb-link .terminal-body { display: block; flex: 1; max-height: none; overflow-wrap: anywhere; word-break: break-all; user-select: all; }
 .sb-config summary { font-weight: 500; }
 .sb-config-actions { margin: 0 16px 10px; }

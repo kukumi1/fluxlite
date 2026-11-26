@@ -70,10 +70,11 @@ func TestCollectionLocalLifecycleAndNodePolicy(t *testing.T) {
 	if e != nil || updated.QuotaPausedAt == nil {
 		t.Fatal(updated, e)
 	}
-	// With no node left to serve, the link still answers so clients can show
-	// that the traffic ran out.
+	// With no node left to serve, the link still answers with one placeholder
+	// saying why, behind a direct default so the person keeps their connection.
 	result, e = s.RenderSubscription(ctx, 0, token, "clash")
-	if e != nil || result.IncludedCount != 0 || result.Usage.Upload+result.Usage.Download != 40 || !strings.Contains(string(result.Content), "DIRECT") {
+	if e != nil || result.IncludedCount != 1 || result.Usage.Upload+result.Usage.Download != 40 ||
+		!strings.Contains(string(result.Content), "DIRECT") || !strings.Contains(string(result.Content), "节点暂不可用") {
 		t.Fatalf("%+v %v", result, e)
 	}
 	// Disabled group state cannot prevent standalone export or per-node controls.

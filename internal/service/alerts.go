@@ -36,12 +36,14 @@ type alertKind int
 const (
 	alertNode alertKind = iota
 	alertRoute
+	alertLatency
 )
 
 // alertSubject is one machine or route as it looks right now.
 type alertSubject struct {
 	key     string
 	kind    alertKind
+	nodeID  int64 // machine the subject is about, for muting; zero for routes
 	name    string
 	state   observation
 	hold    time.Duration
@@ -129,16 +131,71 @@ func (t *alertTracker) observe(now time.Time, subjects []alertSubject) []alertEv
 	return events
 }
 
-// AlertDigest reports which machines went offline or came back and which
-// routes failed or recovered since the last call, as one message ready to
-// send, or "" when nothing changed.
+// AlertDigest reports, as one message ready to send, what changed since the
+// last call: machines going offline or coming back, routes failing or
+// recovering, allowances running low, nodes about to expire, test points
+// turning bad, return routes switching lines, and the daily summary when it
+// is due. It returns "" when there is nothing to say.
+//
+// Every tracker advances whether or not its kind of message is switched on,
+// so switching one on later does not replay what happened in between.
 func (s *Service) AlertDigest(ctx context.Context) (string, error) {
 	now := time.Now()
+	cfg, err := s.AlertSettings(ctx)
+	if err != nil {
+		return "", err
+	}
 	subjects, err := s.alertSubjects(ctx, now)
 	if err != nil {
 		return "", err
 	}
-	return alertMessage(s.alerts.observe(now, subjects)), nil
+	latency, err := s.latencySubjects(ctx, now, cfg)
+	if err != nil {
+		return "", err
+	}
+	levels, err := s.levelSubjects(ctx, now)
+	if err != nil {
+		return "", err
+	}
+
+	var parts []string
+	for _, ev := range s.alerts.observe(now, append(subjects, latency...)) {
+		if cfg.allows(ev.subject) {
+			parts = append(parts, alertEventText(ev))
+		}
+	}
+	for _, ev := range s.levels.observe(levels) {
+		if (ev.kind == levelQuota && cfg.Events.Quota) || (ev.kind == levelExpiry && cfg.Events.Expiry) {
+			parts = append(parts, ev.text)
+		}
+	}
+	for _, notice := range s.drainNotices() {
+		if cfg.Events.RouteChange && !cfg.muted(notice.nodeID) {
+			parts = append(parts, notice.text)
+		}
+	}
+	if cfg.Events.Daily {
+		summary, err := s.dailySummary(ctx, now, cfg)
+		if err != nil {
+			s.log.Warn("daily summary", "error", err)
+		}
+		if summary != "" {
+			parts = append(parts, summary)
+		}
+	}
+	return strings.Join(parts, "\n\n"), nil
+}
+
+func (a AlertSettings) allows(sub alertSubject) bool {
+	switch sub.kind {
+	case alertNode:
+		return a.Events.NodeOffline && !a.muted(sub.nodeID)
+	case alertRoute:
+		return a.Events.RouteDown
+	case alertLatency:
+		return a.Events.Latency && !a.muted(sub.nodeID)
+	}
+	return false
 }
 
 func (s *Service) alertSubjects(ctx context.Context, now time.Time) ([]alertSubject, error) {
@@ -179,7 +236,7 @@ func (s *Service) alertSubjects(ctx context.Context, now time.Time) ([]alertSubj
 			state = obsFailing
 		}
 		subjects = append(subjects, alertSubject{
-			key: fmt.Sprintf("node:%d", n.ID), kind: alertNode, name: n.Name,
+			key: fmt.Sprintf("node:%d", n.ID), kind: alertNode, nodeID: n.ID, name: n.Name,
 			state: state, routes: through[n.ID], seen: n.LastSeen,
 		})
 	}
@@ -237,35 +294,43 @@ func routeSubject(r *model.Route, nodes map[int64]*model.Node, now time.Time) al
 }
 
 func alertMessage(events []alertEvent) string {
-	if len(events) == 0 {
-		return ""
-	}
 	parts := make([]string, 0, len(events))
 	for _, ev := range events {
-		var b strings.Builder
-		sub := ev.subject
-		switch {
-		case sub.kind == alertNode && ev.failing:
-			fmt.Fprintf(&b, "🔴 机器掉线：%s", sub.name)
-			if sub.seen != nil {
-				fmt.Fprintf(&b, "\n最后在线：%s", sub.seen.In(trafficZone).Format("01-02 15:04"))
-			}
-			if len(sub.routes) > 0 {
-				fmt.Fprintf(&b, "\n受影响链路：%s", strings.Join(sub.routes, "、"))
-			}
-		case sub.kind == alertNode:
-			fmt.Fprintf(&b, "🟢 机器恢复在线：%s（离线 %s）", sub.name, describeOutage(ev.lasted))
-		case ev.failing:
-			fmt.Fprintf(&b, "🔴 链路失效：%s", sub.name)
-			for _, reason := range sub.reasons {
-				b.WriteString("\n· " + reason)
-			}
-		default:
-			fmt.Fprintf(&b, "🟢 链路已恢复：%s（中断 %s）", sub.name, describeOutage(ev.lasted))
-		}
-		parts = append(parts, b.String())
+		parts = append(parts, alertEventText(ev))
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+func alertEventText(ev alertEvent) string {
+	var b strings.Builder
+	sub := ev.subject
+	switch {
+	case sub.kind == alertNode && ev.failing:
+		fmt.Fprintf(&b, "🔴 机器掉线：%s", sub.name)
+		if sub.seen != nil {
+			fmt.Fprintf(&b, "\n最后在线：%s", sub.seen.In(trafficZone).Format("01-02 15:04"))
+		}
+		if len(sub.routes) > 0 {
+			fmt.Fprintf(&b, "\n受影响链路：%s", strings.Join(sub.routes, "、"))
+		}
+	case sub.kind == alertNode:
+		fmt.Fprintf(&b, "🟢 机器恢复在线：%s（离线 %s）", sub.name, describeOutage(ev.lasted))
+	case sub.kind == alertLatency && ev.failing:
+		fmt.Fprintf(&b, "🟠 线路质量异常：%s", sub.name)
+		for _, reason := range sub.reasons {
+			b.WriteString("\n· " + reason)
+		}
+	case sub.kind == alertLatency:
+		fmt.Fprintf(&b, "🟢 线路质量恢复：%s（持续 %s）", sub.name, describeOutage(ev.lasted))
+	case ev.failing:
+		fmt.Fprintf(&b, "🔴 链路失效：%s", sub.name)
+		for _, reason := range sub.reasons {
+			b.WriteString("\n· " + reason)
+		}
+	default:
+		fmt.Fprintf(&b, "🟢 链路已恢复：%s（中断 %s）", sub.name, describeOutage(ev.lasted))
+	}
+	return b.String()
 }
 
 func describeOutage(d time.Duration) string {

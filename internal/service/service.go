@@ -50,8 +50,10 @@ type Service struct {
 	singBoxAdoptionOnce sync.Once
 	singBoxAdoptionGate chan struct{}
 
-	reach  reachability
-	alerts alertTracker
+	reach   reachability
+	alerts  alertTracker
+	levels  levelTracker
+	notices noticeQueue
 }
 
 func New(st *store.Store, sealer *cryptox.Sealer, pool *sshx.Pool, ap *applier.Applier, vf *verifier.Verifier, realm applier.RealmSource, log *slog.Logger) *Service {

@@ -12,21 +12,23 @@ func TestParseLatency(t *testing.T) {
 		{LatencyTarget: LatencyTarget{Name: "上海联通"}},
 		{LatencyTarget: LatencyTarget{Name: "北京移动"}},
 		{LatencyTarget: LatencyTarget{Name: "无工具"}},
+		{LatencyTarget: LatencyTarget{Name: "重传"}},
 	}
 	out := "0 ok 40\n0 ok 60\n0 fail -\n0 ok 50\n" + // three of four, average 50
 		"1 fail -\n1 fail -\n1 fail -\n1 fail -\n" + // all lost
 		"2 ok -\n2 ok -\n2 ok -\n2 ok -\n" + // connected, nothing to time with
 		"3 none -\n3 none -\n" + // no probe tool at all: no sample
+		"4 ok 80\n4 ok 1104\n4 ok 90\n4 ok\n" + // a resent SYN is a lost packet, not a 1.1 s path
 		"9 ok 1\ngarbage\n"
 	got := parseLatency(out, targets, 7, 100)
-	if len(got) != 3 {
+	if len(got) != 4 {
 		t.Fatalf("%+v", got)
 	}
 	want := []struct {
 		name string
 		avg  int
 		loss int
-	}{{"广东电信", 50, 25}, {"上海联通", -1, 100}, {"北京移动", -1, 0}}
+	}{{"广东电信", 50, 25}, {"上海联通", -1, 100}, {"北京移动", -1, 0}, {"重传", 85, 25}}
 	for i, w := range want {
 		g := got[i]
 		avg := -1

@@ -23,6 +23,10 @@ const (
 	// latencyProbes is how many connections each round opens to a test
 	// point; loss is reported in steps of one in four.
 	latencyProbes = 4
+	// synRetryMS marks a connection whose first SYN was lost: the kernel
+	// resends it after a second, so the connect still succeeds but its time
+	// is that timer, not the path. Such a probe counts as a lost packet.
+	synRetryMS = 1000
 	// LatencyInterval is how often every machine measures its test points.
 	LatencyInterval = 3 * time.Minute
 	// latencyKeep bounds the history kept for trends.
@@ -234,12 +238,19 @@ func parseLatency(out string, targets []resolvedTarget, nodeID, at int64) []stor
 		if f[1] != "ok" {
 			continue
 		}
-		c.ok++
+		ms, timed := 0, false
 		if len(f) > 2 {
-			if ms, err := strconv.Atoi(f[2]); err == nil {
-				c.timed++
-				c.sum += ms
+			if v, err := strconv.Atoi(f[2]); err == nil {
+				ms, timed = v, true
 			}
+		}
+		if timed && ms >= synRetryMS {
+			continue
+		}
+		c.ok++
+		if timed {
+			c.timed++
+			c.sum += ms
 		}
 	}
 	var samples []store.LatencySample

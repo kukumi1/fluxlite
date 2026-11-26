@@ -86,19 +86,23 @@ func (s *Store) PruneLatency(ctx context.Context, before int64) error {
 }
 
 // ReturnRoute is the latest trace from a machine back to one test point.
-// Hops is the trace as JSON; Error says why there is no route to show.
+// Verdict and Hops are JSON owned by the service; Line and Confidence are
+// copied out of the verdict so a change of line can be found without it.
 type ReturnRoute struct {
-	NodeID    int64  `json:"node_id"`
-	Target    string `json:"target"`
-	Route     string `json:"route"`
-	Hops      string `json:"-"`
-	Error     string `json:"error"`
-	CheckedAt int64  `json:"checked_at"`
+	NodeID     int64
+	Target     string
+	Line       string
+	Confidence string
+	Verdict    string
+	Hops       string
+	Error      string
+	CheckedAt  int64
 }
 
 func (s *Store) ReturnRoutes(ctx context.Context) ([]ReturnRoute, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT node_id, target, route, hops, error, checked_at FROM return_routes ORDER BY node_id, target`)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT node_id, target, line, confidence, verdict, hops, error, checked_at
+		FROM return_routes ORDER BY node_id, target`)
 	if err != nil {
 		return nil, fmt.Errorf("query return routes: %w", err)
 	}
@@ -106,7 +110,7 @@ func (s *Store) ReturnRoutes(ctx context.Context) ([]ReturnRoute, error) {
 	var out []ReturnRoute
 	for rows.Next() {
 		var r ReturnRoute
-		if err := rows.Scan(&r.NodeID, &r.Target, &r.Route, &r.Hops, &r.Error, &r.CheckedAt); err != nil {
+		if err := rows.Scan(&r.NodeID, &r.Target, &r.Line, &r.Confidence, &r.Verdict, &r.Hops, &r.Error, &r.CheckedAt); err != nil {
 			return nil, fmt.Errorf("scan return route: %w", err)
 		}
 		out = append(out, r)
@@ -116,10 +120,12 @@ func (s *Store) ReturnRoutes(ctx context.Context) ([]ReturnRoute, error) {
 
 func (s *Store) SetReturnRoute(ctx context.Context, r ReturnRoute) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO return_routes (node_id, target, route, hops, error, checked_at) VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO return_routes (node_id, target, line, confidence, verdict, hops, error, checked_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(node_id, target) DO UPDATE SET
-			route = excluded.route, hops = excluded.hops, error = excluded.error, checked_at = excluded.checked_at`,
-		r.NodeID, r.Target, r.Route, r.Hops, r.Error, r.CheckedAt)
+			line = excluded.line, confidence = excluded.confidence, verdict = excluded.verdict,
+			hops = excluded.hops, error = excluded.error, checked_at = excluded.checked_at`,
+		r.NodeID, r.Target, r.Line, r.Confidence, r.Verdict, r.Hops, r.Error, r.CheckedAt)
 	if err != nil {
 		return fmt.Errorf("record return route: %w", err)
 	}

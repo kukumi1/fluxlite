@@ -99,6 +99,7 @@ func run() error {
 	ap := applier.New(pool, realmSource)
 	vf := verifier.New(pool)
 	svc := service.New(st, sealer, pool, ap, vf, realmSource, logger)
+	svc.SetTraceTool(applier.NewCachedNextTraceSource(filepath.Join(*dataDir, "nexttrace")))
 	authSvc := auth.New(st)
 
 	static, err := web.Handler()

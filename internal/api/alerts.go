@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -124,5 +125,23 @@ func (s *Server) handleTraceReturnRoutes(w http.ResponseWriter, r *http.Request)
 		writeError(w, statusForError(err), "回程检测失败："+err.Error())
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *Server) handleSaveReturnSettings(w http.ResponseWriter, r *http.Request) {
+	var cfg service.ReturnSettings
+	if err := decodeJSON(r, &cfg); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.svc.SetReturnSettings(r.Context(), cfg); err != nil {
+		if errors.Is(err, service.ErrReturnSettings) {
+			writeError(w, http.StatusBadRequest, "回程设置无效：测试点必须来自预设且不能重复")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "保存回程设置失败")
+		return
+	}
+	s.audit(r, "latency.return_settings", "回程测试点", fmt.Sprintf("%d 个测试点，跳过 %d 台机器", len(cfg.Targets), len(cfg.SkipNodes)))
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

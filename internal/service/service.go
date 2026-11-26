@@ -54,6 +54,8 @@ type Service struct {
 	alerts  alertTracker
 	levels  levelTracker
 	notices noticeQueue
+	// traceTool is the tracer pushed to machines for return routes.
+	traceTool TraceTool
 }
 
 func New(st *store.Store, sealer *cryptox.Sealer, pool *sshx.Pool, ap *applier.Applier, vf *verifier.Verifier, realm applier.RealmSource, log *slog.Logger) *Service {

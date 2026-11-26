@@ -174,6 +174,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/latency/nodes/{id}/history", s.handleLatencyHistory)
 			r.Post("/latency/nodes/{id}/probe", s.handleProbeLatency)
 			r.Post("/latency/nodes/{id}/trace", s.handleTraceReturnRoutes)
+			r.Put("/latency/return-settings", s.handleSaveReturnSettings)
 			r.Get("/audit", s.handleAudit)
 			r.Get("/traffic-audit", s.handleTrafficAudit)
 

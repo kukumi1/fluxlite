@@ -67,6 +67,7 @@ const LABELS: Record<string, string> = {
   "route.start": "启动链路",
   "alerts.settings": "修改通知设置",
   "latency.targets": "修改测试点",
+  "latency.return_settings": "修改回程设置",
   "route.verify": "检测链路",
   "route.orphan_removed": "清理孤儿转发",
   "routes.reorder": "调整链路顺序",

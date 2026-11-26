@@ -459,6 +459,8 @@ export const api = {
   latencyHistory: (nodeID: number, hours: number) => request<LatencySample[]>(`/latency/nodes/${nodeID}/history?hours=${hours}`),
   probeLatency: (nodeID: number) => post<{ ok: boolean }>(`/latency/nodes/${nodeID}/probe`),
   traceReturnRoutes: (nodeID: number) => post<{ ok: boolean }>(`/latency/nodes/${nodeID}/trace`),
+  saveReturnSettings: (settings: ReturnSettings) =>
+    request<{ ok: boolean }>("/latency/return-settings", { method: "PUT", body: JSON.stringify(settings) }),
   deleteSubscription: (id: number) => request<{ ok: boolean }>(`/subscriptions/${id}`, { method: "DELETE" }),
   resetSubscriptionToken: (id: number) => post<{ token: string }>(`/subscriptions/${id}/reset-token`),
   getSubscriptionLink: (id: number) => request<{ token: string }>(`/subscriptions/${id}/link`, { method: "GET", cache: "no-store" }),
@@ -667,25 +669,61 @@ export interface LatencySample {
   loss: number;
 }
 
+/** 回程的一跳：ip 为空表示这一跳没有回应；asn/net 由面板按宣告前缀判断。 */
 export interface ReturnRouteHop {
   ttl: number;
   ip?: string;
-  ms?: string;
+  ms?: number;
+  asn?: number;
   net?: string;
+}
+
+export type RouteConfidence = "confirmed" | "inferred" | "insufficient";
+
+/** tier：3 精品，2 优质，1 普通，0 未识别。 */
+export interface RouteVerdict {
+  line: string;
+  tier: number;
+  confidence: RouteConfidence;
+  evidence: string;
+  chain: string[];
+  entry?: string;
+  handoff?: string;
+  reached: boolean;
 }
 
 export interface ReturnRoute {
   node_id: number;
   target: string;
-  route: string;
+  verdict: RouteVerdict;
+  hops: ReturnRouteHop[];
   error: string;
   checked_at: number;
-  hops: ReturnRouteHop[];
+}
+
+export interface ReturnTarget {
+  name: string;
+  city: string;
+  carrier: string;
+  host: string;
+}
+
+export interface ReturnSettings {
+  targets: string[];
+  skip_nodes: number[];
+}
+
+export interface ReturnOverview {
+  settings: ReturnSettings;
+  presets: ReturnTarget[];
+  routes: ReturnRoute[];
+  tool: string;
+  prefix_date: string;
 }
 
 export interface LatencyOverview {
   targets: LatencyTarget[];
   presets: LatencyTarget[];
   samples: LatencySample[];
-  routes: ReturnRoute[];
+  return: ReturnOverview;
 }

@@ -445,6 +445,24 @@ func init() {
 			PRIMARY KEY (node_id, target)
 		)`,
 		`ALTER TABLE subscriptions ADD COLUMN info_nodes INTEGER NOT NULL DEFAULT 0`)
+
+	// Return routes are now traced over TCP and judged from announced
+	// prefixes, against test points of their own. The first table held
+	// verdicts by the old rules under the latency points' names; they are
+	// rebuilt on the next round, so it is replaced rather than migrated.
+	migrations = append(migrations,
+		`DROP TABLE IF EXISTS return_routes`,
+		`CREATE TABLE IF NOT EXISTS return_routes (
+			node_id    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+			target     TEXT NOT NULL,
+			line       TEXT NOT NULL DEFAULT '',
+			confidence TEXT NOT NULL DEFAULT '',
+			verdict    TEXT NOT NULL DEFAULT '{}',
+			hops       TEXT NOT NULL DEFAULT '[]',
+			error      TEXT NOT NULL DEFAULT '',
+			checked_at INTEGER NOT NULL,
+			PRIMARY KEY (node_id, target)
+		)`)
 }
 
 // retiredMigration holds the place of a migration whose feature was withdrawn

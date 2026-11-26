@@ -32,13 +32,46 @@
 .quality-pill.q-fair { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
 .quality-pill.q-bad { background: color-mix(in srgb, var(--err) 14%, transparent); color: var(--err); }
 .quality-pill.q-none { background: var(--muted); color: var(--muted-foreground); }
-.quality-route { display: block; margin-top: 5px; padding-left: 10px; font-size: 11.5px; color: var(--muted-foreground); white-space: nowrap; }
-.quality-route.is-error { color: var(--warn); }
 .quality-actions { white-space: nowrap; text-align: right; min-width: 0 !important; }
 .quality-actions .icon-btn { display: inline-grid; width: 32px; height: 32px; border-radius: 50%; vertical-align: middle; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin { animation: spin 900ms linear infinite; }
+
+/* Sections */
+.quality-section { margin-top: 28px; }
+.quality-section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 4px 2px 12px; }
+.quality-section-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.quality-section-head p { margin: 3px 0 0; font-size: 12.5px; color: var(--muted-foreground); }
+
+/* Return routes */
+.return-table thead th:first-child, .return-table tbody th { padding-left: 18px; text-align: left; }
+.return-table thead th:first-child, .return-table tbody th { position: sticky; left: 0; z-index: 1; background: var(--card); }
+.return-table .city-head { border-left: 1px solid var(--border); }
+.return-table .carrier-head { font-weight: 500; }
+.return-table td, .return-table thead th { min-width: 0; padding-left: 4px; padding-right: 4px; text-align: center; }
+.return-table td .route-handoff { display: block; margin-top: 3px; font-size: 10.5px; color: var(--muted-foreground); }
+.return-table td.return-skipped { text-align: left; font-size: 12.5px; }
+.route-pill {
+  display: inline-flex; align-items: baseline; gap: 5px; padding: 2px 8px; border: 1px solid transparent; border-radius: 999px;
+  font-family: var(--font-mono); font-size: 11.5px; white-space: nowrap;
+}
+.route-pill small { font-family: var(--font-sans, inherit); font-size: 10.5px; opacity: 0.8; }
+.route-pill.r-premium { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.route-pill.r-quality { background: var(--tone-sky-soft); color: var(--tone-sky-ink); }
+.route-pill.r-ordinary { background: var(--muted); color: var(--foreground); }
+.route-pill.r-unknown, .route-pill.r-error { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.route-pill.r-none { background: none; color: var(--muted-foreground); }
+.route-pill.is-inferred { border-style: dashed; border-color: currentColor; }
+.dark .route-pill.r-quality { background: color-mix(in srgb, var(--tone-sky) 18%, transparent); color: var(--tone-sky); }
+.route-trace header .route-pill.r-error { white-space: normal; }
+.return-footnote { margin: 0; padding: 12px 18px 14px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted-foreground); }
+
+.return-grid { display: grid; gap: 8px; margin-bottom: 18px; }
+.return-grid-row { display: flex; align-items: center; gap: 8px; }
+.return-grid-row strong { min-width: 48px; font-size: 13.5px; }
+.return-grid-row .btn { margin-left: auto; }
+.return-subhead { margin: 0 0 4px; font-size: 13.5px; font-weight: 600; }
 
 /* Trend */
 .trend-chart { display: block; width: 100%; height: auto; margin: 14px 0 6px; }
@@ -62,8 +95,9 @@
 .route-trace-actions { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 .route-trace { padding: 12px 0; border-top: 1px solid var(--border); }
 .route-trace header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.route-trace header .quality-route { display: inline; margin: 0; padding: 0; font-size: 12.5px; color: var(--foreground); }
-.route-trace header .quality-route.is-error { color: var(--warn); }
+.route-evidence { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 0; font-size: 12.5px; color: var(--muted-foreground); }
+.route-evidence .mono { color: var(--foreground); }
+.trace-hops .muted-tag { color: var(--muted-foreground); }
 .trace-hops { margin: 8px 0 0; padding: 0; list-style: none; columns: 2 260px; column-gap: 24px; }
 .trace-hops li { display: flex; align-items: center; gap: 10px; padding: 3px 0; font-size: 12.5px; break-inside: avoid; }
 .trace-hops .ttl { width: 22px; color: var(--muted-foreground); text-align: right; }

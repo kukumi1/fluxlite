@@ -59,13 +59,14 @@ func TestReturnRouteUpsertAndSettings(t *testing.T) {
 	ctx := context.Background()
 	node := seedRoute(t, st).Hops[0].NodeID
 
-	for _, route := range []string{"电信 CN2 GIA", "电信 163"} {
-		if err := st.SetReturnRoute(ctx, ReturnRoute{NodeID: node, Target: "广东电信", Route: route, Hops: "[]", CheckedAt: 1}); err != nil {
+	for _, line := range []string{"CN2 GIA", "163"} {
+		r := ReturnRoute{NodeID: node, Target: "广东电信", Line: line, Confidence: "confirmed", Verdict: "{}", Hops: "[]", CheckedAt: 1}
+		if err := st.SetReturnRoute(ctx, r); err != nil {
 			t.Fatal(err)
 		}
 	}
 	routes, err := st.ReturnRoutes(ctx)
-	if err != nil || len(routes) != 1 || routes[0].Route != "电信 163" {
+	if err != nil || len(routes) != 1 || routes[0].Line != "163" || routes[0].Confidence != "confirmed" {
 		t.Fatalf("%+v %v", routes, err)
 	}
 

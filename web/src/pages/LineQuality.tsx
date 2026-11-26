@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, LineChart, Plus, RefreshCw, Route as RouteIcon, Settings2, Trash2 } from "lucide-react";
+import { Activity, LineChart, Plus, RefreshCw, Settings2, Trash2 } from "lucide-react";
 import {
   api, ApiError,
-  type LatencyOverview, type LatencySample, type LatencyTarget, type Node, type ReturnRoute,
+  type LatencyOverview, type LatencySample, type LatencyTarget, type Node,
 } from "../api";
 import { Banner, Modal } from "../components/Modal";
 import { EmptyState } from "../components/EmptyState";
 import { Flag } from "../components/Flag";
 import { PageHeader } from "../components/PageHeader";
 import { regionOf } from "../lib/region";
+import { ReturnRoutesSection } from "./ReturnRoutes";
 import "./line-quality.css";
 
 type Quality = "good" | "fair" | "bad" | "none";
@@ -29,11 +30,6 @@ function sampleText(sample: LatencySample | undefined): string {
   return sample.avg_ms === null ? "可连接" : `${sample.avg_ms}ms`;
 }
 
-// Route labels carry the carrier, which the column header already names.
-function shortRoute(route: string): string {
-  return route.replace(/^(电信|联通|移动)\s*/, "");
-}
-
 const key = (nodeID: number, target: string) => `${nodeID}:${target}`;
 
 export function LineQuality() {
@@ -43,7 +39,6 @@ export function LineQuality() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [trendFor, setTrendFor] = useState<Node | null>(null);
-  const [routesFor, setRoutesFor] = useState<Node | null>(null);
   const [editingTargets, setEditingTargets] = useState(false);
 
   async function load() {
@@ -65,7 +60,6 @@ export function LineQuality() {
   }, []);
 
   const samples = useMemo(() => new Map((overview?.samples ?? []).map((s) => [key(s.node_id, s.target), s])), [overview]);
-  const routes = useMemo(() => new Map((overview?.routes ?? []).map((r) => [key(r.node_id, r.target), r])), [overview]);
   const targets = (overview?.targets ?? []).filter((t) => t.enabled);
 
   async function act(id: string, fn: () => Promise<unknown>, done: string) {
@@ -87,15 +81,22 @@ export function LineQuality() {
     <div className="management-page line-quality-page">
       <PageHeader
         title="线路质量"
-        desc="每台机器每 3 分钟测一次到国内各地运营商的延迟和丢包，每天检测一次回程线路。测的是从机器出发的 TCP 连接，和国内用户连过来的方向相反，但线路好坏基本一致。"
-        actions={<button className="btn" onClick={() => setEditingTargets(true)}><Settings2 size={15} />测试点</button>}
+        desc="每台机器每 3 分钟测一次到国内各地运营商的延迟和丢包，每天检测一次回程线路。测的是从机器出发的连接，和国内用户连过来的方向相反，但线路好坏基本一致。"
       />
       {error && <Banner kind="err">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
 
+      <div className="quality-section-head">
+        <div>
+          <h2>延迟与丢包</h2>
+          <p>每轮每个测试点连 4 次 TCP，取平均延迟；握手超时或重传都算丢包。</p>
+        </div>
+        <button className="btn" onClick={() => setEditingTargets(true)}><Settings2 size={15} />延迟测试点</button>
+      </div>
+
       {overview && targets.length === 0 && (
         <div className="card">
-          <EmptyState icon={<Activity size={18} />} title="没有启用的测试点" desc="选几个测试点，机器就会开始测延迟和回程。"
+          <EmptyState icon={<Activity size={18} />} title="没有启用的测试点" desc="选几个测试点，机器就会开始测延迟。"
             action={<button className="btn primary" onClick={() => setEditingTargets(true)}>设置测试点</button>} />
         </div>
       )}
@@ -125,15 +126,11 @@ export function LineQuality() {
                     </th>
                     {targets.map((t) => {
                       const sample = samples.get(key(n.id, t.name));
-                      const route = routes.get(key(n.id, t.name));
                       return (
                         <td key={t.name}>
                           <span className={`quality-pill q-${qualityOf(sample)}`} title={sample ? `丢包 ${sample.loss}%` : "还没有测量结果"}>
                             {sampleText(sample)}
                             {sample && sample.loss > 0 && sample.loss < 100 && <small>丢 {sample.loss}%</small>}
-                          </span>
-                          <span className={`quality-route${route?.error ? " is-error" : ""}`} title={route?.error || undefined}>
-                            {route ? (route.error ? "未检测" : shortRoute(route.route)) : "待检测"}
                           </span>
                         </td>
                       );
@@ -146,9 +143,6 @@ export function LineQuality() {
                       <button className="icon-btn" title="延迟趋势" aria-label={`${n.name} 的延迟趋势`} onClick={() => setTrendFor(n)}>
                         <LineChart size={15} />
                       </button>
-                      <button className="icon-btn" title="回程详情" aria-label={`${n.name} 的回程详情`} onClick={() => setRoutesFor(n)}>
-                        <RouteIcon size={15} />
-                      </button>
                     </td>
                   </tr>
                 );
@@ -159,14 +153,16 @@ export function LineQuality() {
       )}
 
       {trendFor && <TrendDialog node={trendFor} targets={targets} onClose={() => setTrendFor(null)} />}
-      {routesFor && (
-        <RoutesDialog
-          node={routesFor}
-          targets={targets}
-          routes={routes}
-          busy={busy === `t${routesFor.id}`}
-          onRetrace={() => void act(`t${routesFor.id}`, () => api.traceReturnRoutes(routesFor.id), `${routesFor.name} 的回程已重新检测`)}
-          onClose={() => setRoutesFor(null)}
+      {overview && (
+        <ReturnRoutesSection
+          overview={overview.return}
+          nodes={nodes}
+          busy={busy}
+          onTrace={(n) => void act(`t${n.id}`, () => api.traceReturnRoutes(n.id), `${n.name} 的回程已重新检测`)}
+          onSaved={async () => {
+            setNotice("回程设置已保存，下一轮检测开始生效");
+            await load();
+          }}
         />
       )}
       {editingTargets && overview && (
@@ -285,49 +281,6 @@ function TrendChart({ series, hours }: { series: Array<{ name: string; points: L
   );
 }
 
-function RoutesDialog({ node, targets, routes, busy, onRetrace, onClose }: {
-  node: Node;
-  targets: LatencyTarget[];
-  routes: Map<string, ReturnRoute>;
-  busy: boolean;
-  onRetrace: () => void;
-  onClose: () => void;
-}) {
-  return (
-    <Modal title={`回程详情 · ${node.name}`} subtitle="从机器到各测试点经过的每一跳；按经过的骨干网判断线路" size="wide" onClose={onClose}>
-      <div className="route-trace-actions">
-        <button className="btn sm" disabled={busy || node.status !== "online"} onClick={onRetrace}>
-          <RefreshCw size={14} className={busy ? "spin" : undefined} />{busy ? "检测中…" : "重新检测"}
-        </button>
-      </div>
-      {targets.map((t) => {
-        const r = routes.get(key(node.id, t.name));
-        return (
-          <section key={t.name} className="route-trace">
-            <header>
-              <strong>{t.name}</strong>
-              <span className={`quality-route${r?.error ? " is-error" : ""}`}>{r ? (r.error || r.route) : "还没有检测"}</span>
-              {r && <small className="muted">{new Date(r.checked_at * 1000).toLocaleString("zh-CN")}</small>}
-            </header>
-            {r && r.hops.length > 0 && (
-              <ol className="trace-hops">
-                {r.hops.map((h) => (
-                  <li key={h.ttl}>
-                    <span className="mono ttl">{h.ttl}</span>
-                    <span className="mono">{h.ip ?? "*"}</span>
-                    <span className="mono muted">{h.ms ? `${h.ms} ms` : ""}</span>
-                    {h.net && <span className="tag">{h.net}</span>}
-                  </li>
-                ))}
-              </ol>
-            )}
-          </section>
-        );
-      })}
-    </Modal>
-  );
-}
-
 function TargetsDialog({ targets, presets, onClose, onSaved }: {
   targets: LatencyTarget[];
   presets: LatencyTarget[];
@@ -362,7 +315,7 @@ function TargetsDialog({ targets, presets, onClose, onSaved }: {
   }
 
   return (
-    <Modal title="测试点" subtitle="测试点是放在各地运营商机房里的地址；最多同时启用 12 个" size="wide" onClose={onClose}>
+    <Modal title="延迟测试点" subtitle="测试点是放在各地运营商机房里的地址；最多同时启用 12 个" size="wide" onClose={onClose}>
       {error && <Banner kind="err">{error}</Banner>}
       <div className="target-list">
         {list.map((t, i) => {

@@ -17,21 +17,25 @@ func TestLatencySamplesLatestHistoryAndPrune(t *testing.T) {
 		{NodeID: node, Target: "广东电信", At: 1100, AvgMS: ms(60), Loss: 25},
 		{NodeID: node, Target: "广东电信", At: 1300, AvgMS: nil, Loss: 100},
 		{NodeID: node, Target: "上海联通", At: 1100, AvgMS: ms(80), Loss: 0},
+		{NodeID: node, Target: "广东电信", Family: 6, At: 1100, AvgMS: ms(90), Loss: 0},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	latest, err := st.LatestLatency(ctx, 1050)
-	if err != nil || len(latest) != 2 {
+	if err != nil || len(latest) != 3 {
 		t.Fatalf("%+v %v", latest, err)
 	}
 	for _, l := range latest {
-		if l.Target == "广东电信" && (l.At != 1300 || l.AvgMS != nil || l.Loss != 100) {
+		if l.Target == "广东电信" && l.Family == 6 && (l.At != 1100 || *l.AvgMS != 90) {
+			t.Fatalf("IPv6 sample mixed with IPv4: %+v", l)
+		}
+		if l.Target == "广东电信" && l.Family == 4 && (l.At != 1300 || l.AvgMS != nil || l.Loss != 100) {
 			t.Fatalf("latest picked the wrong sample: %+v", l)
 		}
 	}
 
-	history, err := st.LatencyHistory(ctx, node, 0, 200)
+	history, err := st.LatencyHistory(ctx, node, 4, 0, 200)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +53,10 @@ func TestLatencySamplesLatestHistoryAndPrune(t *testing.T) {
 	if err := st.PruneLatency(ctx, 1200); err != nil {
 		t.Fatal(err)
 	}
-	if left, _ := st.LatencyHistory(ctx, node, 0, 200); len(left) != 1 {
+	if v6, _ := st.LatencyHistory(ctx, node, 6, 0, 200); len(v6) != 0 {
+		t.Fatalf("prune kept IPv6 samples %+v", v6)
+	}
+	if left, _ := st.LatencyHistory(ctx, node, 4, 0, 200); len(left) != 1 {
 		t.Fatalf("prune kept %+v", left)
 	}
 }

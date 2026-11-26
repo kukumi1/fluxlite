@@ -456,7 +456,8 @@ export const api = {
   latencyOverview: () => request<LatencyOverview>("/latency", { cache: "no-store" }),
   saveLatencyTargets: (targets: LatencyTarget[]) =>
     request<LatencyTarget[]>("/latency/targets", { method: "PUT", body: JSON.stringify(targets) }),
-  latencyHistory: (nodeID: number, hours: number) => request<LatencySample[]>(`/latency/nodes/${nodeID}/history?hours=${hours}`),
+  latencyHistory: (nodeID: number, hours: number, family: IPFamily) =>
+    request<LatencySample[]>(`/latency/nodes/${nodeID}/history?hours=${hours}&family=${family}`),
   probeLatency: (nodeID: number) => post<{ ok: boolean }>(`/latency/nodes/${nodeID}/probe`),
   traceReturnRoutes: (nodeID: number) => post<{ ok: boolean }>(`/latency/nodes/${nodeID}/trace`),
   saveReturnSettings: (settings: ReturnSettings) =>
@@ -656,14 +657,22 @@ export interface AlertSettings {
 export interface LatencyTarget {
   name: string;
   host: string;
+  /** 同一测试点的 IPv6 地址或域名；为空则只测 IPv4。 */
+  host_v6?: string;
   port: number;
+  /** 是否测 IPv4。 */
   enabled: boolean;
+  /** 是否测 IPv6，需要 host_v6。 */
+  enabled_v6: boolean;
 }
+
+export type IPFamily = 4 | 6;
 
 /** 一轮测量。avg_ms 为 null：一次都没连上，或机器上没有能计时的工具。 */
 export interface LatencySample {
   node_id: number;
   target: string;
+  family: IPFamily;
   at: number;
   avg_ms: number | null;
   loss: number;

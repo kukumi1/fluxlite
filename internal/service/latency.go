@@ -40,20 +40,25 @@ const (
 
 // LatencyTarget is a test point: an address inside a Chinese carrier's
 // network, so the time from a machine to it is the time to that carrier's
-// users in that region.
+// users in that region. HostV6 is where the same point answers over IPv6.
+// Enabled and EnabledV6 choose, independently, whether the point is measured
+// over IPv4 and over IPv6; the latter needs HostV6.
 type LatencyTarget struct {
-	Name    string `json:"name"`
-	Host    string `json:"host"`
-	Port    int    `json:"port"`
-	Enabled bool   `json:"enabled"`
+	Name      string `json:"name"`
+	Host      string `json:"host"`
+	HostV6    string `json:"host_v6,omitempty"`
+	Port      int    `json:"port"`
+	Enabled   bool   `json:"enabled"`
+	EnabledV6 bool   `json:"enabled_v6"`
 }
 
 var ErrLatencyTargets = errors.New("测试点设置无效")
 
 // LatencyPresets are carrier test points in Beijing, Shanghai, Guangdong and
-// Sichuan. The names resolve to the carriers' own addresses over IPv4 only;
-// their IPv6 records point at a CDN abroad, which is why they are always
-// resolved for IPv4 before being handed to a machine.
+// Sichuan. Each comes as two names: the v4 one resolves to the carrier's own
+// address over IPv4 only (its IPv6 record leads to a CDN abroad), the v6 one
+// to the carrier's IPv6 address. The panel resolves them, each for its own
+// family, before handing the address to a machine.
 func LatencyPresets() []LatencyTarget {
 	cities := [][2]string{{"北京", "bj"}, {"上海", "sh"}, {"广东", "gd"}, {"四川", "sc"}}
 	carriers := [][2]string{{"电信", "ct"}, {"联通", "cu"}, {"移动", "cm"}}
@@ -64,7 +69,8 @@ func LatencyPresets() []LatencyTarget {
 			name := c[0] + k[0]
 			out = append(out, LatencyTarget{
 				Name: name, Host: fmt.Sprintf("%s-%s-v4.ip.zstaticcdn.com", c[1], k[1]),
-				Port: 80, Enabled: recommended[name],
+				HostV6: fmt.Sprintf("%s-%s-v6.ip.zstaticcdn.com", c[1], k[1]),
+				Port:   80, Enabled: recommended[name], EnabledV6: recommended[name],
 			})
 		}
 	}
@@ -85,27 +91,60 @@ func (s *Service) LatencyTargets(ctx context.Context) ([]LatencyTarget, error) {
 	if err := json.Unmarshal([]byte(raw), &targets); err != nil {
 		return nil, err
 	}
+	// Points saved before IPv6 was measured carry neither a v6 name nor a v6
+	// switch. Presets get the preset's name, recognised by their v4 one, and
+	// are measured over IPv6 wherever they were over IPv4.
+	var fields []map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		return nil, err
+	}
+	v6 := map[string]string{}
+	for _, p := range LatencyPresets() {
+		v6[p.Host] = p.HostV6
+	}
+	for i := range targets {
+		if _, chosen := fields[i]["enabled_v6"]; chosen {
+			continue
+		}
+		if targets[i].HostV6 == "" {
+			targets[i].HostV6 = v6[targets[i].Host]
+		}
+		targets[i].EnabledV6 = targets[i].Enabled && targets[i].HostV6 != ""
+	}
 	return targets, nil
 }
 
 var hostPattern = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
 
+// validHostV6 accepts a name or an IPv6 literal, never an IPv4 one: a v6
+// point that is really an IPv4 address would measure IPv4 twice.
+func validHostV6(host string) bool {
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.To4() == nil
+	}
+	return hostPattern.MatchString(host) && len(host) <= 253
+}
+
 func (s *Service) SetLatencyTargets(ctx context.Context, targets []LatencyTarget) error {
 	names := map[string]bool{}
-	enabled := 0
+	enabled, enabledV6 := 0, 0
 	for i := range targets {
 		t := &targets[i]
-		t.Name, t.Host = strings.TrimSpace(t.Name), strings.TrimSpace(t.Host)
+		t.Name, t.Host, t.HostV6 = strings.TrimSpace(t.Name), strings.TrimSpace(t.Host), strings.TrimSpace(t.HostV6)
 		if t.Name == "" || len([]rune(t.Name)) > 20 || names[t.Name] || !hostPattern.MatchString(t.Host) ||
-			len(t.Host) > 253 || t.Port < 1 || t.Port > 65535 {
+			len(t.Host) > 253 || (t.HostV6 != "" && !validHostV6(t.HostV6)) || (t.EnabledV6 && t.HostV6 == "") ||
+			t.Port < 1 || t.Port > 65535 {
 			return ErrLatencyTargets
 		}
 		names[t.Name] = true
 		if t.Enabled {
 			enabled++
 		}
+		if t.EnabledV6 {
+			enabledV6++
+		}
 	}
-	if len(targets) > 30 || enabled > maxLatencyTargets {
+	if len(targets) > 30 || enabled > maxLatencyTargets || enabledV6 > maxLatencyTargets {
 		return ErrLatencyTargets
 	}
 	raw, err := json.Marshal(targets)
@@ -115,12 +154,16 @@ func (s *Service) SetLatencyTargets(ctx context.Context, targets []LatencyTarget
 	return s.store.SetSetting(ctx, latencyTargetsKey, string(raw))
 }
 
-// resolvedTarget is a test point with the IPv4 address it resolved to.
+// resolvedTarget is a test point with the address it resolved to for one
+// address family.
 type resolvedTarget struct {
 	LatencyTarget
-	ip string
+	family int
+	ip     string
 }
 
+// resolveTargets resolves every test point for each address family it is
+// switched on for.
 func (s *Service) resolveTargets(ctx context.Context) ([]resolvedTarget, error) {
 	targets, err := s.LatencyTargets(ctx)
 	if err != nil {
@@ -128,31 +171,58 @@ func (s *Service) resolveTargets(ctx context.Context) ([]resolvedTarget, error) 
 	}
 	var out []resolvedTarget
 	for _, t := range targets {
-		if !t.Enabled {
-			continue
+		for _, family := range []int{4, 6} {
+			host := t.Host
+			if family == 6 {
+				host = t.HostV6
+			}
+			if on := map[int]bool{4: t.Enabled, 6: t.EnabledV6}[family]; !on || host == "" {
+				continue
+			}
+			ip, err := resolveIP(ctx, host, family)
+			if err != nil {
+				s.log.Warn("resolve latency test point", "target", t.Name, "family", family, "error", err)
+				continue
+			}
+			out = append(out, resolvedTarget{LatencyTarget: t, family: family, ip: ip})
 		}
-		ip, err := resolveIPv4(ctx, t.Host)
-		if err != nil {
-			s.log.Warn("resolve latency test point", "target", t.Name, "error", err)
-			continue
-		}
-		out = append(out, resolvedTarget{LatencyTarget: t, ip: ip})
 	}
 	return out, nil
 }
 
-// resolveIPv4 resolves a test point on the panel, for IPv4 only: the
-// carrier test points' IPv6 records lead to a CDN abroad.
-func resolveIPv4(ctx context.Context, host string) (string, error) {
-	if net.ParseIP(host) != nil {
+// forNode drops the IPv6 points for a machine with no IPv6 of its own: every
+// probe would fail, and that is no news about the line.
+func forNode(targets []resolvedTarget, node *model.Node) []resolvedTarget {
+	if node.IPv6Address != "" {
+		return targets
+	}
+	var out []resolvedTarget
+	for _, t := range targets {
+		if t.family == 4 {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// resolveIP resolves a test point on the panel for one address family.
+func resolveIP(ctx context.Context, host string, family int) (string, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		if (ip.To4() != nil) != (family == 4) {
+			return "", fmt.Errorf("%s is not an IPv%d address", host, family)
+		}
 		return host, nil
 	}
-	addrs, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
+	network := "ip4"
+	if family == 6 {
+		network = "ip6"
+	}
+	addrs, err := net.DefaultResolver.LookupIP(ctx, network, host)
 	if err != nil {
 		return "", err
 	}
 	if len(addrs) == 0 {
-		return "", fmt.Errorf("%s has no IPv4 address", host)
+		return "", fmt.Errorf("%s has no IPv%d address", host, family)
 	}
 	return addrs[0].String(), nil
 }
@@ -181,7 +251,7 @@ func (s *Service) SampleLatency(ctx context.Context) error {
 			defer func() { <-slots }()
 			nodeCtx, cancel := context.WithTimeout(ctx, time.Minute)
 			defer cancel()
-			if err := s.measureNode(nodeCtx, n, targets); err != nil {
+			if err := s.measureNode(nodeCtx, n, forNode(targets, n)); err != nil {
 				s.log.Debug("latency sample failed", "node", n.Name, "error", err)
 			}
 		}(n)
@@ -200,7 +270,7 @@ func (s *Service) MeasureNodeLatency(ctx context.Context, nodeID int64) error {
 	if err != nil {
 		return err
 	}
-	return s.measureNode(ctx, node, targets)
+	return s.measureNode(ctx, node, forNode(targets, node))
 }
 
 func (s *Service) measureNode(ctx context.Context, node *model.Node, targets []resolvedTarget) error {
@@ -266,7 +336,7 @@ func parseLatency(out string, targets []resolvedTarget, nodeID, at int64) []stor
 			continue
 		}
 		sample := store.LatencySample{
-			NodeID: nodeID, Target: targets[i].Name, At: at,
+			NodeID: nodeID, Target: targets[i].Name, Family: targets[i].family, At: at,
 			Loss: (c.done - c.ok) * 100 / c.done,
 		}
 		if c.timed > 0 {
@@ -300,8 +370,13 @@ func (s *Service) latencySubjects(ctx context.Context, now time.Time, cfg AlertS
 	if err != nil {
 		return nil, err
 	}
+	// Alerts and the daily summary follow IPv4, which every machine has and
+	// most users connect over; IPv6 is shown on the page only.
 	byNode := make(map[int64]map[string]store.LatencySample)
 	for _, l := range latest {
+		if l.Family != 4 {
+			continue
+		}
 		if byNode[l.NodeID] == nil {
 			byNode[l.NodeID] = map[string]store.LatencySample{}
 		}
@@ -379,15 +454,15 @@ func (s *Service) LatencyOverview(ctx context.Context) (*LatencyOverview, error)
 
 // LatencyHistory returns a machine's samples over the last hours, averaged
 // into buckets so a chart gets a few hundred points at most.
-func (s *Service) LatencyHistory(ctx context.Context, nodeID int64, hours int) ([]store.LatencySample, error) {
-	if hours < 1 || hours > 24*7 {
+func (s *Service) LatencyHistory(ctx context.Context, nodeID int64, family, hours int) ([]store.LatencySample, error) {
+	if hours < 1 || hours > 24*7 || (family != 4 && family != 6) {
 		return nil, ErrLatencyTargets
 	}
 	bucket := int64(hours) * 3600 / 240
 	if bucket < 180 {
 		bucket = 180
 	}
-	out, err := s.store.LatencyHistory(ctx, nodeID, time.Now().Add(-time.Duration(hours)*time.Hour).Unix(), bucket)
+	out, err := s.store.LatencyHistory(ctx, nodeID, family, time.Now().Add(-time.Duration(hours)*time.Hour).Unix(), bucket)
 	if out == nil {
 		out = []store.LatencySample{}
 	}

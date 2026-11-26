@@ -463,6 +463,11 @@ func init() {
 			checked_at INTEGER NOT NULL,
 			PRIMARY KEY (node_id, target)
 		)`)
+
+	// Latency is measured over IPv6 as well as IPv4 for machines that have
+	// it. Every sample taken so far was IPv4.
+	migrations = append(migrations,
+		`ALTER TABLE latency_samples ADD COLUMN family INTEGER NOT NULL DEFAULT 4`)
 }
 
 // retiredMigration holds the place of a migration whose feature was withdrawn

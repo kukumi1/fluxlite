@@ -6,12 +6,13 @@ import (
 	"fmt"
 )
 
-// LatencySample is one round of probes from a machine to one test point.
-// AvgMS is nil when no probe connected, or when the machine could connect
-// but had nothing to time the connection with.
+// LatencySample is one round of probes from a machine to one test point,
+// over IPv4 or IPv6 (Family 4 or 6). AvgMS is nil when no probe connected,
+// or when the machine could connect but had nothing to time it with.
 type LatencySample struct {
 	NodeID int64  `json:"node_id"`
 	Target string `json:"target"`
+	Family int    `json:"family"`
 	At     int64  `json:"at"`
 	AvgMS  *int   `json:"avg_ms"`
 	Loss   int    `json:"loss"`
@@ -24,8 +25,8 @@ func (s *Store) AddLatencySamples(ctx context.Context, samples []LatencySample) 
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		for _, l := range samples {
 			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO latency_samples (node_id, target, at, avg_ms, loss) VALUES (?, ?, ?, ?, ?)`,
-				l.NodeID, l.Target, l.At, l.AvgMS, l.Loss); err != nil {
+				`INSERT INTO latency_samples (node_id, target, family, at, avg_ms, loss) VALUES (?, ?, ?, ?, ?, ?)`,
+				l.NodeID, l.Target, familyOf(l), l.At, l.AvgMS, l.Loss); err != nil {
 				return fmt.Errorf("record latency sample: %w", err)
 			}
 		}
@@ -33,27 +34,35 @@ func (s *Store) AddLatencySamples(ctx context.Context, samples []LatencySample) 
 	})
 }
 
-// LatestLatency returns each machine's most recent sample per test point
-// taken at or after since.
+func familyOf(l LatencySample) int {
+	if l.Family == 6 {
+		return 6
+	}
+	return 4
+}
+
+// LatestLatency returns each machine's most recent sample per test point and
+// address family taken at or after since.
 func (s *Store) LatestLatency(ctx context.Context, since int64) ([]LatencySample, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT l.node_id, l.target, l.at, l.avg_ms, l.loss FROM latency_samples l
-		JOIN (SELECT node_id, target, MAX(at) AS at FROM latency_samples WHERE at >= ? GROUP BY node_id, target) m
-		  ON m.node_id = l.node_id AND m.target = l.target AND m.at = l.at`, since)
+		SELECT l.node_id, l.target, l.family, l.at, l.avg_ms, l.loss FROM latency_samples l
+		JOIN (SELECT node_id, target, family, MAX(at) AS at FROM latency_samples WHERE at >= ? GROUP BY node_id, target, family) m
+		  ON m.node_id = l.node_id AND m.target = l.target AND m.family = l.family AND m.at = l.at`, since)
 	if err != nil {
 		return nil, fmt.Errorf("query latest latency: %w", err)
 	}
 	return scanLatency(rows)
 }
 
-// LatencyHistory averages a machine's samples into buckets of the given
-// width, so a week of three-minute samples comes back as a chartable series.
-// A bucket where nothing connected has a nil average and full loss.
-func (s *Store) LatencyHistory(ctx context.Context, nodeID, since, bucket int64) ([]LatencySample, error) {
+// LatencyHistory averages a machine's samples over one address family into
+// buckets of the given width, so a week of three-minute samples comes back
+// as a chartable series. A bucket where nothing connected has a nil average
+// and full loss.
+func (s *Store) LatencyHistory(ctx context.Context, nodeID int64, family int, since, bucket int64) ([]LatencySample, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT node_id, target, (at / ?) * ?, CAST(ROUND(AVG(avg_ms)) AS INTEGER), CAST(ROUND(AVG(loss)) AS INTEGER)
-		FROM latency_samples WHERE node_id = ? AND at >= ?
-		GROUP BY target, at / ? ORDER BY 3`, bucket, bucket, nodeID, since, bucket)
+		SELECT node_id, target, family, (at / ?) * ?, CAST(ROUND(AVG(avg_ms)) AS INTEGER), CAST(ROUND(AVG(loss)) AS INTEGER)
+		FROM latency_samples WHERE node_id = ? AND family = ? AND at >= ?
+		GROUP BY target, at / ? ORDER BY 4`, bucket, bucket, nodeID, family, since, bucket)
 	if err != nil {
 		return nil, fmt.Errorf("query latency history: %w", err)
 	}
@@ -66,7 +75,7 @@ func scanLatency(rows *sql.Rows) ([]LatencySample, error) {
 	for rows.Next() {
 		var l LatencySample
 		var avg sql.NullInt64
-		if err := rows.Scan(&l.NodeID, &l.Target, &l.At, &avg, &l.Loss); err != nil {
+		if err := rows.Scan(&l.NodeID, &l.Target, &l.Family, &l.At, &avg, &l.Loss); err != nil {
 			return nil, fmt.Errorf("scan latency sample: %w", err)
 		}
 		if avg.Valid {

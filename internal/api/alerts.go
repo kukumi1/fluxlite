@@ -96,7 +96,11 @@ func (s *Server) handleLatencyHistory(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		hours = 24
 	}
-	history, err := s.svc.LatencyHistory(r.Context(), id, hours)
+	family := 4
+	if r.URL.Query().Get("family") == "6" {
+		family = 6
+	}
+	history, err := s.svc.LatencyHistory(r.Context(), id, family, hours)
 	if err != nil {
 		writeError(w, statusForError(err), err.Error())
 		return

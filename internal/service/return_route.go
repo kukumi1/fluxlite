@@ -160,7 +160,7 @@ func (s *Service) resolveReturnTargets(ctx context.Context, names []string) []re
 		if !slices.Contains(names, p.Name) {
 			continue
 		}
-		ip, err := resolveIPv4(ctx, p.Host)
+		ip, err := resolveIP(ctx, p.Host, 4)
 		if err != nil {
 			s.log.Warn("resolve return test point", "target", p.Name, "error", err)
 			continue

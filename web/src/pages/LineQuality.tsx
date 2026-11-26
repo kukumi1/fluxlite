@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Activity, LineChart, Plus, RefreshCw, Settings2, Trash2 } from "lucide-react";
 import {
   api, ApiError,
-  type LatencyOverview, type LatencySample, type LatencyTarget, type Node,
+  type IPFamily, type LatencyOverview, type LatencySample, type LatencyTarget, type Node,
 } from "../api";
 import { Banner, Modal } from "../components/Modal";
 import { EmptyState } from "../components/EmptyState";
@@ -30,7 +30,19 @@ function sampleText(sample: LatencySample | undefined): string {
   return sample.avg_ms === null ? "可连接" : `${sample.avg_ms}ms`;
 }
 
-const key = (nodeID: number, target: string) => `${nodeID}:${target}`;
+const key = (nodeID: number, target: string, family: IPFamily) => `${nodeID}:${target}:${family}`;
+
+const FAMILIES: ReadonlyArray<readonly [IPFamily, string]> = [[4, "IPv4"], [6, "IPv6"]];
+
+function FamilySwitch({ value, onChange }: { value: IPFamily; onChange: (f: IPFamily) => void }) {
+  return (
+    <div className="segmented labels" role="radiogroup" aria-label="地址族">
+      {FAMILIES.map(([f, label]) => (
+        <button key={f} type="button" role="radio" aria-checked={value === f} className={value === f ? "active" : ""} onClick={() => onChange(f)}>{label}</button>
+      ))}
+    </div>
+  );
+}
 
 export function LineQuality() {
   const [overview, setOverview] = useState<LatencyOverview | null>(null);
@@ -40,6 +52,7 @@ export function LineQuality() {
   const [busy, setBusy] = useState<string | null>(null);
   const [trendFor, setTrendFor] = useState<Node | null>(null);
   const [editingTargets, setEditingTargets] = useState(false);
+  const [family, setFamily] = useState<IPFamily>(4);
 
   async function load() {
     try {
@@ -59,8 +72,8 @@ export function LineQuality() {
     return () => clearInterval(timer);
   }, []);
 
-  const samples = useMemo(() => new Map((overview?.samples ?? []).map((s) => [key(s.node_id, s.target), s])), [overview]);
-  const targets = (overview?.targets ?? []).filter((t) => t.enabled);
+  const samples = useMemo(() => new Map((overview?.samples ?? []).map((s) => [key(s.node_id, s.target, s.family), s])), [overview]);
+  const targets = (overview?.targets ?? []).filter((t) => (family === 6 ? t.enabled_v6 : t.enabled));
 
   async function act(id: string, fn: () => Promise<unknown>, done: string) {
     setBusy(id);
@@ -89,14 +102,19 @@ export function LineQuality() {
       <div className="quality-section-head">
         <div>
           <h2>延迟与丢包</h2>
-          <p>每轮每个测试点连 4 次 TCP，取平均延迟；握手超时或重传都算丢包。</p>
+          <p>每轮每个测试点连 4 次 TCP，取平均延迟；握手超时或重传都算丢包。IPv4 和 IPv6 在「延迟测试点」里分别选择，提醒只看 IPv4。</p>
         </div>
-        <button className="btn" onClick={() => setEditingTargets(true)}><Settings2 size={15} />延迟测试点</button>
+        <div className="quality-section-actions">
+          <FamilySwitch value={family} onChange={setFamily} />
+          <button className="btn" onClick={() => setEditingTargets(true)}><Settings2 size={15} />延迟测试点</button>
+        </div>
       </div>
 
       {overview && targets.length === 0 && (
         <div className="card">
-          <EmptyState icon={<Activity size={18} />} title="没有启用的测试点" desc="选几个测试点，机器就会开始测延迟。"
+          <EmptyState icon={<Activity size={18} />}
+            title={`没有开启 IPv${family} 的测试点`}
+            desc={`在「延迟测试点」里给想测的点打开 IPv${family}，机器就会开始测。`}
             action={<button className="btn primary" onClick={() => setEditingTargets(true)}>设置测试点</button>} />
         </div>
       )}
@@ -115,8 +133,9 @@ export function LineQuality() {
               {nodes.map((n) => {
                 const code = regionOf(n.name);
                 const offline = n.status !== "online";
+                const noV6 = family === 6 && !n.ipv6_address;
                 return (
-                  <tr key={n.id} className={offline ? "is-offline" : undefined}>
+                  <tr key={n.id} className={offline || noV6 ? "is-offline" : undefined}>
                     <th scope="row">
                       <span className="quality-node">
                         {code && <Flag code={code} />}
@@ -124,8 +143,10 @@ export function LineQuality() {
                         {offline && <span className="tag">离线</span>}
                       </span>
                     </th>
-                    {targets.map((t) => {
-                      const sample = samples.get(key(n.id, t.name));
+                    {noV6 ? (
+                      <td colSpan={targets.length} className="muted quality-no-v6">这台机器没有 IPv6</td>
+                    ) : targets.map((t) => {
+                      const sample = samples.get(key(n.id, t.name, family));
                       return (
                         <td key={t.name}>
                           <span className={`quality-pill q-${qualityOf(sample)}`} title={sample ? `丢包 ${sample.loss}%` : "还没有测量结果"}>
@@ -140,7 +161,7 @@ export function LineQuality() {
                         onClick={() => void act(`p${n.id}`, () => api.probeLatency(n.id), `${n.name} 已重测`)}>
                         <RefreshCw size={15} className={busy === `p${n.id}` ? "spin" : undefined} />
                       </button>
-                      <button className="icon-btn" title="延迟趋势" aria-label={`${n.name} 的延迟趋势`} onClick={() => setTrendFor(n)}>
+                      <button className="icon-btn" title="延迟趋势" aria-label={`${n.name} 的延迟趋势`} disabled={noV6} onClick={() => setTrendFor(n)}>
                         <LineChart size={15} />
                       </button>
                     </td>
@@ -152,7 +173,7 @@ export function LineQuality() {
         </div>
       )}
 
-      {trendFor && <TrendDialog node={trendFor} targets={targets} onClose={() => setTrendFor(null)} />}
+      {trendFor && <TrendDialog node={trendFor} targets={targets} family={family} onClose={() => setTrendFor(null)} />}
       {overview && (
         <ReturnRoutesSection
           overview={overview.return}
@@ -183,21 +204,21 @@ export function LineQuality() {
 
 const HOUR_CHOICES = [[24, "24 小时"], [72, "3 天"], [168, "7 天"]] as const;
 
-function TrendDialog({ node, targets, onClose }: { node: Node; targets: LatencyTarget[]; onClose: () => void }) {
+function TrendDialog({ node, targets, family, onClose }: { node: Node; targets: LatencyTarget[]; family: IPFamily; onClose: () => void }) {
   const [hours, setHours] = useState<number>(24);
   const [history, setHistory] = useState<LatencySample[] | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     setHistory(null);
-    api.latencyHistory(node.id, hours)
+    api.latencyHistory(node.id, hours, family)
       .then(setHistory)
       .catch((err) => setError(err instanceof ApiError ? err.message : "读取失败"));
-  }, [node.id, hours]);
+  }, [node.id, hours, family]);
 
   const series = targets.map((t) => ({ name: t.name, points: (history ?? []).filter((s) => s.target === t.name) }));
   return (
-    <Modal title={`延迟趋势 · ${node.name}`} subtitle="每个点是一段时间的平均值；断开处是那段时间一次都没连上" size="wide" onClose={onClose}>
+    <Modal title={`延迟趋势 · ${node.name} · IPv${family}`} subtitle="每个点是一段时间的平均值；断开处是那段时间一次都没连上" size="wide" onClose={onClose}>
       <div className="segmented labels" role="radiogroup" aria-label="时间范围">
         {HOUR_CHOICES.map(([h, label]) => (
           <button key={h} type="button" role="radio" aria-checked={hours === h} className={hours === h ? "active" : ""} onClick={() => setHours(h)}>{label}</button>
@@ -281,6 +302,22 @@ function TrendChart({ series, hours }: { series: Array<{ name: string; points: L
   );
 }
 
+function FamilyToggle({ label, name, on, disabled, onToggle }: {
+  label: string;
+  name: string;
+  on: boolean;
+  disabled?: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <label className={`family-toggle${disabled ? " is-disabled" : ""}`} title={disabled ? "先填 IPv6 地址" : undefined}>
+      <button type="button" role="switch" aria-checked={on} aria-label={`${name || "测试点"} 测 ${label}`} disabled={disabled}
+        className={`toggle-switch${on ? " on" : ""}`} onClick={onToggle}><span /></button>
+      {label}
+    </label>
+  );
+}
+
 function TargetsDialog({ targets, presets, onClose, onSaved }: {
   targets: LatencyTarget[];
   presets: LatencyTarget[];
@@ -291,7 +328,7 @@ function TargetsDialog({ targets, presets, onClose, onSaved }: {
   // back on; anything else is a custom point the operator added.
   const [list, setList] = useState<LatencyTarget[]>(() => {
     const byName = new Map(targets.map((t) => [t.name, t]));
-    const merged = presets.map((p) => byName.get(p.name) ?? { ...p, enabled: false });
+    const merged = presets.map((p) => byName.get(p.name) ?? { ...p, enabled: false, enabled_v6: false });
     const custom = targets.filter((t) => !presets.some((p) => p.name === t.name));
     return [...merged, ...custom];
   });
@@ -299,6 +336,7 @@ function TargetsDialog({ targets, presets, onClose, onSaved }: {
   const [busy, setBusy] = useState(false);
   const presetNames = new Set(presets.map((p) => p.name));
   const enabled = list.filter((t) => t.enabled).length;
+  const enabledV6 = list.filter((t) => t.enabled_v6).length;
 
   const patch = (i: number, change: Partial<LatencyTarget>) => setList(list.map((t, j) => (j === i ? { ...t, ...change } : t)));
 
@@ -315,39 +353,47 @@ function TargetsDialog({ targets, presets, onClose, onSaved }: {
   }
 
   return (
-    <Modal title="延迟测试点" subtitle="测试点是放在各地运营商机房里的地址；最多同时启用 12 个" size="wide" onClose={onClose}>
+    <Modal title="延迟测试点" subtitle="测试点是放在各地运营商机房里的地址；IPv4 和 IPv6 分别选择，各自最多启用 12 个" size="wide" onClose={onClose}>
       {error && <Banner kind="err">{error}</Banner>}
       <div className="target-list">
         {list.map((t, i) => {
           const preset = presetNames.has(t.name);
           return (
-            <div key={i} className={`target-row${t.enabled ? " on" : ""}`}>
-              <button type="button" role="switch" aria-checked={t.enabled} aria-label={`启用 ${t.name || "测试点"}`}
-                className={`toggle-switch${t.enabled ? " on" : ""}`} onClick={() => patch(i, { enabled: !t.enabled })}><span /></button>
+            <div key={i} className={`target-row${t.enabled || t.enabled_v6 ? " on" : ""}`}>
               {preset ? (
                 <>
                   <strong>{t.name}</strong>
-                  <span className="mono muted">{t.host}:{t.port}</span>
+                  <span className="mono muted target-hosts">
+                    <span>{t.host}:{t.port}</span>
+                    {t.host_v6 && <span>{t.host_v6.includes(":") ? `[${t.host_v6}]` : t.host_v6}:{t.port}</span>}
+                  </span>
                 </>
               ) : (
                 <>
                   <input value={t.name} onChange={(e) => patch(i, { name: e.target.value })} placeholder="名称" aria-label="名称" />
                   <input className="mono" value={t.host} onChange={(e) => patch(i, { host: e.target.value })} placeholder="域名或 IPv4" aria-label="地址" />
+                  <input className="mono" value={t.host_v6 ?? ""} placeholder="IPv6（可选）" aria-label="IPv6 地址"
+                    onChange={(e) => patch(i, { host_v6: e.target.value, enabled_v6: t.enabled_v6 && e.target.value.trim() !== "" })} />
                   <input className="mono port" type="number" value={t.port} onChange={(e) => patch(i, { port: Number(e.target.value) })} aria-label="端口" />
                   <button type="button" className="icon-btn" aria-label="删除测试点" onClick={() => setList(list.filter((_, j) => j !== i))}><Trash2 size={15} /></button>
                 </>
               )}
+              <span className="target-families">
+                <FamilyToggle label="IPv4" name={t.name} on={t.enabled} onToggle={() => patch(i, { enabled: !t.enabled })} />
+                <FamilyToggle label="IPv6" name={t.name} on={t.enabled_v6} disabled={!t.host_v6?.trim()}
+                  onToggle={() => patch(i, { enabled_v6: !t.enabled_v6 })} />
+              </span>
             </div>
           );
         })}
       </div>
-      <button type="button" className="hop-add" onClick={() => setList([...list, { name: "", host: "", port: 80, enabled: true }])}>
+      <button type="button" className="hop-add" onClick={() => setList([...list, { name: "", host: "", port: 80, enabled: true, enabled_v6: false }])}>
         <Plus size={15} />自定义测试点
       </button>
       <div className="modal-actions">
-        <span className="muted">已启用 {enabled} 个</span>
+        <span className={enabled > 12 || enabledV6 > 12 ? "warn-text" : "muted"}>IPv4 {enabled} 个 · IPv6 {enabledV6} 个</span>
         <button className="btn" onClick={onClose}>取消</button>
-        <button className="btn primary" disabled={busy || enabled > 12} onClick={() => void save()}>{busy ? "保存中…" : "保存"}</button>
+        <button className="btn primary" disabled={busy || enabled > 12 || enabledV6 > 12} onClick={() => void save()}>{busy ? "保存中…" : "保存"}</button>
       </div>
     </Modal>
   );

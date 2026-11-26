@@ -926,6 +926,24 @@
 .list-search { min-width: 220px; }
 .filter-chips { min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .filter-chips::-webkit-scrollbar { display: none; }
+.filter-chips-wrap { position: relative; display: flex; min-width: 0; }
+.filter-chips-wrap.more-left .filter-chips { -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 56px); mask-image: linear-gradient(90deg, transparent 0, #000 56px); }
+.filter-chips-wrap.more-right .filter-chips { -webkit-mask-image: linear-gradient(270deg, transparent 0, #000 56px); mask-image: linear-gradient(270deg, transparent 0, #000 56px); }
+.filter-chips-wrap.more-left.more-right .filter-chips {
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 56px, #000 calc(100% - 56px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 56px, #000 calc(100% - 56px), transparent 100%);
+}
+.chip-scroll {
+  position: absolute; top: 50%; z-index: 1; display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
+  border: 0; border-radius: 50%; background: var(--card); box-shadow: var(--card-shadow); color: var(--foreground);
+  cursor: pointer; transform: translateY(-50%);
+}
+.chip-scroll:hover { background: var(--ink); color: var(--ink-text); }
+.chip-scroll.left { left: 8px; }
+.chip-scroll.right { right: 2px; }
+@media (max-width: 760px) {
+  .filter-chips-wrap { flex-basis: 100%; }
+}
 .chip-flag { width: 16px; height: 16px; margin-left: -4px; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 1.5px var(--card); }
 
 /* ===== Traffic audit =====

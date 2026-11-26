@@ -102,7 +102,7 @@ export function LineQuality() {
       <div className="quality-section-head">
         <div>
           <h2>延迟与丢包</h2>
-          <p>每轮每个测试点连 4 次 TCP，取平均延迟；握手超时或重传都算丢包。IPv4 和 IPv6 在「延迟测试点」里分别选择，提醒只看 IPv4。</p>
+          <p>每轮每个测试点连 4 次 TCP，取中位数，偶发的一次慢连接不会拉高整轮；握手超时或重传都算丢包。IPv4 和 IPv6 在「延迟测试点」里分别选择，提醒只看 IPv4。</p>
         </div>
         <div className="quality-section-actions">
           <FamilySwitch value={family} onChange={setFamily} />
@@ -302,6 +302,13 @@ function TrendChart({ series, hours }: { series: Array<{ name: string; points: L
   );
 }
 
+// A family switches itself on when its first address is typed and off when
+// the address is cleared; in between it is the operator's to choose.
+function switchFor(before: string | undefined, after: string, on: boolean): boolean {
+  if (!after.trim()) return false;
+  return before?.trim() ? on : true;
+}
+
 function FamilyToggle({ label, name, on, disabled, onToggle }: {
   label: string;
   name: string;
@@ -310,7 +317,7 @@ function FamilyToggle({ label, name, on, disabled, onToggle }: {
   onToggle: () => void;
 }) {
   return (
-    <label className={`family-toggle${disabled ? " is-disabled" : ""}`} title={disabled ? "先填 IPv6 地址" : undefined}>
+    <label className={`family-toggle${disabled ? " is-disabled" : ""}`} title={disabled ? `这个测试点没有 ${label} 地址` : undefined}>
       <button type="button" role="switch" aria-checked={on} aria-label={`${name || "测试点"} 测 ${label}`} disabled={disabled}
         className={`toggle-switch${on ? " on" : ""}`} onClick={onToggle}><span /></button>
       {label}
@@ -364,22 +371,23 @@ function TargetsDialog({ targets, presets, onClose, onSaved }: {
                 <>
                   <strong>{t.name}</strong>
                   <span className="mono muted target-hosts">
-                    <span>{t.host}:{t.port}</span>
+                    {t.host && <span>{t.host}:{t.port}</span>}
                     {t.host_v6 && <span>{t.host_v6.includes(":") ? `[${t.host_v6}]` : t.host_v6}:{t.port}</span>}
                   </span>
                 </>
               ) : (
                 <>
                   <input value={t.name} onChange={(e) => patch(i, { name: e.target.value })} placeholder="名称" aria-label="名称" />
-                  <input className="mono" value={t.host} onChange={(e) => patch(i, { host: e.target.value })} placeholder="域名或 IPv4" aria-label="地址" />
+                  <input className="mono" value={t.host ?? ""} placeholder="IPv4（可选）" aria-label="IPv4 地址"
+                    onChange={(e) => patch(i, { host: e.target.value, enabled: switchFor(t.host, e.target.value, t.enabled) })} />
                   <input className="mono" value={t.host_v6 ?? ""} placeholder="IPv6（可选）" aria-label="IPv6 地址"
-                    onChange={(e) => patch(i, { host_v6: e.target.value, enabled_v6: t.enabled_v6 && e.target.value.trim() !== "" })} />
+                    onChange={(e) => patch(i, { host_v6: e.target.value, enabled_v6: switchFor(t.host_v6, e.target.value, t.enabled_v6) })} />
                   <input className="mono port" type="number" value={t.port} onChange={(e) => patch(i, { port: Number(e.target.value) })} aria-label="端口" />
                   <button type="button" className="icon-btn" aria-label="删除测试点" onClick={() => setList(list.filter((_, j) => j !== i))}><Trash2 size={15} /></button>
                 </>
               )}
               <span className="target-families">
-                <FamilyToggle label="IPv4" name={t.name} on={t.enabled} onToggle={() => patch(i, { enabled: !t.enabled })} />
+                <FamilyToggle label="IPv4" name={t.name} on={t.enabled} disabled={!t.host?.trim()} onToggle={() => patch(i, { enabled: !t.enabled })} />
                 <FamilyToggle label="IPv6" name={t.name} on={t.enabled_v6} disabled={!t.host_v6?.trim()}
                   onToggle={() => patch(i, { enabled_v6: !t.enabled_v6 })} />
               </span>
@@ -387,7 +395,7 @@ function TargetsDialog({ targets, presets, onClose, onSaved }: {
           );
         })}
       </div>
-      <button type="button" className="hop-add" onClick={() => setList([...list, { name: "", host: "", port: 80, enabled: true, enabled_v6: false }])}>
+      <button type="button" className="hop-add" onClick={() => setList([...list, { name: "", host: "", port: 80, enabled: false, enabled_v6: false }])}>
         <Plus size={15} />自定义测试点
       </button>
       <div className="modal-actions">

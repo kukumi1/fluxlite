@@ -131,3 +131,58 @@ func TestLatencyIPv6Targets(t *testing.T) {
 		t.Fatalf("%+v", samples)
 	}
 }
+
+func TestLatencyRoundIsTheMedian(t *testing.T) {
+	targets := []resolvedTarget{{LatencyTarget: LatencyTarget{Name: "a"}}, {LatencyTarget: LatencyTarget{Name: "b"}}}
+	got := parseLatency("0 ok 80\n0 ok 392\n0 ok 79\n0 ok 82\n1 ok 70\n1 fail -\n1 ok 300\n1 ok 71\n", targets, 1, 1)
+	if len(got) != 2 || *got[0].AvgMS != 81 || got[0].Loss != 0 || *got[1].AvgMS != 71 || got[1].Loss != 25 {
+		t.Fatalf("%+v %d %d", got, *got[0].AvgMS, *got[1].AvgMS)
+	}
+}
+
+func TestChengduIsIPv4SichuanIsIPv6(t *testing.T) {
+	byName := map[string]LatencyTarget{}
+	for _, p := range LatencyPresets() {
+		byName[p.Name] = p
+	}
+	if p := byName["成都联通"]; p.Host != "101.207.252.191" || p.HostV6 != "" || p.Port != 443 {
+		t.Fatalf("%+v", p)
+	}
+	if p := byName["四川电信"]; p.Host != "" || p.HostV6 != "sc-ct-v6.ip.zstaticcdn.com" || p.Port != 80 {
+		t.Fatalf("%+v", p)
+	}
+
+	// Sichuan measured over both families before the split: its IPv4 moves
+	// to Chengdu, its IPv6 stays.
+	ctx := context.Background()
+	st, svc := newTestLookup(t)
+	saved := `[{"name":"四川电信","host":"sc-ct-v4.ip.zstaticcdn.com","host_v6":"sc-ct-v6.ip.zstaticcdn.com","port":80,"enabled":true,"enabled_v6":true},` +
+		`{"name":"四川移动","host":"sc-cm-v4.ip.zstaticcdn.com","port":80,"enabled":false,"enabled_v6":true}]`
+	if err := st.SetSetting(ctx, latencyTargetsKey, saved); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := svc.LatencyTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]LatencyTarget{}
+	for _, tg := range targets {
+		got[tg.Name] = tg
+	}
+	if s := got["四川电信"]; s.Enabled || !s.EnabledV6 || s.Host != "" {
+		t.Fatalf("四川电信 %+v", s)
+	}
+	if c := got["成都电信"]; !c.Enabled || c.EnabledV6 || c.Host != "118.123.218.132" || c.Port != 443 {
+		t.Fatalf("成都电信 %+v", c)
+	}
+	if _, moved := got["成都移动"]; moved {
+		t.Fatal("Sichuan mobile was not measured over IPv4, yet Chengdu mobile was switched on")
+	}
+
+	if err := svc.SetLatencyTargets(ctx, []LatencyTarget{{Name: "v6", HostV6: "2001:db8::1", Port: 80, EnabledV6: true}}); err != nil {
+		t.Fatalf("v6-only point refused: %v", err)
+	}
+	if err := svc.SetLatencyTargets(ctx, []LatencyTarget{{Name: "v6", HostV6: "2001:db8::1", Port: 80, Enabled: true}}); err == nil {
+		t.Fatal("IPv4 switched on for a point with no IPv4 address")
+	}
+}

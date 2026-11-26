@@ -656,7 +656,8 @@ export interface AlertSettings {
 
 export interface LatencyTarget {
   name: string;
-  host: string;
+  /** IPv4 地址或域名；只测 IPv6 的测试点为空。 */
+  host?: string;
   /** 同一测试点的 IPv6 地址或域名；为空则只测 IPv4。 */
   host_v6?: string;
   port: number;

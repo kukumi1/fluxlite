@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,12 +41,12 @@ const (
 
 // LatencyTarget is a test point: an address inside a Chinese carrier's
 // network, so the time from a machine to it is the time to that carrier's
-// users in that region. HostV6 is where the same point answers over IPv6.
-// Enabled and EnabledV6 choose, independently, whether the point is measured
-// over IPv4 and over IPv6; the latter needs HostV6.
+// users in that region. Host is where it answers over IPv4 and HostV6 over
+// IPv6; a point may have either or both. Enabled and EnabledV6 choose,
+// independently, whether it is measured over each, which needs that host.
 type LatencyTarget struct {
 	Name      string `json:"name"`
-	Host      string `json:"host"`
+	Host      string `json:"host,omitempty"`
 	HostV6    string `json:"host_v6,omitempty"`
 	Port      int    `json:"port"`
 	Enabled   bool   `json:"enabled"`
@@ -54,17 +55,17 @@ type LatencyTarget struct {
 
 var ErrLatencyTargets = errors.New("测试点设置无效")
 
-// LatencyPresets are carrier test points in Beijing, Shanghai, Guangdong and
-// Sichuan. Each comes as two names: the v4 one resolves to the carrier's own
-// address over IPv4 only (its IPv6 record leads to a CDN abroad), the v6 one
-// to the carrier's IPv6 address. The panel resolves them, each for its own
-// family, before handing the address to a machine.
+// LatencyPresets are carrier test points. Beijing, Shanghai and Guangdong
+// come as two names each: the v4 one resolves to the carrier's own address
+// over IPv4 only (its IPv6 record leads to a CDN abroad), the v6 one to the
+// carrier's IPv6 address. Chengdu is IPv4 only, on nodes that answer on 443;
+// Sichuan is IPv6 only. The panel resolves every name for its own family
+// before handing the address to a machine.
 func LatencyPresets() []LatencyTarget {
-	cities := [][2]string{{"北京", "bj"}, {"上海", "sh"}, {"广东", "gd"}, {"四川", "sc"}}
 	carriers := [][2]string{{"电信", "ct"}, {"联通", "cu"}, {"移动", "cm"}}
 	recommended := map[string]bool{"广东电信": true, "上海联通": true, "北京移动": true}
 	var out []LatencyTarget
-	for _, c := range cities {
+	for _, c := range [][2]string{{"北京", "bj"}, {"上海", "sh"}, {"广东", "gd"}} {
 		for _, k := range carriers {
 			name := c[0] + k[0]
 			out = append(out, LatencyTarget{
@@ -74,11 +75,21 @@ func LatencyPresets() []LatencyTarget {
 			})
 		}
 	}
+	out = append(out,
+		LatencyTarget{Name: "成都电信", Host: "118.123.218.132", Port: 443},
+		LatencyTarget{Name: "成都联通", Host: "101.207.252.191", Port: 443},
+		LatencyTarget{Name: "成都移动", Host: "sc-chengdu-cm-v4.ip.zstaticcdn.com", Port: 443},
+	)
+	for _, k := range carriers {
+		out = append(out, LatencyTarget{Name: "四川" + k[0], HostV6: fmt.Sprintf("sc-%s-v6.ip.zstaticcdn.com", k[1]), Port: 80})
+	}
 	return out
 }
 
 // LatencyTargets returns the configured test points, or the presets with the
-// three recommended ones switched on when none were saved yet.
+// three recommended ones switched on when none were saved yet. A saved point
+// named like a preset takes the preset's addresses; only its switches are
+// the operator's.
 func (s *Service) LatencyTargets(ctx context.Context) ([]LatencyTarget, error) {
 	raw, ok, err := s.store.Setting(ctx, latencyTargetsKey)
 	if err != nil {
@@ -91,30 +102,56 @@ func (s *Service) LatencyTargets(ctx context.Context) ([]LatencyTarget, error) {
 	if err := json.Unmarshal([]byte(raw), &targets); err != nil {
 		return nil, err
 	}
-	// Points saved before IPv6 was measured carry neither a v6 name nor a v6
-	// switch. Presets get the preset's name, recognised by their v4 one, and
-	// are measured over IPv6 wherever they were over IPv4.
 	var fields []map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
 		return nil, err
 	}
-	v6 := map[string]string{}
+	presets := map[string]LatencyTarget{}
 	for _, p := range LatencyPresets() {
-		v6[p.Host] = p.HostV6
+		presets[p.Name] = p
 	}
+	var chengdu []string
 	for i := range targets {
-		if _, chosen := fields[i]["enabled_v6"]; chosen {
+		t := &targets[i]
+		// Points saved before IPv6 was measured carry no v6 switch; they are
+		// measured over IPv6 wherever they were over IPv4.
+		if _, chosen := fields[i]["enabled_v6"]; !chosen {
+			t.EnabledV6 = t.Enabled
+		}
+		p, preset := presets[t.Name]
+		if !preset {
+			t.EnabledV6 = t.EnabledV6 && t.HostV6 != ""
 			continue
 		}
-		if targets[i].HostV6 == "" {
-			targets[i].HostV6 = v6[targets[i].Host]
+		// Sichuan used to be measured over IPv4 too; that is Chengdu's now.
+		if strings.HasPrefix(t.Name, "四川") && t.Enabled && p.Host == "" {
+			chengdu = append(chengdu, "成都"+strings.TrimPrefix(t.Name, "四川"))
 		}
-		targets[i].EnabledV6 = targets[i].Enabled && targets[i].HostV6 != ""
+		t.Host, t.HostV6, t.Port = p.Host, p.HostV6, p.Port
+		t.Enabled = t.Enabled && t.Host != ""
+		t.EnabledV6 = t.EnabledV6 && t.HostV6 != ""
+	}
+	for _, name := range chengdu {
+		if i := slices.IndexFunc(targets, func(t LatencyTarget) bool { return t.Name == name }); i >= 0 {
+			targets[i].Enabled = true
+		} else {
+			p := presets[name]
+			p.Enabled = true
+			targets = append(targets, p)
+		}
 	}
 	return targets, nil
 }
 
 var hostPattern = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
+
+// validHostV4 accepts a name or an IPv4 literal.
+func validHostV4(host string) bool {
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.To4() != nil
+	}
+	return hostPattern.MatchString(host) && len(host) <= 253
+}
 
 // validHostV6 accepts a name or an IPv6 literal, never an IPv4 one: a v6
 // point that is really an IPv4 address would measure IPv4 twice.
@@ -131,9 +168,9 @@ func (s *Service) SetLatencyTargets(ctx context.Context, targets []LatencyTarget
 	for i := range targets {
 		t := &targets[i]
 		t.Name, t.Host, t.HostV6 = strings.TrimSpace(t.Name), strings.TrimSpace(t.Host), strings.TrimSpace(t.HostV6)
-		if t.Name == "" || len([]rune(t.Name)) > 20 || names[t.Name] || !hostPattern.MatchString(t.Host) ||
-			len(t.Host) > 253 || (t.HostV6 != "" && !validHostV6(t.HostV6)) || (t.EnabledV6 && t.HostV6 == "") ||
-			t.Port < 1 || t.Port > 65535 {
+		if t.Name == "" || len([]rune(t.Name)) > 20 || names[t.Name] || (t.Host == "" && t.HostV6 == "") ||
+			(t.Host != "" && !validHostV4(t.Host)) || (t.HostV6 != "" && !validHostV6(t.HostV6)) ||
+			(t.Enabled && t.Host == "") || (t.EnabledV6 && t.HostV6 == "") || t.Port < 1 || t.Port > 65535 {
 			return ErrLatencyTargets
 		}
 		names[t.Name] = true
@@ -298,8 +335,22 @@ func latencyScript(targets []resolvedTarget) string {
 	return b.String()
 }
 
+// median is the round's latency. One slow connect among four is a hiccup on
+// that connect, not the path; the mean would carry it into the whole round.
+func median(times []int) int {
+	slices.Sort(times)
+	mid := len(times) / 2
+	if len(times)%2 == 0 {
+		return (times[mid-1] + times[mid]) / 2
+	}
+	return times[mid]
+}
+
 func parseLatency(out string, targets []resolvedTarget, nodeID, at int64) []store.LatencySample {
-	type tally struct{ ok, done, timed, sum int }
+	type tally struct {
+		ok, done int
+		times    []int
+	}
 	counts := make([]tally, len(targets))
 	for _, line := range strings.Split(out, "\n") {
 		f := strings.Fields(line)
@@ -326,8 +377,7 @@ func parseLatency(out string, targets []resolvedTarget, nodeID, at int64) []stor
 		}
 		c.ok++
 		if timed {
-			c.timed++
-			c.sum += ms
+			c.times = append(c.times, ms)
 		}
 	}
 	var samples []store.LatencySample
@@ -339,9 +389,9 @@ func parseLatency(out string, targets []resolvedTarget, nodeID, at int64) []stor
 			NodeID: nodeID, Target: targets[i].Name, Family: targets[i].family, At: at,
 			Loss: (c.done - c.ok) * 100 / c.done,
 		}
-		if c.timed > 0 {
-			avg := c.sum / c.timed
-			sample.AvgMS = &avg
+		if len(c.times) > 0 {
+			ms := median(c.times)
+			sample.AvgMS = &ms
 		}
 		samples = append(samples, sample)
 	}

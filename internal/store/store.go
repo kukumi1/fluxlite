@@ -468,6 +468,12 @@ func init() {
 	// it. Every sample taken so far was IPv4.
 	migrations = append(migrations,
 		`ALTER TABLE latency_samples ADD COLUMN family INTEGER NOT NULL DEFAULT 4`)
+
+	// Return-route hops now carry where they are and who runs them. Traces
+	// taken before have none and would not be redone for a day; marking them
+	// as never checked has the next round retrace every machine.
+	migrations = append(migrations,
+		`UPDATE return_routes SET checked_at = 0`)
 }
 
 // retiredMigration holds the place of a migration whose feature was withdrawn

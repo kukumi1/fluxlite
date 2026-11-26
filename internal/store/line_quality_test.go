@@ -153,3 +153,26 @@ func TestSpeedJobsKeepRunsAndResults(t *testing.T) {
 		t.Fatalf("only the newest two are kept, the oldest with its results: %+v", jobs)
 	}
 }
+
+func TestLatencyBaselinesAreMedians(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	node := seedRoute(t, st).Hops[0].NodeID
+	ms := func(v int) *int { return &v }
+	var samples []LatencySample
+	for i, v := range []int{40, 42, 300, 41, 39} {
+		samples = append(samples, LatencySample{NodeID: node, Target: "广东电信", At: int64(100 + i), AvgMS: ms(v)})
+	}
+	samples = append(samples,
+		LatencySample{NodeID: node, Target: "广东电信", Family: 6, At: 101, AvgMS: ms(90)},
+		LatencySample{NodeID: node, Target: "广东电信", At: 103, Loss: 100},
+		LatencySample{NodeID: node, Target: "广东电信", At: 500, AvgMS: ms(999)},
+	)
+	if err := st.AddLatencySamples(ctx, samples); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.LatencyBaselines(ctx, 100, 200)
+	if err != nil || len(got) != 2 || got[0].MS != 41 || got[0].Rounds != 5 || got[0].Family != 4 || got[1].MS != 90 {
+		t.Fatalf("one slow round does not move the median, rounds outside the window do not count: %+v %v", got, err)
+	}
+}

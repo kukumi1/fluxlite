@@ -29,6 +29,21 @@ const toggled = <T,>(set: Set<T>, value: T) => {
 
 const when = (unix: number) => new Date(unix * 1000).toLocaleString("zh-CN", { hour12: false });
 
+// The settings line of a job: 协议：IPv4 | 运营商：联通、移动 | 测速点：广东 | 单线程.
+function summary(job: SpeedJob, carriers: string[]) {
+  const provinces: string[] = [];
+  const used = new Set<string>();
+  for (const point of job.request.points) {
+    const carrier = carriers.find((c) => point.endsWith(c));
+    if (!carrier) continue;
+    used.add(carrier);
+    const province = point.slice(0, -carrier.length);
+    if (!provinces.includes(province)) provinces.push(province);
+  }
+  const mode = MODES.find(([m]) => m === job.request.mode)?.[1] ?? job.request.mode;
+  return `协议：IPv${job.request.family} | 运营商：${carriers.filter((c) => used.has(c)).join("、")} | 测速点：${provinces.join("、")} | ${mode}`;
+}
+
 export function Speedtest() {
   const [overview, setOverview] = useState<SpeedOverview | null>(null);
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -68,7 +83,7 @@ export function Speedtest() {
   async function start() {
     const ok = await confirm({
       title: `测速 ${machines.size} 台机器？`,
-      body: `每台机器跑 ${runsPerMachine} 次测速，每次上下行各 5 秒。单线程一次通常用掉几百 MB，多线程可能超过 1 GB，会计入机器的流量。`,
+      body: `每台机器跑 ${runsPerMachine} 次测速，每次下载、上传各 5 秒。单线程一次通常用掉几百 MB，多线程可能超过 1 GB，会计入机器的流量。`,
       confirmLabel: "开始测速",
     });
     if (!ok) return;
@@ -115,7 +130,7 @@ export function Speedtest() {
     <div className="management-page speedtest-page">
       <PageHeader
         title="测速"
-        desc="在机器上运行泰尔测速，测到国内各省三网测速服务器的下行（国内 → 机器）和上行（机器 → 国内）速度，以及上传时的回程重传率。测速会消耗机器流量，只在手动点开始时运行。"
+        desc="测速点是「全球网测」在该省该运营商机房里的测速服务器，不是随便一个公网 IP：下载是服务器发给机器（去程），上传是机器发给服务器（回程）。丢包不是直接测出来的，回程重传率越高说明回程丢包越多，准确的丢包率看「线路质量」。测速会消耗机器流量，只在手动开始时运行；在 Telegram 里发 /speed 也能测。"
       />
       {error && <Banner kind="err">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
@@ -188,23 +203,23 @@ export function Speedtest() {
           <EmptyState icon={<Gauge size={18} />} title="还没有测速记录" desc="选好机器和测速点，点「开始测速」。" />
         </div>
       )}
-      {overview?.jobs.map((job) => <JobCard key={job.id} job={job} nodes={nodes} onCancel={() => void cancel(job)} onDelete={() => void remove(job)} />)}
-      {overview?.tool && <p className="muted speed-foot">测速程序 {overview.tool}（taierspeedtest-mod），面板校验后传到机器，机器本身不连 GitHub。只保留最近 40 次记录。</p>}
+      {overview?.jobs.map((job) => <JobCard key={job.id} job={job} nodes={nodes} carriers={overview.carriers} onCancel={() => void cancel(job)} onDelete={() => void remove(job)} />)}
+      {overview?.tool && <p className="muted speed-foot">测速程序 {overview.tool}（taierspeedtest-mod，「全球网测」的命令行客户端），面板校验后传到机器，机器本身不连 GitHub。只保留最近 40 次记录。</p>}
       {confirmDialog}
     </div>
   );
 }
 
-function JobCard({ job, nodes, onCancel, onDelete }: { job: SpeedJob; nodes: Node[]; onCancel: () => void; onDelete: () => void }) {
+function JobCard({ job, nodes, carriers, onCancel, onDelete }: { job: SpeedJob; nodes: Node[]; carriers: string[]; onCancel: () => void; onDelete: () => void }) {
   const name = (id: number) => nodes.find((n) => n.id === id)?.name ?? `机器 #${id}`;
-  const modeLabel = MODES.find(([m]) => m === job.request.mode)?.[1] ?? job.request.mode;
   return (
     <section className="card speed-job">
       <header className="speed-job-head">
         <div>
           <strong>#{job.id}</strong>
           <span className={`speed-status s-${job.status}`}>{STATUS[job.status]}</span>
-          <span className="muted">{when(job.created_at)} · IPv{job.request.family} · {modeLabel} · {job.request.points.length} 个测速点</span>
+          <span className="muted">{when(job.created_at)}</span>
+          {job.request.origin === "telegram" && <span className="tag">Telegram</span>}
         </div>
         {job.status === "running" ? (
           <button className="btn sm" onClick={onCancel}><X size={14} />取消</button>
@@ -212,6 +227,7 @@ function JobCard({ job, nodes, onCancel, onDelete }: { job: SpeedJob; nodes: Nod
           <button className="icon-btn" title="删除记录" aria-label={`删除测速记录 #${job.id}`} onClick={onDelete}><Trash2 size={15} /></button>
         )}
       </header>
+      <p className="speed-summary">{summary(job, carriers)}</p>
       {job.request.node_ids.map((id) => (
         <MachineResult key={id} job={job} nodeID={id} name={name(id)} />
       ))}
@@ -248,8 +264,8 @@ function MachineResult({ job, nodeID, name }: { job: SpeedJob; nodeID: number; n
     <div className="speed-machine">
       <div className="speed-machine-head">
         <span className="quality-node">{code && <Flag code={code} />}<strong>{name}</strong></span>
-        {run?.egress && <span className="muted">出口 {run.egress}</span>}
-        {run && run.traffic_bytes > 0 && <span className="muted">用掉 {formatBytes(run.traffic_bytes)}</span>}
+        {run?.egress && <span className="muted">出口：{run.egress}</span>}
+        {run && run.started_at > 0 && run.finished_at >= run.started_at && <span className="muted">耗时 {run.finished_at - run.started_at} 秒</span>}
         {progress && (
           <span className="speed-progress">
             <span className="speed-bar"><span style={{ width: `${(progress.done / Math.max(progress.total, 1)) * 100}%` }} /></span>
@@ -258,37 +274,59 @@ function MachineResult({ job, nodeID, name }: { job: SpeedJob; nodeID: number; n
         )}
         {run?.error && <span className="warn-text">{run.error}</span>}
       </div>
+      {run && run.traffic_bytes > 0 && (
+        <p className="speed-traffic">📦 消耗流量：共 {formatBytes(run.traffic_bytes)}（下载 {formatBytes(run.rx_bytes)} / 上传 {formatBytes(run.tx_bytes)}）</p>
+      )}
       {byPoint.length > 0 && (
-        <table className="quality-summary speed-table">
-          <thead>
-            <tr>
-              <th>测速点</th>
-              <th>延迟</th>
-              {showSingle && <><th>单线程 ↓</th><th>单线程 ↑</th></>}
-              {showMulti && <><th>多线程 ↓</th><th>多线程 ↑</th></>}
-              <th>回程重传</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {byPoint.map(({ point, single, multi }) => {
-              const any = (single ?? multi) as SpeedResult;
-              const retrans = single?.retrans ?? multi?.retrans ?? null;
-              const notes = [single, multi].flatMap((r) => (r?.error ? [r.error] : []));
-              const retried = (single?.retried ?? 0) + (multi?.retried ?? 0);
-              return (
-                <tr key={point}>
-                  <td>{point}</td>
-                  <td className="mono">{any.rtt || "—"}</td>
-                  {showSingle && <><td className="mono">{speedText(single?.down ?? null)}</td><td className="mono">{speedText(single?.up ?? null)}</td></>}
-                  {showMulti && <><td className="mono">{speedText(multi?.down ?? null)}</td><td className="mono">{speedText(multi?.up ?? null)}</td></>}
-                  <td>{retrans === null ? <span className="muted">—</span> : <span className={`quality-pill ${retransTone(retrans)}`}>{retrans.toFixed(1)}%</span>}</td>
-                  <td className="muted speed-note">{[...notes, retried > 0 ? `自动重测 ${retried} 次` : ""].filter(Boolean).join("；")}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <>
+          <table className="quality-summary speed-table">
+            <thead>
+              <tr>
+                <th>测速点</th>
+                <th className="num">延迟 (ms)</th>
+                {showSingle && <><th className="num">单线程 ↓ (Mbps)</th><th className="num">单线程 ↑ (Mbps)</th></>}
+                {showMulti && <><th className="num">多线程 ↓ (Mbps)</th><th className="num">多线程 ↑ (Mbps)</th></>}
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {byPoint.map(({ point, single, multi }) => {
+                const any = (single ?? multi) as SpeedResult;
+                const notes = [single, multi].flatMap((r) => (r?.error ? [r.error] : []));
+                const retried = (single?.retried ?? 0) + (multi?.retried ?? 0);
+                return (
+                  <tr key={point}>
+                    <td>{point}</td>
+                    <td className="mono num">{any.rtt ? any.rtt.replace(/ms$/, "") : "—"}</td>
+                    {showSingle && <><td className="mono num">{speedText(single?.down ?? null)}</td><td className="mono num">{speedText(single?.up ?? null)}</td></>}
+                    {showMulti && <><td className="mono num">{speedText(multi?.down ?? null)}</td><td className="mono num">{speedText(multi?.up ?? null)}</td></>}
+                    <td className="muted speed-note">{[...notes, retried > 0 ? `自动重测 ${retried} 次` : ""].filter(Boolean).join("；")}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="muted speed-legend">↓ 去程：中国 → 机器　↑ 回程：机器 → 中国</p>
+          {byPoint.some(({ single, multi }) => (single?.retrans ?? multi?.retrans ?? null) !== null) && (
+            <>
+              <h4 className="speed-subhead">回程 TCP 重传率（测速期间，机器 → 中国）</h4>
+              <table className="quality-summary speed-retrans">
+                <thead><tr><th>测速点</th><th className="num">回程重传</th></tr></thead>
+                <tbody>
+                  {byPoint.map(({ point, single, multi }) => {
+                    const retrans = single?.retrans ?? multi?.retrans ?? null;
+                    return retrans === null ? null : (
+                      <tr key={point}>
+                        <td>{point} <span className="muted">v{job.request.family}</span></td>
+                        <td className="num"><span className={`quality-pill ${retransTone(retrans)}`}>{retrans.toFixed(2)}%</span></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </>
+          )}
+        </>
       )}
     </div>
   );

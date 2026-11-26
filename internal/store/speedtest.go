@@ -22,6 +22,10 @@ type SpeedRun struct {
 	NodeID       int64  `json:"node_id"`
 	Egress       string `json:"egress"`
 	TrafficBytes int64  `json:"traffic_bytes"`
+	RxBytes      int64  `json:"rx_bytes"`
+	TxBytes      int64  `json:"tx_bytes"`
+	StartedAt    int64  `json:"started_at"`
+	FinishedAt   int64  `json:"finished_at"`
 	Error        string `json:"error,omitempty"`
 }
 
@@ -92,10 +96,13 @@ func (s *Store) DeleteSpeedJob(ctx context.Context, id int64) error {
 
 func (s *Store) SetSpeedRun(ctx context.Context, r SpeedRun) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO speed_runs (job_id, node_id, egress, traffic_bytes, error) VALUES (?, ?, ?, ?, ?)
+		INSERT INTO speed_runs (job_id, node_id, egress, traffic_bytes, rx_bytes, tx_bytes, started_at, finished_at, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(job_id, node_id) DO UPDATE SET
-			egress = excluded.egress, traffic_bytes = excluded.traffic_bytes, error = excluded.error`,
-		r.JobID, r.NodeID, r.Egress, r.TrafficBytes, r.Error)
+			egress = excluded.egress, traffic_bytes = excluded.traffic_bytes, rx_bytes = excluded.rx_bytes,
+			tx_bytes = excluded.tx_bytes, started_at = excluded.started_at, finished_at = excluded.finished_at,
+			error = excluded.error`,
+		r.JobID, r.NodeID, r.Egress, r.TrafficBytes, r.RxBytes, r.TxBytes, r.StartedAt, r.FinishedAt, r.Error)
 	if err != nil {
 		return fmt.Errorf("record speed run: %w", err)
 	}
@@ -135,14 +142,15 @@ func (s *Store) SpeedJobs(ctx context.Context) ([]SpeedJob, map[int64][]SpeedRun
 
 	runs := make(map[int64][]SpeedRun)
 	runRows, err := s.db.QueryContext(ctx,
-		`SELECT job_id, node_id, egress, traffic_bytes, error FROM speed_runs ORDER BY job_id, node_id`)
+		`SELECT job_id, node_id, egress, traffic_bytes, rx_bytes, tx_bytes, started_at, finished_at, error
+		 FROM speed_runs ORDER BY job_id, node_id`)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("query speed runs: %w", err)
 	}
 	defer runRows.Close()
 	for runRows.Next() {
 		var r SpeedRun
-		if err := runRows.Scan(&r.JobID, &r.NodeID, &r.Egress, &r.TrafficBytes, &r.Error); err != nil {
+		if err := runRows.Scan(&r.JobID, &r.NodeID, &r.Egress, &r.TrafficBytes, &r.RxBytes, &r.TxBytes, &r.StartedAt, &r.FinishedAt, &r.Error); err != nil {
 			return nil, nil, nil, fmt.Errorf("scan speed run: %w", err)
 		}
 		runs[r.JobID] = append(runs[r.JobID], r)

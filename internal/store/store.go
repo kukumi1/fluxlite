@@ -521,6 +521,14 @@ func init() {
 			error   TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (job_id, node_id, point, mode)
 		)`)
+
+	// A machine's run splits its traffic into download and upload and keeps
+	// when it started and ended, for the result's footer.
+	migrations = append(migrations,
+		`ALTER TABLE speed_runs ADD COLUMN rx_bytes INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE speed_runs ADD COLUMN tx_bytes INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE speed_runs ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE speed_runs ADD COLUMN finished_at INTEGER NOT NULL DEFAULT 0`)
 }
 
 // retiredMigration holds the place of a migration whose feature was withdrawn

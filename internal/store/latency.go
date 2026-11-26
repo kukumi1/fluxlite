@@ -140,3 +140,49 @@ func (s *Store) SetReturnRoute(ctx context.Context, r ReturnRoute) error {
 	}
 	return nil
 }
+
+// LatencyBaseline is a link's usual latency: the median of the rounds that
+// connected over a stretch of time, with how many there were.
+type LatencyBaseline struct {
+	NodeID int64
+	Target string
+	Family int
+	MS     int
+	Rounds int
+}
+
+// LatencyBaselines returns each link's median latency over [since, until).
+func (s *Store) LatencyBaselines(ctx context.Context, since, until int64) ([]LatencyBaseline, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT node_id, target, family, avg_ms FROM latency_samples
+		WHERE at >= ? AND at < ? AND avg_ms IS NOT NULL
+		ORDER BY node_id, target, family, avg_ms`, since, until)
+	if err != nil {
+		return nil, fmt.Errorf("query latency baselines: %w", err)
+	}
+	defer rows.Close()
+	var out []LatencyBaseline
+	var times []int
+	flush := func(b LatencyBaseline) {
+		if len(times) == 0 {
+			return
+		}
+		b.MS, b.Rounds = times[len(times)/2], len(times)
+		out = append(out, b)
+	}
+	var cur LatencyBaseline
+	for rows.Next() {
+		var b LatencyBaseline
+		var ms int
+		if err := rows.Scan(&b.NodeID, &b.Target, &b.Family, &ms); err != nil {
+			return nil, fmt.Errorf("scan latency baseline: %w", err)
+		}
+		if b.NodeID != cur.NodeID || b.Target != cur.Target || b.Family != cur.Family {
+			flush(cur)
+			cur, times = b, times[:0]
+		}
+		times = append(times, ms)
+	}
+	flush(cur)
+	return out, rows.Err()
+}

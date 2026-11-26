@@ -77,23 +77,26 @@ func TestBlockScriptRuns(t *testing.T) {
 	}
 }
 
-func TestOnlyNewBlocksAreReported(t *testing.T) {
+func TestBlockChangesWorthAMessage(t *testing.T) {
 	cases := []struct {
 		previous string
 		now      BlockKind
-		want     bool
+		want     blockTransition
 	}{
-		{"", BlockTCP, true},
-		{"ok", BlockIP, true},
-		{"tcp_blocked", BlockIP, true},
-		{"tcp_blocked", BlockTCP, false},
-		{"ip_blocked", BlockNone, false},
-		{"ok", BlockPartial, false},
-		{"", BlockNoTool, false},
+		{"", BlockTCP, blockTurnedBad},
+		{"ok", BlockIP, blockTurnedBad},
+		{"tcp_blocked", BlockIP, blockTurnedBad},
+		{"tcp_blocked", BlockTCP, blockUnchanged},
+		{"ip_blocked", BlockNone, blockRecovered},
+		{"tcp_down", BlockPartial, blockRecovered},
+		{"tcp_blocked", BlockNoTool, blockUnchanged},
+		{"ok", BlockPartial, blockUnchanged},
+		{"", BlockNone, blockUnchanged},
+		{"", BlockNoTool, blockUnchanged},
 	}
 	for _, c := range cases {
-		if got := newlyBlocked(c.previous, c.now); got != c.want {
-			t.Errorf("%q → %s: got %v", c.previous, c.now, got)
+		if got := blockChange(c.previous, c.now); got != c.want {
+			t.Errorf("%q -> %s: got %v, want %v", c.previous, c.now, got, c.want)
 		}
 	}
 }
@@ -119,5 +122,24 @@ func TestBlockNoticesFollowTheirOwnSwitch(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(`{"events":{"route_change":false}}`), &cfg); err != nil || !cfg.Events.Blocked {
 		t.Fatalf("settings saved before the switch existed keep it on: %+v %v", cfg.Events, err)
+	}
+}
+
+func TestEachEventLeavesOutItsOwnMachines(t *testing.T) {
+	cfg := defaultAlertSettings()
+	cfg.ExcludedNodes[EventRouteChange] = []int64{7}
+	if !cfg.allowsNotice(alertNotice{nodeID: 7, kind: noticeBlocked}) {
+		t.Fatal("left out of route changes is not left out of blocks")
+	}
+	if cfg.allowsNotice(alertNotice{nodeID: 7, kind: noticeRouteChange}) {
+		t.Fatal("left out of route changes")
+	}
+	cfg.ExcludedNodes[EventBlocked] = []int64{8}
+	if cfg.allowsNotice(alertNotice{nodeID: 8, kind: noticeBlocked}) {
+		t.Fatal("left out of blocks")
+	}
+	cfg.Events.Blocked = false
+	if cfg.allowsNotice(alertNotice{nodeID: 9, kind: noticeBlocked}) {
+		t.Fatal("the switch turns block notices off")
 	}
 }

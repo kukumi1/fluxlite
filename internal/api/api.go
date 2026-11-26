@@ -55,7 +55,7 @@ type Config struct {
 }
 
 func NewServer(cfg Config) *Server {
-	return &Server{
+	s := &Server{
 		auth:     cfg.Auth,
 		svc:      cfg.Service,
 		log:      cfg.Logger,
@@ -64,6 +64,10 @@ func NewServer(cfg Config) *Server {
 		limiter:  newRateLimiter(10, time.Minute),
 		telegram: newTelegramState(cfg.Service),
 	}
+	if cfg.Service != nil {
+		cfg.Service.SetSpeedDone(s.telegramSpeedDone)
+	}
+	return s
 }
 
 // Handler builds the HTTP routes.

@@ -150,3 +150,12 @@
 .block-detail p { margin: 0 0 6px; font-size: 13px; }
 .block-detail .quality-summary { width: 100%; }
 .block-foot { margin-top: 12px; font-size: 12.5px; }
+
+.notify-event .switch-row:has(+ .notify-machines) { margin-bottom: 6px; }
+.notify-machines { margin: 0 0 14px; padding: 0 14px; }
+.notify-machines.is-off { opacity: 0.5; }
+.notify-machines-toggle { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 0; border: 0; background: none; color: var(--muted-foreground); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.notify-machines-toggle:hover { color: var(--foreground); }
+.notify-machines-pick { margin-top: 8px; }
+.notify-machines-pick .mute-chips { margin-bottom: 8px; }
+.notify-machines-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }

@@ -84,7 +84,8 @@ type telegramBotChat struct {
 	Type string `json:"type"`
 }
 type telegramBotMessage struct {
-	From telegramBotUser `json:"from"`
+	MessageID int64           `json:"message_id"`
+	From      telegramBotUser `json:"from"`
 	Chat telegramBotChat `json:"chat"`
 	Text string          `json:"text"`
 }
@@ -239,6 +240,9 @@ func (s *Server) processTelegramUpdate(ctx context.Context, cfg telegramConfig, 
 			s.log.Debug("Telegram callback acknowledgement failed")
 		}
 	}
+	if s.telegramSpeed(ctx, cfg, from, update, command) {
+		return
+	}
 	if s.telegramDirect(ctx, cfg, from, command, update.Callback != nil) {
 		return
 	}
@@ -275,7 +279,7 @@ func telegramMenu(panelURL, page string) map[string]any {
 	return map[string]any{"inline_keyboard": [][]map[string]any{
 		{callback("整体仪表盘", "dashboard"), callback("链路", "routes")},
 		{callback("机器", "nodes"), callback("节点", "singbox")},
-		{callback("链路流量", "traffic:0")},
+		{callback("链路流量", "traffic:0"), callback("🚀 测速", "sp:menu")},
 		{{"text": "打开内嵌面板 · 查看与管理", "web_app": map[string]string{"url": strings.TrimRight(panelURL, "/") + "/telegram?tab=" + page}}},
 	}}
 }
@@ -424,6 +428,37 @@ func (s *Server) sendTelegramMessage(ctx context.Context, cfg telegramConfig, ch
 }
 
 func (s *Server) sendTelegramReply(ctx context.Context, cfg telegramConfig, chatID int64, text string, keyboard map[string]any) error {
+	return s.sendTelegramRich(ctx, cfg, chatID, 0, text, keyboard, false)
+}
+
+// notifyTelegramRich sends an HTML message with buttons to the bound account.
+func (s *Server) notifyTelegramRich(ctx context.Context, text string, buttons telegramButtons) error {
+	s.telegram.mu.Lock()
+	err := s.telegram.load(ctx)
+	cfg := s.telegram.cfg
+	s.telegram.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if !cfg.Enabled || cfg.Token == "" || cfg.BoundUserID <= 0 {
+		return nil
+	}
+	return s.sendTelegramRich(ctx, cfg, cfg.BoundUserID, 0, text, buttons.markup(), true)
+}
+
+// sendTelegramRich sends a message, or replaces the one editID names, as
+// plain text or as HTML whose dynamic parts the caller has escaped.
+func (s *Server) sendTelegramRich(ctx context.Context, cfg telegramConfig, chatID, editID int64, text string, keyboard map[string]any, asHTML bool) error {
+	method := "sendMessage"
+	payload := map[string]any{"chat_id": chatID, "text": telegramMessageText(text), "protect_content": true, "reply_markup": keyboard}
+	if editID > 0 {
+		method = "editMessageText"
+		payload["message_id"] = editID
+		delete(payload, "protect_content")
+	}
+	if asHTML {
+		payload["parse_mode"] = "HTML"
+	}
 	delay := time.Second
 	for attempt := 0; attempt < 3; attempt++ {
 		if !telegramWait(ctx, delay) {
@@ -439,7 +474,7 @@ func (s *Server) sendTelegramReply(ctx context.Context, cfg telegramConfig, chat
 		if err != nil || owner.Locked(time.Now()) {
 			return errors.New("Telegram owner unavailable")
 		}
-		err = telegramCall(ctx, cfg.Token, "sendMessage", map[string]any{"chat_id": chatID, "text": telegramMessageText(text), "protect_content": true, "reply_markup": keyboard}, nil)
+		err = telegramCall(ctx, cfg.Token, method, payload, nil)
 		if err == nil {
 			return nil
 		}

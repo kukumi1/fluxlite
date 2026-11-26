@@ -648,6 +648,7 @@ export interface AlertSettings {
     quota: boolean;
     expiry: boolean;
     latency: boolean;
+    latency_spike: boolean;
     route_change: boolean;
     blocked: boolean;
     daily: boolean;
@@ -657,7 +658,8 @@ export interface AlertSettings {
   loss_percent: number;
   /** 0 表示不按延迟提醒，只看丢包。 */
   latency_ms: number;
-  muted_nodes: number[];
+  /** 按事件排除的机器：只对与单台机器有关的事件生效，之后新加的机器默认都通知。 */
+  excluded_nodes: Record<string, number[]>;
 }
 
 export interface LatencyTarget {
@@ -787,12 +789,17 @@ export interface SpeedRequest {
   points: string[];
   mode: SpeedMode;
   family: IPFamily;
+  origin?: "telegram";
 }
 
 export interface SpeedRun {
   node_id: number;
   egress: string;
   traffic_bytes: number;
+  rx_bytes: number;
+  tx_bytes: number;
+  started_at: number;
+  finished_at: number;
   error?: string;
 }
 

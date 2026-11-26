@@ -59,6 +59,8 @@ type Service struct {
 	// speedTool is the speed test client pushed to machines.
 	speedTool TraceTool
 	speed     speedState
+	speedDone func(ctx context.Context, jobID int64, req SpeedRequest)
+	spikeBase spikeBaselines
 	// blockMu keeps the scheduled block check and the page's button from
 	// running over each other.
 	blockMu sync.Mutex

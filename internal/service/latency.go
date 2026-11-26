@@ -466,7 +466,7 @@ func (s *Service) latencySubjects(ctx context.Context, now time.Time, cfg AlertS
 }
 
 // badLatencyPoints names the links bad as of their latest sample, for the
-// daily summary. Muted machines are left out like everywhere else.
+// daily summary. Machines left out of latency messages are left out here too.
 func (s *Service) badLatencyPoints(ctx context.Context, now time.Time, cfg AlertSettings) ([]string, error) {
 	subjects, err := s.latencySubjects(ctx, now, cfg)
 	if err != nil {
@@ -474,7 +474,7 @@ func (s *Service) badLatencyPoints(ctx context.Context, now time.Time, cfg Alert
 	}
 	var bad []string
 	for _, sub := range subjects {
-		if sub.state == obsFailing && !cfg.muted(sub.nodeID) {
+		if sub.state == obsFailing && !cfg.excluded(EventLatency, sub.nodeID) {
 			bad = append(bad, sub.name)
 		}
 	}

@@ -37,6 +37,7 @@ const (
 	alertNode alertKind = iota
 	alertRoute
 	alertLatency
+	alertSpike
 )
 
 // alertSubject is one machine or route as it looks right now.
@@ -157,6 +158,11 @@ func (s *Service) AlertDigest(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	spikes, err := s.spikeSubjects(ctx, now)
+	if err != nil {
+		return "", err
+	}
+	latency = append(latency, spikes...)
 
 	var parts []string
 	for _, ev := range s.alerts.observe(now, append(subjects, latency...)) {
@@ -170,8 +176,7 @@ func (s *Service) AlertDigest(ctx context.Context) (string, error) {
 		}
 	}
 	for _, notice := range s.drainNotices() {
-		on := map[noticeKind]bool{noticeRouteChange: cfg.Events.RouteChange, noticeBlocked: cfg.Events.Blocked}[notice.kind]
-		if on && !cfg.muted(notice.nodeID) {
+		if cfg.allowsNotice(notice) {
 			parts = append(parts, notice.text)
 		}
 	}
@@ -187,14 +192,24 @@ func (s *Service) AlertDigest(ctx context.Context) (string, error) {
 	return strings.Join(parts, "\n\n"), nil
 }
 
+// allowsNotice checks a notice against its event's switch and machines.
+func (a AlertSettings) allowsNotice(n alertNotice) bool {
+	if n.kind == noticeBlocked {
+		return a.Events.Blocked && !a.excluded(EventBlocked, n.nodeID)
+	}
+	return a.Events.RouteChange && !a.excluded(EventRouteChange, n.nodeID)
+}
+
 func (a AlertSettings) allows(sub alertSubject) bool {
 	switch sub.kind {
 	case alertNode:
-		return a.Events.NodeOffline && !a.muted(sub.nodeID)
+		return a.Events.NodeOffline && !a.excluded(EventNodeOffline, sub.nodeID)
 	case alertRoute:
 		return a.Events.RouteDown
 	case alertLatency:
-		return a.Events.Latency && !a.muted(sub.nodeID)
+		return a.Events.Latency && !a.excluded(EventLatency, sub.nodeID)
+	case alertSpike:
+		return a.Events.LatencySpike && !a.excluded(EventLatencySpike, sub.nodeID)
 	}
 	return false
 }
@@ -316,6 +331,8 @@ func alertEventText(ev alertEvent) string {
 		}
 	case sub.kind == alertNode:
 		fmt.Fprintf(&b, "🟢 机器恢复在线：%s（离线 %s）", sub.name, describeOutage(ev.lasted))
+	case sub.kind == alertSpike:
+		b.WriteString(spikeEventText(ev))
 	case sub.kind == alertLatency && ev.failing:
 		fmt.Fprintf(&b, "🟠 线路质量异常：%s", sub.name)
 		for _, reason := range sub.reasons {

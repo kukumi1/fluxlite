@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BellRing, Clock, Gauge, Send, VolumeX } from "lucide-react";
+import { BellRing, ChevronDown, ChevronRight, Clock, Gauge, Send } from "lucide-react";
 import { api, ApiError, type AlertSettings, type Node } from "../api";
 import { Banner } from "../components/Modal";
 import { FormBlock, SwitchField } from "../components/DrawerForm";
@@ -10,14 +10,16 @@ import "./line-quality.css";
 
 type EventKey = keyof AlertSettings["events"];
 
-const EVENTS: Array<{ key: EventKey; label: string; note: string }> = [
-  { key: "node_offline", label: "机器掉线 / 恢复", note: "连续约 30 秒连不上才算掉线，重新连上再发一条恢复" },
+// perMachine events are about one machine each, so each can leave machines out.
+const EVENTS: Array<{ key: EventKey; label: string; note: string; perMachine?: boolean }> = [
+  { key: "node_offline", label: "机器掉线 / 恢复", note: "连续约 30 秒连不上才算掉线，重新连上再发一条恢复", perMachine: true },
   { key: "route_down", label: "链路失效 / 恢复", note: "转发进程没在运行，或某一跳连不上下一跳或落地，持续 30 秒" },
   { key: "quota", label: "流量快用完 / 用完", note: "节点和链路的流量用到 90%、用完各提醒一次，下个周期重新计" },
   { key: "expiry", label: "节点即将到期 / 已到期", note: "到期前 3 天内提醒一次，到期后再提醒一次" },
-  { key: "latency", label: "线路质量异常 / 恢复", note: "到某个测试点连续 3 轮（约 9 分钟）超过下面的阈值" },
-  { key: "route_change", label: "回程线路变化", note: "每天检测回程时和上次对比，比如 CN2 GIA 变成 163" },
-  { key: "blocked", label: "IP 被封锁", note: "每 6 小时检测一次，机器到国内变成 TCP 阻断或疑似 IP 被墙时提醒一次，恢复正常不发" },
+  { key: "latency", label: "线路质量异常 / 恢复", note: "到某个测试点连续 3 轮（约 9 分钟）超过下面的阈值，只看 IPv4", perMachine: true },
+  { key: "latency_spike", label: "延迟暴涨 / 恢复", note: "IPv4 和 IPv6 的测试点连续 3 轮高于历史基线（过去一天的中位数）2 倍且至少高出 50ms，回到正常后再通知一次", perMachine: true },
+  { key: "route_change", label: "回程线路变化", note: "每天检测回程时和上次对比，比如 CN2 GIA 变成 163", perMachine: true },
+  { key: "blocked", label: "IP 被封锁 / 恢复", note: "每 6 小时检测一次，机器到国内变成 TCP 阻断或疑似 IP 被墙时通知，恢复时再通知一次", perMachine: true },
   { key: "daily", label: "每日汇总", note: "每天在设定时间发一条：机器、链路、昨日流量、需要处理的事" },
 ];
 
@@ -28,6 +30,7 @@ export function Notifications() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [picking, setPicking] = useState<EventKey | null>(null);
 
   useEffect(() => {
     Promise.all([api.alertSettings(), api.listNodes()])
@@ -50,12 +53,13 @@ export function Notifications() {
 
   const update = (patch: Partial<AlertSettings>) => setSettings({ ...settings, ...patch });
   const setEvent = (key: EventKey, on: boolean) => update({ events: { ...settings.events, [key]: on } });
-  const toggleMute = (id: number) =>
-    update({
-      muted_nodes: settings.muted_nodes.includes(id)
-        ? settings.muted_nodes.filter((n) => n !== id)
-        : [...settings.muted_nodes, id],
-    });
+  const excludedFor = (key: EventKey) => settings.excluded_nodes[key] ?? [];
+  const toggleMachine = (key: EventKey, id: number) => {
+    const list = excludedFor(key);
+    update({ excluded_nodes: { ...settings.excluded_nodes, [key]: list.includes(id) ? list.filter((n) => n !== id) : [...list, id] } });
+  };
+  const setAll = (key: EventKey, on: boolean) =>
+    update({ excluded_nodes: { ...settings.excluded_nodes, [key]: on ? [] : nodes.map((n) => n.id) } });
 
   async function run(fn: () => Promise<void>) {
     setBusy(true);
@@ -85,7 +89,7 @@ export function Notifications() {
     <div className="management-page notifications-page">
       <PageHeader
         title="通知"
-        desc="机器、链路和线路质量出问题时推送到个人中心里绑定的 Telegram 账号，恢复时再推一条。同一个问题只提醒一次。"
+        desc="机器、链路和线路质量出问题时推送到个人中心里绑定的 Telegram 账号，恢复时再推一条。同一个问题只提醒一次。和单台机器有关的提醒可以各自选择通知哪些机器。"
         actions={
           <>
             <button className="btn" disabled={busy || !bound} onClick={() => void test()}><Send size={15} />发送测试</button>
@@ -99,9 +103,47 @@ export function Notifications() {
 
       <div className="notify-grid">
         <FormBlock title="提醒哪些事" icon={BellRing} note="关掉的只是不推送，状态照常跟踪，重新打开不会补发之前的事">
-          {EVENTS.map((e) => (
-            <SwitchField key={e.key} label={e.label} note={e.note} checked={settings.events[e.key]} onChange={(on) => setEvent(e.key, on)} />
-          ))}
+          {EVENTS.map((e) => {
+            const excluded = excludedFor(e.key);
+            const included = nodes.filter((n) => !excluded.includes(n.id));
+            const open = picking === e.key;
+            return (
+              <div key={e.key} className="notify-event">
+                <SwitchField label={e.label} note={e.note} checked={settings.events[e.key]} onChange={(on) => setEvent(e.key, on)} />
+                {e.perMachine && nodes.length > 0 && (
+                  <div className={`notify-machines${settings.events[e.key] ? "" : " is-off"}`}>
+                    <button type="button" className="notify-machines-toggle" aria-expanded={open} onClick={() => setPicking(open ? null : e.key)}>
+                      {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      {excluded.length === 0
+                        ? `通知全部 ${nodes.length} 台机器`
+                        : `通知 ${included.length} 台，不通知：${nodes.filter((n) => excluded.includes(n.id)).map((n) => n.name).join("、")}`}
+                    </button>
+                    {open && (
+                      <div className="notify-machines-pick">
+                        <div className="mute-chips">
+                          {nodes.map((n) => {
+                            const on = !excluded.includes(n.id);
+                            const code = regionOf(n.name);
+                            return (
+                              <button key={n.id} type="button" aria-pressed={on} className={`mute-chip${on ? " muted" : ""}`} onClick={() => toggleMachine(e.key, n.id)}>
+                                {code && <Flag code={code} />}
+                                {n.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="notify-machines-actions">
+                          <button type="button" className="btn sm ghost" onClick={() => setAll(e.key, true)}>全选</button>
+                          <button type="button" className="btn sm ghost" onClick={() => setAll(e.key, false)}>全不选</button>
+                          <span className="muted">选中的机器会收到这一项提醒，之后新加的机器默认通知</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </FormBlock>
 
         <div className="notify-side">
@@ -124,26 +166,6 @@ export function Notifications() {
                 {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
               </select>
             </label>
-          </FormBlock>
-
-          <FormBlock title="静音的机器" icon={VolumeX} note="不推送这些机器的掉线、线路质量和回程变化，经过它们的链路照常提醒">
-            {nodes.length === 0 ? (
-              <p className="muted">还没有机器。</p>
-            ) : (
-              <div className="mute-chips">
-                {nodes.map((n) => {
-                  const muted = settings.muted_nodes.includes(n.id);
-                  const code = regionOf(n.name);
-                  return (
-                    <button key={n.id} type="button" aria-pressed={muted} className={`mute-chip${muted ? " muted" : ""}`} onClick={() => toggleMute(n.id)}>
-                      {code && <Flag code={code} />}
-                      {n.name}
-                      {muted && <VolumeX size={13} aria-label="已静音" />}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
           </FormBlock>
         </div>
       </div>

@@ -69,3 +69,27 @@ func TestSpeedScriptParses(t *testing.T) {
 		t.Fatalf("%v\n%s", err, script)
 	}
 }
+
+func TestMaskEgress(t *testing.T) {
+	cases := map[string]string{
+		"203.0.113.9 香港 PCCW":                "203.0.*.* 香港 PCCW",
+		"2404:3881:1:2::5 美因河畔法兰克福 Cogent": "2404:3881:**** 美因河畔法兰克福 Cogent",
+		"":                                    "",
+		"香港 PCCW":                             "香港 PCCW",
+	}
+	for in, want := range cases {
+		if got := MaskEgress(in); got != want {
+			t.Errorf("%q: got %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestParseTraffic(t *testing.T) {
+	got, err := parseTraffic("1834567 99001\n")
+	if err != nil || got.rx != 1834567 || got.tx != 99001 {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if _, err := parseTraffic("garbage"); err == nil {
+		t.Fatal("accepted a broken reading")
+	}
+}

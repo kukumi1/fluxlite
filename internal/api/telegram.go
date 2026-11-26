@@ -42,6 +42,7 @@ type telegramState struct {
 	wizards       map[int64]*telegramWizard
 	confirmations map[string]telegramConfirmation
 	machineDrafts map[string]telegramMachineDraft
+	speedDrafts   map[int64]*telegramSpeedDraft
 	cfg           telegramConfig
 	bindings      map[string]telegramBinding
 	sessions      map[string]telegramSession
@@ -52,7 +53,7 @@ type telegramState struct {
 }
 
 func newTelegramState(svc *service.Service) *telegramState {
-	return &telegramState{wizards: map[int64]*telegramWizard{}, confirmations: map[string]telegramConfirmation{}, machineDrafts: map[string]telegramMachineDraft{}, svc: svc, bindings: map[string]telegramBinding{}, sessions: map[string]telegramSession{}, used: map[string]time.Time{}, status: "未启用"}
+	return &telegramState{wizards: map[int64]*telegramWizard{}, confirmations: map[string]telegramConfirmation{}, machineDrafts: map[string]telegramMachineDraft{}, speedDrafts: map[int64]*telegramSpeedDraft{}, svc: svc, bindings: map[string]telegramBinding{}, sessions: map[string]telegramSession{}, used: map[string]time.Time{}, status: "未启用"}
 }
 func (t *telegramState) load(ctx context.Context) error {
 	if t.loaded {
@@ -85,6 +86,7 @@ func (t *telegramState) revoke() {
 	t.wizards = map[int64]*telegramWizard{}
 	t.confirmations = map[string]telegramConfirmation{}
 	t.machineDrafts = map[string]telegramMachineDraft{}
+	t.speedDrafts = map[int64]*telegramSpeedDraft{}
 	t.sessions = map[string]telegramSession{}
 	t.bindings = map[string]telegramBinding{}
 }

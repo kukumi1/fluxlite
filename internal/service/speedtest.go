@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
 	"slices"
 	"strconv"
@@ -53,6 +54,9 @@ type SpeedRequest struct {
 	Points  []string `json:"points"`
 	Mode    string   `json:"mode"`
 	Family  int      `json:"family"`
+	// Origin is "telegram" for a test started from the bot, whose result
+	// goes back there when it is done.
+	Origin string `json:"origin,omitempty"`
 }
 
 func (r SpeedRequest) modes() []string {
@@ -111,6 +115,11 @@ type speedState struct {
 
 // SetSpeedTool gives the service the speed test client pushed to machines.
 func (s *Service) SetSpeedTool(t TraceTool) { s.speedTool = t }
+
+// SetSpeedDone is called with every job once it ends, however it ended.
+func (s *Service) SetSpeedDone(fn func(ctx context.Context, jobID int64, req SpeedRequest)) {
+	s.speedDone = fn
+}
 
 // InterruptSpeedJobs closes jobs a previous run of the panel left open.
 func (s *Service) InterruptSpeedJobs(ctx context.Context) error {
@@ -201,6 +210,9 @@ func (s *Service) runSpeedJob(ctx context.Context, id int64, run *speedJobRun, r
 	if err := s.store.FinishSpeedJob(context.Background(), id, time.Now().Unix(), status); err != nil {
 		s.log.Error("finish speed job", "job", id, "error", err)
 	}
+	if s.speedDone != nil {
+		s.speedDone(context.Background(), id, req)
+	}
 }
 
 func (s *Service) recordSpeedRun(id int64, r store.SpeedRun) {
@@ -221,8 +233,11 @@ func (s *Service) setSpeedProgress(run *speedJobRun, nodeID int64, done int, cur
 // the client: each run queues for a fresh key, and a key reused for the
 // multi-thread passes after the single-thread ones is often refused.
 func (s *Service) speedNode(ctx context.Context, id int64, run *speedJobRun, req SpeedRequest, node *model.Node) {
-	rec := store.SpeedRun{JobID: id, NodeID: node.ID}
-	defer func() { s.recordSpeedRun(id, rec) }()
+	rec := store.SpeedRun{JobID: id, NodeID: node.ID, StartedAt: time.Now().Unix()}
+	defer func() {
+		rec.FinishedAt = time.Now().Unix()
+		s.recordSpeedRun(id, rec)
+	}()
 	if req.Family == 6 && node.IPv6Address == "" {
 		rec.Error = "这台机器没有 IPv6"
 		return
@@ -245,8 +260,10 @@ func (s *Service) speedNode(ctx context.Context, id int64, run *speedJobRun, req
 		return
 	}
 	defer func() {
-		if after, err := machineTraffic(context.Background(), client.Client); err == nil && after >= before {
-			rec.TrafficBytes = after - before
+		after, err := machineTraffic(context.Background(), client.Client)
+		if err == nil && after.rx >= before.rx && after.tx >= before.tx {
+			rec.RxBytes, rec.TxBytes = after.rx-before.rx, after.tx-before.tx
+			rec.TrafficBytes = rec.RxBytes + rec.TxBytes
 		}
 	}()
 
@@ -354,6 +371,9 @@ func (s *Service) SpeedOverview(ctx context.Context) (*SpeedOverview, error) {
 		if v.Runs == nil {
 			v.Runs = []store.SpeedRun{}
 		}
+		for i := range v.Runs {
+			v.Runs[i].Egress = MaskEgress(v.Runs[i].Egress)
+		}
 		if v.Results == nil {
 			v.Results = []store.SpeedResult{}
 		}
@@ -367,14 +387,33 @@ func (s *Service) SpeedOverview(ctx context.Context) (*SpeedOverview, error) {
 	return out, nil
 }
 
-// machineTraffic is the bytes every real interface has moved, the number a
-// provider bills on; loopback and container bridges are left out.
-func machineTraffic(ctx context.Context, client *ssh.Client) (int64, error) {
-	res, err := sshx.Run(ctx, client, `awk -F'[: ]+' 'NR>2 && $2 !~ /^(lo|docker|veth|br-|virbr|ifb)/ { s += $3 + $11 } END { printf "%.0f\n", s }' /proc/net/dev`)
+type trafficCount struct{ rx, tx int64 }
+
+// machineTraffic is the bytes every real interface has received and sent,
+// the numbers a provider bills on; loopback and container bridges are left
+// out.
+func machineTraffic(ctx context.Context, client *ssh.Client) (trafficCount, error) {
+	res, err := sshx.Run(ctx, client, `awk -F'[: ]+' 'NR>2 && $2 !~ /^(lo|docker|veth|br-|virbr|ifb)/ { r += $3; t += $11 } END { printf "%.0f %.0f\n", r, t }' /proc/net/dev`)
 	if err != nil {
-		return 0, err
+		return trafficCount{}, err
 	}
-	return strconv.ParseInt(strings.TrimSpace(res.Stdout), 10, 64)
+	return parseTraffic(res.Stdout)
+}
+
+func parseTraffic(out string) (trafficCount, error) {
+	f := strings.Fields(out)
+	if len(f) != 2 {
+		return trafficCount{}, fmt.Errorf("unexpected traffic reading %q", out)
+	}
+	rx, err := strconv.ParseInt(f[0], 10, 64)
+	if err != nil {
+		return trafficCount{}, err
+	}
+	tx, err := strconv.ParseInt(f[1], 10, 64)
+	if err != nil {
+		return trafficCount{}, err
+	}
+	return trafficCount{rx: rx, tx: tx}, nil
 }
 
 func speedScript(bin, point, mode string, family int) string {
@@ -453,4 +492,22 @@ func parseSpeed(out, mode string) (egress string, p speedParsed) {
 		p.Retrans = &r.RetransF
 	}
 	return egress, p
+}
+
+// MaskEgress hides most of the machine's address in "<ip> <where>": the
+// page and the bot show where a machine leaves from, not how to reach it.
+func MaskEgress(egress string) string {
+	ip, where, _ := strings.Cut(egress, " ")
+	addr := net.ParseIP(ip)
+	switch {
+	case addr == nil:
+		return egress
+	case addr.To4() != nil:
+		parts := strings.Split(ip, ".")
+		ip = parts[0] + "." + parts[1] + ".*.*"
+	default:
+		parts := strings.Split(ip, ":")
+		ip = parts[0] + ":" + parts[1] + ":****"
+	}
+	return strings.TrimSpace(ip + " " + where)
 }

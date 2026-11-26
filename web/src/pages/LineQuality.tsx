@@ -117,7 +117,7 @@ export function LineQuality() {
       <div className="quality-section-head">
         <div>
           <h2>延迟与丢包</h2>
-          <p>每轮每个测试点连 4 次 TCP，取中位数，偶发的一次慢连接不会拉高整轮；握手超时或重传都算丢包。IPv4 和 IPv6 在「延迟测试点」里分别选择，提醒只看 IPv4。「封锁」列每 6 小时自动检测一次，变成 TCP 阻断或疑似被墙时发 Telegram。</p>
+          <p>每轮每个测试点连 4 次 TCP，取中位数，偶发的一次慢连接不会拉高整轮；握手超时或重传都算丢包。IPv4 和 IPv6 在「延迟测试点」里分别选择，提醒只看 IPv4。「封锁」列每 6 小时自动检测一次，变成 TCP 阻断或疑似被墙、以及恢复时都发 Telegram。</p>
         </div>
         <div className="quality-section-actions">
           <FamilySwitch value={family} onChange={setFamily} />

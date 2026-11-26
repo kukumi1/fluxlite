@@ -111,13 +111,13 @@ func (s *Service) BlockCheck(ctx context.Context) ([]BlockResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	known, err := s.store.BlockChecks(ctx)
+	last, err := s.store.BlockChecks(ctx)
 	if err != nil {
 		return nil, err
 	}
-	previous := make(map[[2]int64]string, len(known))
-	for _, b := range known {
-		previous[[2]int64{b.NodeID, int64(b.Family)}] = b.Kind
+	known := make(map[[2]int64]store.BlockCheck, len(last))
+	for _, b := range last {
+		known[[2]int64{b.NodeID, int64(b.Family)}] = b
 	}
 	results := make([]BlockResult, len(nodes))
 	var wg sync.WaitGroup
@@ -163,9 +163,14 @@ func (s *Service) BlockCheck(ctx context.Context) ([]BlockResult, error) {
 				return nil, err
 			}
 			rows = append(rows, store.BlockCheck{NodeID: r.NodeID, Family: f.Family, Kind: string(f.Kind), Label: f.Label, Note: f.Note, Targets: string(raw), CheckedAt: now})
-			if newlyBlocked(previous[[2]int64{r.NodeID, int64(f.Family)}], f.Kind) {
+			prev := known[[2]int64{r.NodeID, int64(f.Family)}]
+			switch blockChange(prev.Kind, f.Kind) {
+			case blockTurnedBad:
 				s.queueNotice(alertNotice{nodeID: r.NodeID, kind: noticeBlocked,
 					text: fmt.Sprintf("🧱 %s IPv%d：%s\n%s", r.Name, f.Family, f.Label, f.Note)})
+			case blockRecovered:
+				s.queueNotice(alertNotice{nodeID: r.NodeID, kind: noticeBlocked,
+					text: fmt.Sprintf("✅ %s IPv%d：已恢复（原为 %s）", r.Name, f.Family, prev.Label)})
 			}
 		}
 		if err := s.store.ReplaceBlockChecks(ctx, r.NodeID, rows); err != nil {
@@ -179,10 +184,25 @@ func (s *Service) BlockCheck(ctx context.Context) ([]BlockResult, error) {
 // one carrier being slow or the machine lacking tools.
 var blockedKinds = []BlockKind{BlockTCP, BlockIP, BlockTCPUnknown}
 
-// newlyBlocked reports a family that is blocked now and was not blocked the
-// same way last time. Staying blocked or recovering sends nothing.
-func newlyBlocked(previous string, now BlockKind) bool {
-	return slices.Contains(blockedKinds, now) && previous != string(now)
+type blockTransition int
+
+const (
+	blockUnchanged blockTransition = iota
+	blockTurnedBad
+	blockRecovered
+)
+
+// blockChange says what is worth a message between two checks: turning
+// blocked, or blocked another way, and getting out of it. Staying blocked or
+// staying fine sends nothing.
+func blockChange(previous string, now BlockKind) blockTransition {
+	switch {
+	case slices.Contains(blockedKinds, now) && previous != string(now):
+		return blockTurnedBad
+	case slices.Contains(blockedKinds, BlockKind(previous)) && (now == BlockNone || now == BlockPartial):
+		return blockRecovered
+	}
+	return blockUnchanged
 }
 
 // BlockCheckDue runs a check when the last one is blockCheckEvery old.

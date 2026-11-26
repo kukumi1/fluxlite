@@ -24,6 +24,7 @@ func (s *Server) handleStartSpeedtest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	req.Origin = ""
 	id, err := s.svc.StartSpeedtest(r.Context(), req)
 	switch {
 	case errors.Is(err, service.ErrSpeedRequest):

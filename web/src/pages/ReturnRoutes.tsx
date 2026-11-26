@@ -20,8 +20,20 @@ function routeClass(v: RouteVerdict): string {
 function routeTitle(r: ReturnRoute): string {
   const v = r.verdict;
   const parts = [`${TIER_LABEL[v.tier] ?? ""} · ${CONFIDENCE_LABEL[v.confidence]}`, v.evidence];
+  if (v.handoff) parts.push(`从${v.entry}入境，国内转给${v.handoff}`);
   if (v.chain.length) parts.push(v.chain.join(" → "));
   return parts.filter(Boolean).join("\n");
+}
+
+// The line and, when the route is handed to another carrier inside China,
+// where it goes next — on one line, so every cell in a row stays level.
+function LineLabel({ verdict }: { verdict: RouteVerdict }) {
+  return (
+    <>
+      {verdict.line}
+      {verdict.handoff && <small>→{verdict.handoff}</small>}
+    </>
+  );
 }
 
 function groupByCity(targets: ReturnTarget[]): Array<[string, ReturnTarget[]]> {
@@ -99,10 +111,7 @@ export function ReturnRoutesSection({ overview, nodes, busy, onTrace, onSaved }:
                           {!r ? <span className="route-pill r-none">待检测</span>
                             : r.error ? <span className="route-pill r-error" title={r.error}>失败</span>
                             : (
-                              <>
-                                <span className={routeClass(r.verdict)} title={routeTitle(r)}>{r.verdict.line}</span>
-                                {r.verdict.handoff && <span className="route-handoff">转{r.verdict.handoff}</span>}
-                              </>
+                              <span className={routeClass(r.verdict)} title={routeTitle(r)}><LineLabel verdict={r.verdict} /></span>
                             )}
                         </td>
                       );
@@ -122,7 +131,7 @@ export function ReturnRoutesSection({ overview, nodes, busy, onTrace, onSaved }:
             </tbody>
           </table>
           <p className="return-footnote">
-            由 {overview.tool || "NextTrace"} 对测试点的 80 端口做 TCP 追踪，按 RIPEstat 宣告前缀（{overview.prefix_date}）判断每一跳属于哪张网。
+            由 {overview.tool || "NextTrace"} 对每个测试点各做一遍 ICMP 和 TCP 80 追踪再合并，按 RIPEstat 宣告前缀（{overview.prefix_date}）判断每一跳属于哪张网；详情里的地点和运营商来自 NextTrace 的 IP 库。
             虚线框是推测：入境处有跳点没回应，或没追到目的地。结果仅供参考。
           </p>
         </div>
@@ -179,7 +188,8 @@ function RouteDetailDialog({ node, targets, routes, busy, onRetrace, onClose }: 
                 : r.error ? <span className="route-pill r-error">{r.error}</span>
                 : v && (
                   <>
-                    <span className={routeClass(v)}>{v.line}{v.handoff && <small>转{v.handoff}</small>}</span>
+                    <span className={routeClass(v)}><LineLabel verdict={v} /></span>
+                    {v.handoff && <span className="muted">从{v.entry}入境，国内转给{v.handoff}</span>}
                     <span className="muted">{TIER_LABEL[v.tier]} · {CONFIDENCE_LABEL[v.confidence]}</span>
                   </>
                 )}
@@ -192,16 +202,29 @@ function RouteDetailDialog({ node, targets, routes, busy, onRetrace, onClose }: 
               </p>
             )}
             {r && r.hops.length > 0 && (
-              <ol className="trace-hops">
+              <div className="trace-hops" role="table" aria-label={`${t.name} 的逐跳路径`}>
                 {r.hops.map((h, i) => (
-                  <li key={`${h.ttl}-${h.ip ?? i}`}>
-                    <span className="mono ttl">{i > 0 && r.hops[i - 1].ttl === h.ttl ? "" : h.ttl}</span>
-                    <span className="mono">{h.ip ?? "*"}</span>
-                    <span className="mono muted">{h.ms !== undefined ? `${h.ms.toFixed(1)} ms` : ""}</span>
-                    {h.net ? <span className="tag">{h.net}</span> : h.asn ? <span className="tag muted-tag">AS{h.asn}</span> : null}
-                  </li>
+                  <div role="row" key={`${h.ttl}-${h.ip ?? i}`} className={h.ip ? undefined : "is-silent"}>
+                    <span role="cell" className="mono ttl">{i > 0 && r.hops[i - 1].ttl === h.ttl ? "" : h.ttl}</span>
+                    <span role="cell" className="hop-addr">
+                      <span className="mono">{h.ip ?? "*"}</span>
+                      {h.hostname && <small className="mono">{h.hostname}</small>}
+                    </span>
+                    <span role="cell" className="hop-net">
+                      <span>
+                        {h.asn ? <span className="mono">AS{h.asn}</span> : null}
+                        {h.net && <span className="tag">{h.net}</span>}
+                      </span>
+                      {h.whois && <small className="mono">{h.whois}</small>}
+                    </span>
+                    <span role="cell" className="hop-where">
+                      {h.location && <span>{h.location}</span>}
+                      {h.owner && <small>{h.owner}</small>}
+                    </span>
+                    <span role="cell" className="mono muted hop-ms">{h.ms !== undefined ? `${h.ms.toFixed(1)} ms` : ""}</span>
+                  </div>
                 ))}
-              </ol>
+              </div>
             )}
           </section>
         );

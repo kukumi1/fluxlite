@@ -50,12 +50,12 @@ type LatencyTarget struct {
 
 var ErrLatencyTargets = errors.New("测试点设置无效")
 
-// LatencyPresets are carrier test points in Beijing, Shanghai and Guangdong.
-// The names resolve to the carriers' own addresses over IPv4 only; their IPv6
-// records point at a CDN abroad, which is why they are always resolved for
-// IPv4 before being handed to a machine.
+// LatencyPresets are carrier test points in Beijing, Shanghai, Guangdong and
+// Sichuan. The names resolve to the carriers' own addresses over IPv4 only;
+// their IPv6 records point at a CDN abroad, which is why they are always
+// resolved for IPv4 before being handed to a machine.
 func LatencyPresets() []LatencyTarget {
-	cities := [][2]string{{"北京", "bj"}, {"上海", "sh"}, {"广东", "gd"}}
+	cities := [][2]string{{"北京", "bj"}, {"上海", "sh"}, {"广东", "gd"}, {"四川", "sc"}}
 	carriers := [][2]string{{"电信", "ct"}, {"联通", "cu"}, {"移动", "cm"}}
 	recommended := map[string]bool{"广东电信": true, "上海联通": true, "北京移动": true}
 	var out []LatencyTarget

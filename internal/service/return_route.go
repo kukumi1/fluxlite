@@ -339,18 +339,20 @@ func (s *Service) runTraces(ctx context.Context, node *model.Node, targets []res
 // 80, a few targets at a time, and prints both under a "== <index>" header.
 // Routers rate-limit their replies, so each pass leaves different hops
 // silent; together they see far more of the backbone than either alone.
-// Geolocation is off: the panel names every hop from its own prefix table,
-// and the machine never talks to NextTrace's API.
+//
+// The ICMP pass asks NextTrace's IP database who and where each hop is, for
+// the detail view; -M keeps it from publishing the route as a trace map.
+// The line itself is judged from the panel's own prefix table, so a failed
+// lookup only leaves a hop undescribed. The TCP pass skips the lookups.
 func traceScript(bin string, targets []resolvedReturn) string {
 	var b strings.Builder
 	b.WriteString("unset NEXTTRACE_DATAPROVIDER\n")
 	b.WriteString("d=$(mktemp -d) || exit 1\ntrap 'rm -rf \"$d\"' EXIT\n")
 	fmt.Fprintf(&b, "t=; command -v timeout >/dev/null 2>&1 && t=\"timeout %d\"\n", int(returnTraceTimeout.Seconds()))
 	for i, t := range targets {
-		trace := func(mode string) string {
-			return fmt.Sprintf("$t %s %s-q 3 -m 30 -n -j -d disable-geoip --traceroute %s", bin, mode, t.ip)
-		}
-		fmt.Fprintf(&b, "{ %s; echo; %s; } > \"$d/%d\" 2>&1 &\n", trace(""), trace("-T -p 80 "), i)
+		icmp := fmt.Sprintf("$t %s -q 3 -m 30 -M -j --traceroute %s", bin, t.ip)
+		tcp := fmt.Sprintf("$t %s -T -p 80 -q 3 -m 30 -n -j -d disable-geoip --traceroute %s", bin, t.ip)
+		fmt.Fprintf(&b, "{ %s; echo; %s; } > \"$d/%d\" 2>&1 &\n", icmp, tcp, i)
 		if (i+1)%returnTraceParallel == 0 {
 			b.WriteString("wait\n")
 		}
@@ -386,8 +388,54 @@ type nextTraceResult struct {
 		Address *struct {
 			IP string `json:"IP"`
 		} `json:"Address"`
-		RTT int64 `json:"RTT"`
+		Hostname string        `json:"Hostname"`
+		RTT      int64         `json:"RTT"`
+		Geo      *nextTraceGeo `json:"Geo"`
 	} `json:"Hops"`
+}
+
+// nextTraceGeo is NextTrace's IP database answer for a hop; empty when the
+// pass ran with geolocation off.
+type nextTraceGeo struct {
+	ASNumber string `json:"asnumber"`
+	Country  string `json:"country"`
+	Prov     string `json:"prov"`
+	City     string `json:"city"`
+	Owner    string `json:"owner"`
+	ISP      string `json:"isp"`
+	Whois    string `json:"whois"`
+}
+
+// describe copies what the tracer knows about a hop onto it, keeping what an
+// earlier pass already filled in.
+func (g *nextTraceGeo) describe(h *routeclass.Hop, hostname string) {
+	if h.Hostname == "" {
+		h.Hostname = strings.TrimSpace(hostname)
+	}
+	if g == nil {
+		return
+	}
+	if h.ASN == 0 {
+		h.ASN, _ = strconv.Atoi(strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(g.ASNumber)), "AS"))
+	}
+	if h.Whois == "" {
+		h.Whois = strings.TrimSpace(g.Whois)
+	}
+	if h.Location == "" {
+		var parts []string
+		for _, p := range []string{g.Country, g.Prov, g.City} {
+			if p = strings.TrimSpace(p); p != "" && !slices.Contains(parts, p) {
+				parts = append(parts, p)
+			}
+		}
+		h.Location = strings.Join(parts, " ")
+	}
+	if h.Owner == "" {
+		h.Owner = strings.Join(strings.Fields(g.Owner), " ")
+		if h.Owner == "" {
+			h.Owner = strings.TrimSpace(g.ISP)
+		}
+	}
 }
 
 // parseNextTrace reads every trace NextTrace printed for one target and
@@ -434,6 +482,7 @@ func parseNextTrace(out string) ([]routeclass.Hop, error) {
 					seen = append(seen, routeclass.Hop{TTL: ttl, IP: p.Address.IP})
 					i = len(seen) - 1
 				}
+				p.Geo.describe(&seen[i], p.Hostname)
 				if p.RTT > 0 {
 					ms := float64(p.RTT/10_000) / 100
 					if seen[i].MS == nil || ms < *seen[i].MS {

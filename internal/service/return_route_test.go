@@ -49,7 +49,8 @@ func TestTraceScriptBatches(t *testing.T) {
 	}
 	script := traceScript("/usr/local/lib/fluxlite/nexttrace-1.7.6", targets)
 	if strings.Count(script, " -T -p 80 ") != 6 || strings.Count(script, "-q 3") != 12 || strings.Count(script, "\nwait\n") != 2 ||
-		!strings.Contains(script, "-d disable-geoip") || !strings.Contains(script, "unset NEXTTRACE_DATAPROVIDER") {
+		strings.Count(script, "-d disable-geoip") != 6 || strings.Count(script, " -M -j ") != 6 ||
+		!strings.Contains(script, "unset NEXTTRACE_DATAPROVIDER") {
 		t.Fatal(script)
 	}
 	got := splitTraces("== 0\na\n== 1\nb\nc\n", 2)
@@ -159,4 +160,25 @@ func TestParseNextTraceMergesPasses(t *testing.T) {
 func annotated(hops []routeclass.Hop) []routeclass.Hop {
 	routeclass.Annotate(hops)
 	return hops
+}
+
+// The ICMP pass carries NextTrace's IP database answers; the TCP pass has
+// none, and must not erase them when the passes are merged.
+func TestParseNextTraceKeepsHopDescriptions(t *testing.T) {
+	icmp := `{"Hops":[[{"Address":{"IP":"202.97.116.49"},"Hostname":"","RTT":25070000,` +
+		`"Geo":{"asnumber":"4134","country":"中国","prov":"上海","city":"上海","owner":"en.chinatelecom.com.cn  电信","isp":"中国电信","whois":"CHINANET-BB"}}],` +
+		`[{"Address":{"IP":"154.1.1.1"},"Hostname":"ae1.example.net","RTT":30000000,"Geo":{"asnumber":"AS2914","country":"日本","owner":"","isp":"NTT"}}]]}`
+	tcp := `{"Hops":[[{"Address":{"IP":"202.97.116.49"},"RTT":24000000,"Geo":{"asnumber":""}}]]}`
+	hops, err := parseNextTrace(icmp + "\n" + tcp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeclass.Annotate(hops)
+	h := hops[0]
+	if h.Whois != "CHINANET-BB" || h.Location != "中国 上海" || h.Owner != "en.chinatelecom.com.cn 电信" || h.ASN != 4134 || h.Net != "163" || *h.MS != 24 {
+		t.Fatalf("%+v", h)
+	}
+	if h := hops[1]; h.ASN != 2914 || h.Owner != "NTT" || h.Hostname != "ae1.example.net" || h.Location != "日本" {
+		t.Fatalf("%+v", h)
+	}
 }

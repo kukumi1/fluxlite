@@ -13,6 +13,12 @@ type Hop struct {
 	MS  *float64 `json:"ms,omitempty"`
 	ASN int      `json:"asn,omitempty"`
 	Net string   `json:"net,omitempty"`
+	// What the tracer's IP database says about the hop, for display only:
+	// the registry name (CHINANET-BB), where it is, and who runs it.
+	Whois    string `json:"whois,omitempty"`
+	Location string `json:"location,omitempty"`
+	Owner    string `json:"owner,omitempty"`
+	Hostname string `json:"hostname,omitempty"`
 }
 
 // Confidence says how far a verdict can be trusted.
@@ -124,14 +130,18 @@ func isPrivate(a netip.Addr) bool {
 	return false
 }
 
-// Annotate fills in each hop's origin AS and backbone.
+// Annotate fills in each hop's origin AS and backbone. The prefix table
+// decides for the carriers' networks; elsewhere an AS the tracer already
+// reported is kept.
 func Annotate(hops []Hop) {
 	for i := range hops {
 		addr, err := netip.ParseAddr(hops[i].IP)
 		if err != nil || !addr.Is4() || isPrivate(addr) {
 			continue
 		}
-		hops[i].ASN = ASNOf(hops[i].IP)
+		if asn := ASNOf(hops[i].IP); asn != 0 {
+			hops[i].ASN = asn
+		}
 		hops[i].Net = backboneOf(addr, hops[i].ASN)
 	}
 }

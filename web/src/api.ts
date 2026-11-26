@@ -676,6 +676,10 @@ export interface ReturnRouteHop {
   ms?: number;
   asn?: number;
   net?: string;
+  whois?: string;
+  location?: string;
+  owner?: string;
+  hostname?: string;
 }
 
 export type RouteConfidence = "confirmed" | "inferred" | "insufficient";

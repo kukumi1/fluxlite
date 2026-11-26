@@ -474,6 +474,53 @@ func init() {
 	// as never checked has the next round retrace every machine.
 	migrations = append(migrations,
 		`UPDATE return_routes SET checked_at = 0`)
+
+	// The latest block check per machine and address family, kept so the
+	// page shows it between runs and a change can be told from a repeat.
+	migrations = append(migrations,
+		`CREATE TABLE IF NOT EXISTS block_checks (
+			node_id    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+			family     INTEGER NOT NULL,
+			kind       TEXT NOT NULL,
+			label      TEXT NOT NULL,
+			note       TEXT NOT NULL DEFAULT '',
+			targets    TEXT NOT NULL DEFAULT '[]',
+			checked_at INTEGER NOT NULL,
+			PRIMARY KEY (node_id, family)
+		)`)
+
+	// Speed tests run on demand: a job covers some machines and test points;
+	// each machine's run records where it left from and the traffic it used,
+	// and each point and mode its speeds.
+	migrations = append(migrations,
+		`CREATE TABLE IF NOT EXISTS speed_jobs (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at  INTEGER NOT NULL,
+			finished_at INTEGER NOT NULL DEFAULT 0,
+			status      TEXT NOT NULL,
+			params      TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS speed_runs (
+			job_id        INTEGER NOT NULL REFERENCES speed_jobs(id) ON DELETE CASCADE,
+			node_id       INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+			egress        TEXT NOT NULL DEFAULT '',
+			traffic_bytes INTEGER NOT NULL DEFAULT 0,
+			error         TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (job_id, node_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS speed_results (
+			job_id  INTEGER NOT NULL REFERENCES speed_jobs(id) ON DELETE CASCADE,
+			node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+			point   TEXT NOT NULL,
+			mode    TEXT NOT NULL,
+			rtt     TEXT NOT NULL DEFAULT '',
+			down    REAL,
+			up      REAL,
+			retrans REAL,
+			retried INTEGER NOT NULL DEFAULT 0,
+			error   TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (job_id, node_id, point, mode)
+		)`)
 }
 
 // retiredMigration holds the place of a migration whose feature was withdrawn

@@ -90,3 +90,66 @@ func TestReturnRouteUpsertAndSettings(t *testing.T) {
 		t.Fatalf("%q %v %v", v, ok, err)
 	}
 }
+
+func TestBlockChecksReplacePerMachine(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	node := seedRoute(t, st).Hops[0].NodeID
+
+	first := []BlockCheck{
+		{Family: 4, Kind: "tcp_blocked", Label: "TCP 阻断", Targets: `[{"name":"广东电信"}]`, CheckedAt: 100},
+		{Family: 6, Kind: "ok", Label: "正常", Targets: `[]`, CheckedAt: 100},
+	}
+	if err := st.ReplaceBlockChecks(ctx, node, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReplaceBlockChecks(ctx, node, []BlockCheck{{Family: 4, Kind: "ok", Label: "正常", Targets: `[]`, CheckedAt: 200}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.BlockChecks(ctx)
+	if err != nil || len(got) != 1 || got[0].NodeID != node || got[0].Kind != "ok" || got[0].CheckedAt != 200 {
+		t.Fatalf("a new run replaces the machine's old families: %+v %v", got, err)
+	}
+}
+
+func TestSpeedJobsKeepRunsAndResults(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	node := seedRoute(t, st).Hops[0].NodeID
+	mbps := func(v float64) *float64 { return &v }
+
+	first, err := st.CreateSpeedJob(ctx, 100, `{"mode":"single"}`, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSpeedRun(ctx, SpeedRun{JobID: first, NodeID: node, Egress: "香港", TrafficBytes: 300}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddSpeedResult(ctx, SpeedResult{JobID: first, NodeID: node, Point: "上海电信", Mode: "single", RTT: "30ms", Down: mbps(80), Up: mbps(40)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteSpeedJob(ctx, first); err == nil {
+		t.Fatal("deleted a running job")
+	}
+	if err := st.FinishSpeedJob(ctx, first, 200, "done"); err != nil {
+		t.Fatal(err)
+	}
+	jobs, runs, results, err := st.SpeedJobs(ctx)
+	if err != nil || len(jobs) != 1 || jobs[0].Status != "done" || runs[first][0].TrafficBytes != 300 ||
+		*results[first][0].Down != 80 || results[first][0].Retrans != nil {
+		t.Fatalf("%+v %+v %+v %v", jobs, runs, results, err)
+	}
+
+	for i := 0; i < 2; i++ {
+		if _, err := st.CreateSpeedJob(ctx, int64(300+i), `{}`, 2); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.InterruptSpeedJobs(ctx, 400); err != nil {
+		t.Fatal(err)
+	}
+	jobs, _, results, _ = st.SpeedJobs(ctx)
+	if len(jobs) != 2 || jobs[0].Status != "interrupted" || len(results[first]) != 0 {
+		t.Fatalf("only the newest two are kept, the oldest with its results: %+v", jobs)
+	}
+}

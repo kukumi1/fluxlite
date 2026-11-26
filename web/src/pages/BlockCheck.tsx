@@ -1,9 +1,5 @@
-import { Fragment, useState } from "react";
-import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
-import type { BlockFamily, BlockKind, BlockResult, IPFamily } from "../api";
-import { Banner, Modal } from "../components/Modal";
-import { Flag } from "../components/Flag";
-import { regionOf } from "../lib/region";
+import type { BlockFamily, BlockKind, BlockState, Node } from "../api";
+import { Modal } from "../components/Modal";
 
 const TONE: Record<BlockKind, string> = {
   ok: "q-good",
@@ -14,9 +10,23 @@ const TONE: Record<BlockKind, string> = {
   ip_blocked: "q-bad",
 };
 
-function Verdict({ family }: { family: BlockFamily | undefined }) {
-  if (!family) return <span className="muted">—</span>;
-  return <span className={`quality-pill ${TONE[family.kind]}`} title={family.note}>{family.label}</span>;
+export const isBlocked = (kind: BlockKind) => kind === "tcp_blocked" || kind === "ip_blocked" || kind === "tcp_down";
+
+const when = (unix: number) => new Date(unix * 1000).toLocaleString("zh-CN", { hour12: false });
+
+// The latest check of one machine, both families side by side whichever one
+// the table above is showing: a block on either is what the column is for.
+export function BlockCell({ node, states, onOpen }: { node: Node; states: BlockState[]; onOpen: () => void }) {
+  if (states.length === 0) return <span className="muted">—</span>;
+  return (
+    <button type="button" className="block-cell" aria-label={`${node.name} 的封锁检测明细`} onClick={onOpen}>
+      {states.map((s) => (
+        <span key={s.family} className={`quality-pill ${TONE[s.kind]}`} title={`${s.note || s.label}\n检测于 ${when(s.checked_at)}`}>
+          <small>v{s.family}</small>{s.label}
+        </span>
+      ))}
+    </button>
+  );
 }
 
 function FamilyDetail({ family }: { family: BlockFamily }) {
@@ -40,73 +50,18 @@ function FamilyDetail({ family }: { family: BlockFamily }) {
   );
 }
 
-export function BlockCheckDialog({ results, running, error, onRun, onClose }: {
-  results: BlockResult[] | null;
-  running: boolean;
-  error: string;
-  onRun: () => void;
-  onClose: () => void;
-}) {
-  const [open, setOpen] = useState<number | null>(null);
-  const familyOf = (r: BlockResult, f: IPFamily) => r.families.find((x) => x.family === f);
-  const blocked = (results ?? []).filter((r) => r.families.some((f) => f.kind !== "ok")).length;
-
+export function BlockDetailDialog({ node, states, onClose }: { node: Node; states: BlockState[]; onClose: () => void }) {
   return (
     <Modal
-      title="封锁检测"
-      subtitle="每台机器同时往国内三网发 ping 和 TCP：ping 通但 TCP 不通是 TCP 阻断，两样都不通是 IP 被墙"
+      title={`封锁检测 · ${node.name}`}
+      subtitle={`检测于 ${when(Math.max(...states.map((s) => s.checked_at)))}。ping 通但 TCP 不通是 TCP 阻断，两样都不通是 IP 被墙`}
       size="wide"
       onClose={onClose}
     >
-      {error && <Banner kind="err">{error}</Banner>}
-      {running && <p className="muted"><RefreshCw size={14} className="spin" /> 正在检测所有在线机器，大约需要半分钟到一分钟…</p>}
-      {results && !running && (
-        <p className="muted">{blocked === 0 ? "所有机器到国内都正常。" : `${blocked} 台机器有异常，点开看每个测试点的结果。`}</p>
-      )}
-      {results && (
-        <table className="quality-summary block-table">
-          <thead><tr><th>机器</th><th>IPv4</th><th>IPv6</th><th aria-label="展开" /></tr></thead>
-          <tbody>
-            {results.map((r) => {
-              const code = regionOf(r.name);
-              const expanded = open === r.node_id;
-              const v6 = familyOf(r, 6);
-              return (
-                <Fragment key={r.node_id}>
-                  <tr className={r.error ? "is-offline" : undefined}>
-                    <td><span className="quality-node">{code && <Flag code={code} />}<span>{r.name}</span></span></td>
-                    {r.error ? <td colSpan={2} className="muted">{r.error}</td> : (
-                      <>
-                        <td><Verdict family={familyOf(r, 4)} /></td>
-                        <td>{v6 ? <Verdict family={v6} /> : <span className="muted">没有 IPv6</span>}</td>
-                      </>
-                    )}
-                    <td className="quality-actions">
-                      {r.families.length > 0 && (
-                        <button className="icon-btn" aria-expanded={expanded} aria-label={`${r.name} 的明细`} onClick={() => setOpen(expanded ? null : r.node_id)}>
-                          {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                  {expanded && (
-                    <tr className="block-expanded">
-                      <td colSpan={4}>{r.families.map((f) => <FamilyDetail key={f.family} family={f} />)}</td>
-                    </tr>
-                  )}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
+      {states.map((s) => <FamilyDetail key={s.family} family={s} />)}
       <p className="muted block-foot">
         这是从机器往国内测的，能看出整个 IP 或整个 TCP 有没有被封。如果只是某个节点端口被封，从这里测不出来，请用 itdog 等国内测试平台对那个端口做 TCPing。
       </p>
-      <div className="modal-actions">
-        <button className="btn" onClick={onClose}>关闭</button>
-        <button className="btn primary" disabled={running} onClick={onRun}>{running ? "检测中…" : "重新检测"}</button>
-      </div>
     </Modal>
   );
 }

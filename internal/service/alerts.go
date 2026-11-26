@@ -170,7 +170,8 @@ func (s *Service) AlertDigest(ctx context.Context) (string, error) {
 		}
 	}
 	for _, notice := range s.drainNotices() {
-		if cfg.Events.RouteChange && !cfg.muted(notice.nodeID) {
+		on := map[noticeKind]bool{noticeRouteChange: cfg.Events.RouteChange, noticeBlocked: cfg.Events.Blocked}[notice.kind]
+		if on && !cfg.muted(notice.nodeID) {
 			parts = append(parts, notice.text)
 		}
 	}

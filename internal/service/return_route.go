@@ -14,6 +14,8 @@ import (
 	"github.com/kukumi1/fluxlite/internal/routeclass"
 	"github.com/kukumi1/fluxlite/internal/sshx"
 	"github.com/kukumi1/fluxlite/internal/store"
+
+	"golang.org/x/crypto/ssh"
 )
 
 const (
@@ -138,7 +140,8 @@ func (s *Service) SetReturnSettings(ctx context.Context, cfg ReturnSettings) err
 	return s.store.SetSetting(ctx, returnSettingsKey, string(raw))
 }
 
-// TraceTool supplies the tracer every machine runs.
+// TraceTool is a pinned binary the panel pushes to machines: the tracer for
+// return routes, or the speed test client.
 type TraceTool interface {
 	Binary(ctx context.Context, arch string) ([]byte, error)
 	SHA256(arch string) (string, bool)
@@ -303,30 +306,13 @@ func lineChanged(prev, cur store.ReturnRoute) bool {
 // runTraces makes sure the pinned tracer is on the machine, then traces
 // every target and returns each one's raw output.
 func (s *Service) runTraces(ctx context.Context, node *model.Node, targets []resolvedReturn) ([]string, error) {
-	want, ok := s.traceTool.SHA256(node.Arch)
-	if !ok {
-		return nil, fmt.Errorf("没有适用于 %q 架构的路由追踪工具", node.Arch)
-	}
 	client, err := s.pool.Get(ctx, node)
 	if err != nil {
 		return nil, err
 	}
-	bin := nextTraceDir + "/nexttrace-" + s.traceTool.Version()
-	check, err := sshx.Run(ctx, client.Client, fmt.Sprintf("sha256sum %s 2>/dev/null | cut -d' ' -f1", bin))
+	bin, err := ensureTool(ctx, client.Client, node, s.traceTool, "nexttrace", "路由追踪工具")
 	if err != nil {
 		return nil, err
-	}
-	if strings.TrimSpace(check.Stdout) != want {
-		body, err := s.traceTool.Binary(ctx, node.Arch)
-		if err != nil {
-			return nil, fmt.Errorf("获取路由追踪工具失败：%w", err)
-		}
-		if _, err := sshx.Run(ctx, client.Client, "mkdir -p "+nextTraceDir); err != nil {
-			return nil, err
-		}
-		if err := sshx.WriteFile(ctx, client.Client, bin, body, "0755"); err != nil {
-			return nil, fmt.Errorf("上传路由追踪工具失败：%w", err)
-		}
 	}
 	res, err := sshx.Run(ctx, client.Client, traceScript(bin, targets))
 	if err != nil {
@@ -572,4 +558,32 @@ func (s *Service) returnOverview(ctx context.Context) (*ReturnOverview, error) {
 		tool = "NextTrace " + s.traceTool.Version()
 	}
 	return &ReturnOverview{Settings: cfg, Presets: ReturnPresets(), Routes: views, Tool: tool, PrefixDate: routeclass.PrefixDate()}, nil
+}
+
+// ensureTool puts the pinned build of a tool on the machine unless the copy
+// already there matches its digest, and returns the path to run.
+func ensureTool(ctx context.Context, client *ssh.Client, node *model.Node, tool TraceTool, name, label string) (string, error) {
+	want, ok := tool.SHA256(node.Arch)
+	if !ok {
+		return "", fmt.Errorf("没有适用于 %q 架构的%s", node.Arch, label)
+	}
+	bin := nextTraceDir + "/" + name + "-" + tool.Version()
+	check, err := sshx.Run(ctx, client, fmt.Sprintf("sha256sum %s 2>/dev/null | cut -d' ' -f1", bin))
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(check.Stdout) == want {
+		return bin, nil
+	}
+	body, err := tool.Binary(ctx, node.Arch)
+	if err != nil {
+		return "", fmt.Errorf("获取%s失败：%w", label, err)
+	}
+	if _, err := sshx.Run(ctx, client, "mkdir -p "+nextTraceDir); err != nil {
+		return "", err
+	}
+	if err := sshx.WriteFile(ctx, client, bin, body, "0755"); err != nil {
+		return "", fmt.Errorf("上传%s失败：%w", label, err)
+	}
+	return bin, nil
 }

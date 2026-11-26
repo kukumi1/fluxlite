@@ -17,6 +17,7 @@ const EVENTS: Array<{ key: EventKey; label: string; note: string }> = [
   { key: "expiry", label: "节点即将到期 / 已到期", note: "到期前 3 天内提醒一次，到期后再提醒一次" },
   { key: "latency", label: "线路质量异常 / 恢复", note: "到某个测试点连续 3 轮（约 9 分钟）超过下面的阈值" },
   { key: "route_change", label: "回程线路变化", note: "每天检测回程时和上次对比，比如 CN2 GIA 变成 163" },
+  { key: "blocked", label: "IP 被封锁", note: "每 6 小时检测一次，机器到国内变成 TCP 阻断或疑似 IP 被墙时提醒一次，恢复正常不发" },
   { key: "daily", label: "每日汇总", note: "每天在设定时间发一条：机器、链路、昨日流量、需要处理的事" },
 ];
 

@@ -69,6 +69,8 @@ const LABELS: Record<string, string> = {
   "latency.targets": "修改测试点",
   "latency.return_settings": "修改回程设置",
   "latency.block_check": "封锁检测",
+  "speedtest.run": "开始测速",
+  "speedtest.cancel": "取消测速",
   "route.verify": "检测链路",
   "route.orphan_removed": "清理孤儿转发",
   "routes.reorder": "调整链路顺序",

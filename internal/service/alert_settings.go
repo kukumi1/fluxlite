@@ -19,6 +19,7 @@ type AlertEvents struct {
 	Expiry      bool `json:"expiry"`
 	Latency     bool `json:"latency"`
 	RouteChange bool `json:"route_change"`
+	Blocked     bool `json:"blocked"`
 	Daily       bool `json:"daily"`
 }
 
@@ -42,7 +43,7 @@ func defaultAlertSettings() AlertSettings {
 	return AlertSettings{
 		Events: AlertEvents{
 			NodeOffline: true, RouteDown: true, Quota: true, Expiry: true,
-			Latency: true, RouteChange: true, Daily: true,
+			Latency: true, RouteChange: true, Blocked: true, Daily: true,
 		},
 		DailyHour:   9,
 		LossPercent: 20,

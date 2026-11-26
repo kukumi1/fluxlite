@@ -85,7 +85,7 @@ func New(cfg Config) *Watcher {
 // sample interval promises.
 func (w *Watcher) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(9)
+	wg.Add(10)
 
 	go func() {
 		defer wg.Done()
@@ -123,6 +123,10 @@ func (w *Watcher) Run(ctx context.Context) {
 		defer wg.Done()
 		w.loop(ctx, routeTraceCheck, w.traceReturnRoutes, false)
 	}()
+	go func() {
+		defer wg.Done()
+		w.loop(ctx, routeTraceCheck, w.checkBlocks, false)
+	}()
 
 	wg.Wait()
 }
@@ -143,6 +147,14 @@ func (w *Watcher) sampleLatency(ctx context.Context) {
 func (w *Watcher) traceReturnRoutes(ctx context.Context) {
 	if err := w.svc.TraceReturnRoutes(ctx); err != nil {
 		w.log.Warn("return route tracing", "error", err)
+	}
+}
+
+// checkBlocks runs the block check when the last one is six hours old; the
+// panel restarting does not restart that clock.
+func (w *Watcher) checkBlocks(ctx context.Context) {
+	if err := w.svc.BlockCheckDue(ctx); err != nil {
+		w.log.Warn("block check", "error", err)
 	}
 }
 

@@ -2,14 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Activity, LineChart, Plus, RefreshCw, Settings2, ShieldAlert, Trash2 } from "lucide-react";
 import {
   api, ApiError,
-  type BlockResult, type IPFamily, type LatencyOverview, type LatencySample, type LatencyTarget, type Node,
+  type BlockState, type IPFamily, type LatencyOverview, type LatencySample, type LatencyTarget, type Node,
 } from "../api";
 import { Banner, Modal } from "../components/Modal";
 import { EmptyState } from "../components/EmptyState";
 import { Flag } from "../components/Flag";
 import { PageHeader } from "../components/PageHeader";
 import { regionOf } from "../lib/region";
-import { BlockCheckDialog } from "./BlockCheck";
+import { BlockCell, BlockDetailDialog, isBlocked } from "./BlockCheck";
 import { ReturnRoutesSection } from "./ReturnRoutes";
 import "./line-quality.css";
 
@@ -54,10 +54,7 @@ export function LineQuality() {
   const [trendFor, setTrendFor] = useState<Node | null>(null);
   const [editingTargets, setEditingTargets] = useState(false);
   const [family, setFamily] = useState<IPFamily>(4);
-  const [blockOpen, setBlockOpen] = useState(false);
-  const [blockResults, setBlockResults] = useState<BlockResult[] | null>(null);
-  const [blockRunning, setBlockRunning] = useState(false);
-  const [blockError, setBlockError] = useState("");
+  const [blockFor, setBlockFor] = useState<Node | null>(null);
 
   async function load() {
     try {
@@ -80,14 +77,14 @@ export function LineQuality() {
   const samples = useMemo(() => new Map((overview?.samples ?? []).map((s) => [key(s.node_id, s.target, s.family), s])), [overview]);
   const targets = (overview?.targets ?? []).filter((t) => (family === 6 ? t.enabled_v6 : t.enabled));
 
-  async function act(id: string, fn: () => Promise<unknown>, done: string) {
+  async function act<T>(id: string, fn: () => Promise<T>, done: string | ((result: T) => string)) {
     setBusy(id);
     setError("");
     setNotice("");
     try {
-      await fn();
+      const result = await fn();
       await load();
-      setNotice(done);
+      setNotice(typeof done === "function" ? done(result) : done);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "操作失败");
     } finally {
@@ -95,17 +92,17 @@ export function LineQuality() {
     }
   }
 
+  const blocks = useMemo(() => {
+    const byNode = new Map<number, BlockState[]>();
+    for (const b of overview?.blocks ?? []) byNode.set(b.node_id, [...(byNode.get(b.node_id) ?? []), b]);
+    return byNode;
+  }, [overview]);
+
   async function runBlockCheck() {
-    setBlockOpen(true);
-    setBlockRunning(true);
-    setBlockError("");
-    try {
-      setBlockResults(await api.blockCheck());
-    } catch (err) {
-      setBlockError(err instanceof ApiError ? err.message : "封锁检测失败");
-    } finally {
-      setBlockRunning(false);
-    }
+    await act("block", async () => {
+      const results = await api.blockCheck();
+      return results.filter((r) => r.families.some((f) => isBlocked(f.kind))).length;
+    }, (blocked) => (blocked === 0 ? "封锁检测完成：所有机器到国内都正常" : `封锁检测完成：${blocked} 台机器被封锁，看「封锁」列`));
   }
 
   return (
@@ -120,11 +117,11 @@ export function LineQuality() {
       <div className="quality-section-head">
         <div>
           <h2>延迟与丢包</h2>
-          <p>每轮每个测试点连 4 次 TCP，取中位数，偶发的一次慢连接不会拉高整轮；握手超时或重传都算丢包。IPv4 和 IPv6 在「延迟测试点」里分别选择，提醒只看 IPv4。</p>
+          <p>每轮每个测试点连 4 次 TCP，取中位数，偶发的一次慢连接不会拉高整轮；握手超时或重传都算丢包。IPv4 和 IPv6 在「延迟测试点」里分别选择，提醒只看 IPv4。「封锁」列每 6 小时自动检测一次，变成 TCP 阻断或疑似被墙时发 Telegram。</p>
         </div>
         <div className="quality-section-actions">
           <FamilySwitch value={family} onChange={setFamily} />
-          <button className="btn" disabled={blockRunning} onClick={() => void runBlockCheck()}><ShieldAlert size={15} />封锁检测</button>
+          <button className="btn" disabled={busy !== null} onClick={() => void runBlockCheck()}><ShieldAlert size={15} className={busy === "block" ? "spin" : undefined} />{busy === "block" ? "检测中…" : "封锁检测"}</button>
           <button className="btn" onClick={() => setEditingTargets(true)}><Settings2 size={15} />延迟测试点</button>
         </div>
       </div>
@@ -145,6 +142,7 @@ export function LineQuality() {
               <tr>
                 <th>机器</th>
                 {targets.map((t) => <th key={t.name}>{t.name}</th>)}
+                <th>封锁</th>
                 <th aria-label="操作" />
               </tr>
             </thead>
@@ -175,6 +173,9 @@ export function LineQuality() {
                         </td>
                       );
                     })}
+                    <td className="quality-block">
+                      <BlockCell node={n} states={blocks.get(n.id) ?? []} onOpen={() => setBlockFor(n)} />
+                    </td>
                     <td className="quality-actions">
                       <button className="icon-btn" title="立即重测延迟" aria-label={`重测 ${n.name}`} disabled={offline || busy !== null}
                         onClick={() => void act(`p${n.id}`, () => api.probeLatency(n.id), `${n.name} 已重测`)}>
@@ -192,9 +193,8 @@ export function LineQuality() {
         </div>
       )}
 
-      {blockOpen && (
-        <BlockCheckDialog results={blockResults} running={blockRunning} error={blockError}
-          onRun={() => void runBlockCheck()} onClose={() => setBlockOpen(false)} />
+      {blockFor && (blocks.get(blockFor.id)?.length ?? 0) > 0 && (
+        <BlockDetailDialog node={blockFor} states={blocks.get(blockFor.id) ?? []} onClose={() => setBlockFor(null)} />
       )}
       {trendFor && <TrendDialog node={trendFor} targets={targets} family={family} onClose={() => setTrendFor(null)} />}
       {overview && (

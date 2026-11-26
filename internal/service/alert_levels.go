@@ -209,8 +209,16 @@ func formatBytes(n int64) string {
 // daily return-route trace, waiting for the next digest to carry it.
 type alertNotice struct {
 	nodeID int64
+	kind   noticeKind
 	text   string
 }
+
+type noticeKind int
+
+const (
+	noticeRouteChange noticeKind = iota
+	noticeBlocked
+)
 
 type noticeQueue struct {
 	mu      sync.Mutex

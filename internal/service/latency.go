@@ -487,6 +487,7 @@ type LatencyOverview struct {
 	Samples []store.LatencySample `json:"samples"`
 	Presets []LatencyTarget       `json:"presets"`
 	Return  *ReturnOverview       `json:"return"`
+	Blocks  []BlockState          `json:"blocks"`
 }
 
 func (s *Service) LatencyOverview(ctx context.Context) (*LatencyOverview, error) {
@@ -505,7 +506,11 @@ func (s *Service) LatencyOverview(ctx context.Context) (*LatencyOverview, error)
 	if err != nil {
 		return nil, err
 	}
-	return &LatencyOverview{Targets: targets, Samples: samples, Presets: LatencyPresets(), Return: ret}, nil
+	blocks, err := s.blockStates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &LatencyOverview{Targets: targets, Samples: samples, Presets: LatencyPresets(), Return: ret, Blocks: blocks}, nil
 }
 
 // LatencyHistory returns a machine's samples over the last hours, averaged

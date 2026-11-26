@@ -1,9 +1,13 @@
 package service
 
 import (
+	"encoding/json"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/kukumi1/fluxlite/internal/store"
 )
 
 func blockTargetsFor(families ...int) []resolvedTarget {
@@ -70,5 +74,50 @@ func TestBlockScriptRuns(t *testing.T) {
 	script := blockScript(blockTargetsFor(4, 6))
 	if err := exec.Command("sh", "-n", "-c", script).Run(); err != nil {
 		t.Fatalf("script does not parse: %v\n%s", err, script)
+	}
+}
+
+func TestOnlyNewBlocksAreReported(t *testing.T) {
+	cases := []struct {
+		previous string
+		now      BlockKind
+		want     bool
+	}{
+		{"", BlockTCP, true},
+		{"ok", BlockIP, true},
+		{"tcp_blocked", BlockIP, true},
+		{"tcp_blocked", BlockTCP, false},
+		{"ip_blocked", BlockNone, false},
+		{"ok", BlockPartial, false},
+		{"", BlockNoTool, false},
+	}
+	for _, c := range cases {
+		if got := newlyBlocked(c.previous, c.now); got != c.want {
+			t.Errorf("%q → %s: got %v", c.previous, c.now, got)
+		}
+	}
+}
+
+func TestBlockCheckIsDueEverySixHours(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	if !blockCheckDue(nil, now) {
+		t.Fatal("never checked is due")
+	}
+	recent := []store.BlockCheck{{CheckedAt: now.Add(-5 * time.Hour).Unix()}, {CheckedAt: now.Add(-7 * time.Hour).Unix()}}
+	if blockCheckDue(recent, now) {
+		t.Fatal("the newest check decides")
+	}
+	if !blockCheckDue([]store.BlockCheck{{CheckedAt: now.Add(-6 * time.Hour).Unix()}}, now) {
+		t.Fatal("six hours old is due")
+	}
+}
+
+func TestBlockNoticesFollowTheirOwnSwitch(t *testing.T) {
+	cfg := defaultAlertSettings()
+	if !cfg.Events.Blocked {
+		t.Fatal("on by default")
+	}
+	if err := json.Unmarshal([]byte(`{"events":{"route_change":false}}`), &cfg); err != nil || !cfg.Events.Blocked {
+		t.Fatalf("settings saved before the switch existed keep it on: %+v %v", cfg.Events, err)
 	}
 }

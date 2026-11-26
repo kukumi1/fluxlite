@@ -53,3 +53,22 @@ func TestNextTraceIgnoresTamperedCache(t *testing.T) {
 		t.Fatal("served a cached file that fails the digest")
 	}
 }
+
+func TestTaierRejectsWrongDigest(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not the pinned build"))
+	}))
+	defer srv.Close()
+	src := NewCachedTaierSource(t.TempDir())
+	src.base = srv.URL + "/"
+	saved := downloadMirrors
+	downloadMirrors = []string{""}
+	defer func() { downloadMirrors = saved }()
+
+	if _, err := src.Binary(context.Background(), "arm64"); err == nil {
+		t.Fatal("accepted a binary that does not match the pinned digest")
+	}
+	if sum, ok := src.SHA256("amd64"); !ok || len(sum) != 64 {
+		t.Fatalf("no pinned digest for amd64: %q", sum)
+	}
+}

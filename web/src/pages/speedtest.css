@@ -1,0 +1,38 @@
+.speed-setup { display: grid; gap: 18px; }
+.speed-field h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+.speed-field h3 span { font-size: 12px; font-weight: 400; }
+.speed-field .mute-chips { margin-bottom: 0; }
+.speed-field .mute-chip small { margin-left: 4px; font-size: 11px; opacity: 0.7; }
+.speed-field .mute-chip:disabled { cursor: not-allowed; opacity: 0.45; }
+.speed-field .mute-chip:disabled:hover { border-color: var(--border); }
+.speed-field-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.speed-field-head h3 { margin-bottom: 10px; }
+.speed-quick { display: flex; gap: 6px; }
+.speed-points { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px 18px; }
+.speed-province { display: flex; align-items: center; gap: 6px; }
+.speed-province strong { min-width: 48px; font-size: 13px; font-weight: 500; }
+.speed-province .mute-chip { padding-inline: 10px; }
+.speed-options { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding-top: 14px; border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.speed-options .segmented { margin: 0; }
+.speed-estimate { flex: 1; min-width: 200px; font-size: 12.5px; }
+
+.speed-job { display: grid; gap: 14px; }
+.speed-job-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.speed-job-head > div { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13px; }
+.speed-status { padding: 2px 9px; border-radius: 999px; font-size: 12px; background: var(--muted); }
+.speed-status.s-running { background: var(--tone-sky-soft); color: var(--tone-sky-ink); }
+.speed-status.s-done { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+.speed-status.s-interrupted { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.speed-machine + .speed-machine { padding-top: 14px; border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.speed-machine-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: 8px; font-size: 12.5px; }
+.speed-machine-head .quality-node { font-size: 14px; }
+.speed-progress { display: inline-flex; align-items: center; gap: 8px; color: var(--tone-sky-ink); }
+.speed-bar { width: 120px; height: 6px; overflow: hidden; border-radius: 999px; background: var(--muted); }
+.speed-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--tone-sky-ink); transition: width 0.4s ease; }
+.speed-table { width: 100%; }
+.speed-table td.mono { font-variant-numeric: tabular-nums; }
+.speed-fail { color: var(--err); font-family: var(--font-sans, inherit); }
+.speed-note { font-size: 12px; }
+.speed-foot { margin-top: 4px; font-size: 12px; }
+.dark .speed-status.s-running, .dark .speed-progress { color: var(--tone-sky); }
+.dark .speed-bar > span { background: var(--tone-sky); }

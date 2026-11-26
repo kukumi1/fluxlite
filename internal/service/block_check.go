@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/kukumi1/fluxlite/internal/model"
 	"github.com/kukumi1/fluxlite/internal/sshx"
+	"github.com/kukumi1/fluxlite/internal/store"
 	"github.com/kukumi1/fluxlite/internal/verifier"
 )
 
@@ -82,11 +84,25 @@ func (s *Service) blockTargets(ctx context.Context) ([]resolvedTarget, error) {
 	return targets, nil
 }
 
+// blockCheckEvery is how often every machine is checked on its own.
+const blockCheckEvery = 6 * time.Hour
+
+// BlockState is a machine's latest check over one family, for the page.
+type BlockState struct {
+	NodeID    int64 `json:"node_id"`
+	CheckedAt int64 `json:"checked_at"`
+	BlockFamily
+}
+
 // BlockCheck pings and connects from every machine to the carrier test
 // points and says, per address family, whether China is reachable and if not
 // how it is blocked. A machine the panel reaches over SSH is reachable from
 // abroad, which is what makes a failure here a block rather than an outage.
+// Each machine's result replaces its last one; one that newly turns blocked
+// is reported. A machine that could not be checked keeps its last result.
 func (s *Service) BlockCheck(ctx context.Context) ([]BlockResult, error) {
+	s.blockMu.Lock()
+	defer s.blockMu.Unlock()
 	targets, err := s.blockTargets(ctx)
 	if err != nil {
 		return nil, err
@@ -94,6 +110,14 @@ func (s *Service) BlockCheck(ctx context.Context) ([]BlockResult, error) {
 	nodes, err := s.store.ListNodes(ctx)
 	if err != nil {
 		return nil, err
+	}
+	known, err := s.store.BlockChecks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	previous := make(map[[2]int64]string, len(known))
+	for _, b := range known {
+		previous[[2]int64{b.NodeID, int64(b.Family)}] = b.Kind
 	}
 	results := make([]BlockResult, len(nodes))
 	var wg sync.WaitGroup
@@ -126,7 +150,77 @@ func (s *Service) BlockCheck(ctx context.Context) ([]BlockResult, error) {
 		}(&results[i], n)
 	}
 	wg.Wait()
+
+	now := time.Now().Unix()
+	for _, r := range results {
+		if r.Error != "" {
+			continue
+		}
+		rows := make([]store.BlockCheck, 0, len(r.Families))
+		for _, f := range r.Families {
+			raw, err := json.Marshal(f.Targets)
+			if err != nil {
+				return nil, err
+			}
+			rows = append(rows, store.BlockCheck{NodeID: r.NodeID, Family: f.Family, Kind: string(f.Kind), Label: f.Label, Note: f.Note, Targets: string(raw), CheckedAt: now})
+			if newlyBlocked(previous[[2]int64{r.NodeID, int64(f.Family)}], f.Kind) {
+				s.queueNotice(alertNotice{nodeID: r.NodeID, kind: noticeBlocked,
+					text: fmt.Sprintf("🧱 %s IPv%d：%s\n%s", r.Name, f.Family, f.Label, f.Note)})
+			}
+		}
+		if err := s.store.ReplaceBlockChecks(ctx, r.NodeID, rows); err != nil {
+			return nil, err
+		}
+	}
 	return results, nil
+}
+
+// blockedKinds are the verdicts worth a message: China is cut off, not just
+// one carrier being slow or the machine lacking tools.
+var blockedKinds = []BlockKind{BlockTCP, BlockIP, BlockTCPUnknown}
+
+// newlyBlocked reports a family that is blocked now and was not blocked the
+// same way last time. Staying blocked or recovering sends nothing.
+func newlyBlocked(previous string, now BlockKind) bool {
+	return slices.Contains(blockedKinds, now) && previous != string(now)
+}
+
+// BlockCheckDue runs a check when the last one is blockCheckEvery old.
+func (s *Service) BlockCheckDue(ctx context.Context) error {
+	known, err := s.store.BlockChecks(ctx)
+	if err != nil {
+		return err
+	}
+	if !blockCheckDue(known, time.Now()) {
+		return nil
+	}
+	_, err = s.BlockCheck(ctx)
+	return err
+}
+
+func blockCheckDue(known []store.BlockCheck, now time.Time) bool {
+	var last int64
+	for _, b := range known {
+		last = max(last, b.CheckedAt)
+	}
+	return now.Sub(time.Unix(last, 0)) >= blockCheckEvery
+}
+
+func (s *Service) blockStates(ctx context.Context) ([]BlockState, error) {
+	known, err := s.store.BlockChecks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]BlockState, 0, len(known))
+	for _, b := range known {
+		state := BlockState{NodeID: b.NodeID, CheckedAt: b.CheckedAt,
+			BlockFamily: BlockFamily{Family: b.Family, Kind: BlockKind(b.Kind), Label: b.Label, Note: b.Note}}
+		if err := json.Unmarshal([]byte(b.Targets), &state.Targets); err != nil {
+			return nil, fmt.Errorf("decode block check of node %d: %w", b.NodeID, err)
+		}
+		out = append(out, state)
+	}
+	return out, nil
 }
 
 // blockScript pings and connects to every point at once and prints

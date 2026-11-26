@@ -100,6 +100,10 @@ func run() error {
 	vf := verifier.New(pool)
 	svc := service.New(st, sealer, pool, ap, vf, realmSource, logger)
 	svc.SetTraceTool(applier.NewCachedNextTraceSource(filepath.Join(*dataDir, "nexttrace")))
+	svc.SetSpeedTool(applier.NewCachedTaierSource(filepath.Join(*dataDir, "taier")))
+	if err := svc.InterruptSpeedJobs(ctx); err != nil {
+		logger.Warn("close speed tests left running", "error", err)
+	}
 	authSvc := auth.New(st)
 
 	static, err := web.Handler()

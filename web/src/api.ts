@@ -461,6 +461,10 @@ export const api = {
   probeLatency: (nodeID: number) => post<{ ok: boolean }>(`/latency/nodes/${nodeID}/probe`),
   traceReturnRoutes: (nodeID: number) => post<{ ok: boolean }>(`/latency/nodes/${nodeID}/trace`),
   blockCheck: () => post<BlockResult[]>("/latency/block-check"),
+  speedOverview: () => request<SpeedOverview>("/speedtest", { cache: "no-store" }),
+  startSpeedtest: (req: SpeedRequest) => post<{ id: number }>("/speedtest", req),
+  cancelSpeedtest: (id: number) => post<{ ok: boolean }>(`/speedtest/${id}/cancel`),
+  deleteSpeedtest: (id: number) => request<{ ok: boolean }>(`/speedtest/${id}`, { method: "DELETE" }),
   saveReturnSettings: (settings: ReturnSettings) =>
     request<{ ok: boolean }>("/latency/return-settings", { method: "PUT", body: JSON.stringify(settings) }),
   deleteSubscription: (id: number) => request<{ ok: boolean }>(`/subscriptions/${id}`, { method: "DELETE" }),
@@ -645,6 +649,7 @@ export interface AlertSettings {
     expiry: boolean;
     latency: boolean;
     route_change: boolean;
+    blocked: boolean;
     daily: boolean;
   };
   /** 每日汇总在 UTC+8 的哪个小时发。 */
@@ -755,6 +760,11 @@ export interface BlockFamily {
   targets: BlockTarget[];
 }
 
+export interface BlockState extends BlockFamily {
+  node_id: number;
+  checked_at: number;
+}
+
 export interface BlockResult {
   node_id: number;
   name: string;
@@ -767,4 +777,58 @@ export interface LatencyOverview {
   presets: LatencyTarget[];
   samples: LatencySample[];
   return: ReturnOverview;
+  blocks: BlockState[];
+}
+
+export type SpeedMode = "single" | "multi" | "both";
+
+export interface SpeedRequest {
+  node_ids: number[];
+  points: string[];
+  mode: SpeedMode;
+  family: IPFamily;
+}
+
+export interface SpeedRun {
+  node_id: number;
+  egress: string;
+  traffic_bytes: number;
+  error?: string;
+}
+
+export interface SpeedResult {
+  node_id: number;
+  point: string;
+  mode: "single" | "multi";
+  rtt: string;
+  down: number | null;
+  up: number | null;
+  retrans: number | null;
+  retried: number;
+  error?: string;
+}
+
+export interface SpeedProgress {
+  node_id: number;
+  done: number;
+  total: number;
+  current: string;
+}
+
+export interface SpeedJob {
+  id: number;
+  created_at: number;
+  finished_at: number;
+  status: "running" | "done" | "cancelled" | "interrupted";
+  request: SpeedRequest;
+  runs: SpeedRun[];
+  results: SpeedResult[];
+  progress: SpeedProgress[];
+}
+
+export interface SpeedOverview {
+  provinces: string[];
+  carriers: string[];
+  tool: string;
+  jobs: SpeedJob[];
 }

@@ -56,6 +56,12 @@ type Service struct {
 	notices noticeQueue
 	// traceTool is the tracer pushed to machines for return routes.
 	traceTool TraceTool
+	// speedTool is the speed test client pushed to machines.
+	speedTool TraceTool
+	speed     speedState
+	// blockMu keeps the scheduled block check and the page's button from
+	// running over each other.
+	blockMu sync.Mutex
 }
 
 func New(st *store.Store, sealer *cryptox.Sealer, pool *sshx.Pool, ap *applier.Applier, vf *verifier.Verifier, realm applier.RealmSource, log *slog.Logger) *Service {

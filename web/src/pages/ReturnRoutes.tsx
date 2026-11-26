@@ -36,6 +36,19 @@ function LineLabel({ verdict }: { verdict: RouteVerdict }) {
   );
 }
 
+// Backbone tags take the colour of the line they make up: premium green,
+// quality blue, ordinary grey — the same scale as the table's pills.
+const NET_TIER: Record<string, "premium" | "quality" | "ordinary"> = {
+  CN2: "premium", CTGNet: "premium", "9929": "premium", CMIN2: "premium",
+  CUG: "quality",
+};
+
+// Private and military space (RFC1918, DoD) is the machine's own network
+// before the route leaves for anywhere; it is shown faded.
+function isLocalHop(h: ReturnRoute["hops"][number]): boolean {
+  return !h.asn && (h.whois === "RFC1918" || h.whois === "DOD");
+}
+
 function groupByCity(targets: ReturnTarget[]): Array<[string, ReturnTarget[]]> {
   const out: Array<[string, ReturnTarget[]]> = [];
   for (const t of targets) {
@@ -204,24 +217,24 @@ function RouteDetailDialog({ node, targets, routes, busy, onRetrace, onClose }: 
             {r && r.hops.length > 0 && (
               <div className="trace-hops" role="table" aria-label={`${t.name} 的逐跳路径`}>
                 {r.hops.map((h, i) => (
-                  <div role="row" key={`${h.ttl}-${h.ip ?? i}`} className={h.ip ? undefined : "is-silent"}>
+                  <div role="row" key={`${h.ttl}-${h.ip ?? i}`} className={!h.ip ? "is-silent" : isLocalHop(h) ? "is-local" : undefined}>
                     <span role="cell" className="mono ttl">{i > 0 && r.hops[i - 1].ttl === h.ttl ? "" : h.ttl}</span>
                     <span role="cell" className="hop-addr">
                       <span className="mono">{h.ip ?? "*"}</span>
-                      {h.hostname && <small className="mono">{h.hostname}</small>}
+                      {h.hostname && <small className="mono hop-host" title={h.hostname}>{h.hostname}</small>}
                     </span>
                     <span role="cell" className="hop-net">
                       <span>
-                        {h.asn ? <span className="mono">AS{h.asn}</span> : null}
-                        {h.net && <span className="tag">{h.net}</span>}
+                        {h.asn ? <span className="mono hop-asn">AS{h.asn}</span> : null}
+                        {h.net && <span className={`tag net-${NET_TIER[h.net] ?? "ordinary"}`}>{h.net}</span>}
                       </span>
-                      {h.whois && <small className="mono">{h.whois}</small>}
+                      {h.whois && <small className="mono hop-whois">{h.whois}</small>}
                     </span>
                     <span role="cell" className="hop-where">
                       {h.location && <span>{h.location}</span>}
                       {h.owner && <small>{h.owner}</small>}
                     </span>
-                    <span role="cell" className="mono muted hop-ms">{h.ms !== undefined ? `${h.ms.toFixed(1)} ms` : ""}</span>
+                    <span role="cell" className="mono hop-ms">{h.ms !== undefined ? `${h.ms.toFixed(1)} ms` : ""}</span>
                   </div>
                 ))}
               </div>

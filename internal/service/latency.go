@@ -206,6 +206,12 @@ func (s *Service) resolveTargets(ctx context.Context) ([]resolvedTarget, error) 
 	if err != nil {
 		return nil, err
 	}
+	return s.resolveList(ctx, targets), nil
+}
+
+// resolveList resolves the given points for each family they are switched
+// on for, leaving out any that do not resolve.
+func (s *Service) resolveList(ctx context.Context, targets []LatencyTarget) []resolvedTarget {
 	var out []resolvedTarget
 	for _, t := range targets {
 		for _, family := range []int{4, 6} {
@@ -224,7 +230,7 @@ func (s *Service) resolveTargets(ctx context.Context) ([]resolvedTarget, error) 
 			out = append(out, resolvedTarget{LatencyTarget: t, family: family, ip: ip})
 		}
 	}
-	return out, nil
+	return out
 }
 
 // forNode drops the IPv6 points for a machine with no IPv6 of its own: every

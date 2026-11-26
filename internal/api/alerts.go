@@ -132,6 +132,16 @@ func (s *Server) handleTraceReturnRoutes(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (s *Server) handleBlockCheck(w http.ResponseWriter, r *http.Request) {
+	results, err := s.svc.BlockCheck(r.Context())
+	if err != nil {
+		writeError(w, statusForError(err), "封锁检测失败："+err.Error())
+		return
+	}
+	s.audit(r, "latency.block_check", "全部机器", fmt.Sprintf("%d 台机器", len(results)))
+	writeJSON(w, http.StatusOK, results)
+}
+
 func (s *Server) handleSaveReturnSettings(w http.ResponseWriter, r *http.Request) {
 	var cfg service.ReturnSettings
 	if err := decodeJSON(r, &cfg); err != nil {

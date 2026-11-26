@@ -42,7 +42,7 @@
 .quality-section { margin-top: 28px; }
 .quality-section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 4px 2px 12px; }
 .quality-section-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
-.quality-section-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.quality-section-actions { display: flex; flex-shrink: 0; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 .quality-section-actions .segmented { margin: 0; }
 .quality-table td.quality-no-v6 { font-size: 12.5px; }
 .target-hosts { display: flex; flex-direction: column; gap: 1px; }
@@ -138,3 +138,13 @@
 @media (max-width: 980px) {
   .notify-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+.block-table { width: 100%; margin-top: 8px; }
+.block-table .quality-actions { width: 1%; }
+.block-expanded > td { padding-top: 0; background: color-mix(in srgb, var(--muted) 40%, transparent); }
+.block-detail { padding: 10px 0 4px; }
+.block-detail + .block-detail { border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.block-detail p { margin: 0 0 6px; font-size: 13px; }
+.block-detail .quality-summary { width: 100%; }
+.block-foot { margin-top: 12px; font-size: 12.5px; }
+.block-table .quality-pill { font-family: inherit; }

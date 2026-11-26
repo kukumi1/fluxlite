@@ -460,6 +460,7 @@ export const api = {
     request<LatencySample[]>(`/latency/nodes/${nodeID}/history?hours=${hours}&family=${family}`),
   probeLatency: (nodeID: number) => post<{ ok: boolean }>(`/latency/nodes/${nodeID}/probe`),
   traceReturnRoutes: (nodeID: number) => post<{ ok: boolean }>(`/latency/nodes/${nodeID}/trace`),
+  blockCheck: () => post<BlockResult[]>("/latency/block-check"),
   saveReturnSettings: (settings: ReturnSettings) =>
     request<{ ok: boolean }>("/latency/return-settings", { method: "PUT", body: JSON.stringify(settings) }),
   deleteSubscription: (id: number) => request<{ ok: boolean }>(`/subscriptions/${id}`, { method: "DELETE" }),
@@ -733,6 +734,32 @@ export interface ReturnOverview {
   routes: ReturnRoute[];
   tool: string;
   prefix_date: string;
+}
+
+export type BlockKind = "ok" | "partial" | "tcp_blocked" | "ip_blocked" | "tcp_down" | "no_tool";
+
+export interface BlockTarget {
+  name: string;
+  ip: string;
+  port: number;
+  icmp_loss: number | null;
+  tcp_ok: number;
+  tcp_total: number;
+}
+
+export interface BlockFamily {
+  family: IPFamily;
+  kind: BlockKind;
+  label: string;
+  note?: string;
+  targets: BlockTarget[];
+}
+
+export interface BlockResult {
+  node_id: number;
+  name: string;
+  error?: string;
+  families: BlockFamily[];
 }
 
 export interface LatencyOverview {

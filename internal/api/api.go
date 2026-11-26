@@ -175,6 +175,7 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/latency/nodes/{id}/probe", s.handleProbeLatency)
 			r.Post("/latency/nodes/{id}/trace", s.handleTraceReturnRoutes)
 			r.Put("/latency/return-settings", s.handleSaveReturnSettings)
+			r.Post("/latency/block-check", s.handleBlockCheck)
 			r.Get("/audit", s.handleAudit)
 			r.Get("/traffic-audit", s.handleTrafficAudit)
 

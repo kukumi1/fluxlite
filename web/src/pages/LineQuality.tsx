@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, LineChart, Plus, RefreshCw, Settings2, Trash2 } from "lucide-react";
+import { Activity, LineChart, Plus, RefreshCw, Settings2, ShieldAlert, Trash2 } from "lucide-react";
 import {
   api, ApiError,
-  type IPFamily, type LatencyOverview, type LatencySample, type LatencyTarget, type Node,
+  type BlockResult, type IPFamily, type LatencyOverview, type LatencySample, type LatencyTarget, type Node,
 } from "../api";
 import { Banner, Modal } from "../components/Modal";
 import { EmptyState } from "../components/EmptyState";
 import { Flag } from "../components/Flag";
 import { PageHeader } from "../components/PageHeader";
 import { regionOf } from "../lib/region";
+import { BlockCheckDialog } from "./BlockCheck";
 import { ReturnRoutesSection } from "./ReturnRoutes";
 import "./line-quality.css";
 
@@ -53,6 +54,10 @@ export function LineQuality() {
   const [trendFor, setTrendFor] = useState<Node | null>(null);
   const [editingTargets, setEditingTargets] = useState(false);
   const [family, setFamily] = useState<IPFamily>(4);
+  const [blockOpen, setBlockOpen] = useState(false);
+  const [blockResults, setBlockResults] = useState<BlockResult[] | null>(null);
+  const [blockRunning, setBlockRunning] = useState(false);
+  const [blockError, setBlockError] = useState("");
 
   async function load() {
     try {
@@ -90,6 +95,19 @@ export function LineQuality() {
     }
   }
 
+  async function runBlockCheck() {
+    setBlockOpen(true);
+    setBlockRunning(true);
+    setBlockError("");
+    try {
+      setBlockResults(await api.blockCheck());
+    } catch (err) {
+      setBlockError(err instanceof ApiError ? err.message : "封锁检测失败");
+    } finally {
+      setBlockRunning(false);
+    }
+  }
+
   return (
     <div className="management-page line-quality-page">
       <PageHeader
@@ -106,6 +124,7 @@ export function LineQuality() {
         </div>
         <div className="quality-section-actions">
           <FamilySwitch value={family} onChange={setFamily} />
+          <button className="btn" disabled={blockRunning} onClick={() => void runBlockCheck()}><ShieldAlert size={15} />封锁检测</button>
           <button className="btn" onClick={() => setEditingTargets(true)}><Settings2 size={15} />延迟测试点</button>
         </div>
       </div>
@@ -173,6 +192,10 @@ export function LineQuality() {
         </div>
       )}
 
+      {blockOpen && (
+        <BlockCheckDialog results={blockResults} running={blockRunning} error={blockError}
+          onRun={() => void runBlockCheck()} onClose={() => setBlockOpen(false)} />
+      )}
       {trendFor && <TrendDialog node={trendFor} targets={targets} family={family} onClose={() => setTrendFor(null)} />}
       {overview && (
         <ReturnRoutesSection

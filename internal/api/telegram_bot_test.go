@@ -141,7 +141,12 @@ func TestTelegramPollLoadsPersistedConfigurationAndCheckpoints(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	calls := 0
+	commands := 0
 	mockTelegramPollHTTP(t, func(r *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(r.URL.Path, "/setMyCommands") {
+			commands++
+			return telegramPollResponse(`{"ok":true,"result":true}`), nil
+		}
 		calls++
 		if strings.HasSuffix(r.URL.Path, "/getUpdates") {
 			return telegramPollResponse(`{"ok":true,"result":[{"update_id":80,"message":{"from":{"id":42},"chat":{"id":42,"type":"private"},"text":"/start"}}]}`), nil
@@ -163,6 +168,9 @@ func TestTelegramPollLoadsPersistedConfigurationAndCheckpoints(t *testing.T) {
 	s.RunTelegram(ctx)
 	if calls != 2 || !s.telegram.loaded || s.telegram.cfg.Offset != 81 {
 		t.Fatalf("persisted polling failed: %d", calls)
+	}
+	if commands != 1 {
+		t.Fatalf("the command menu is set once per token, got %d", commands)
 	}
 }
 func TestTelegramMenuHasManagementNavigationAndWebApp(t *testing.T) {

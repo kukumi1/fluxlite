@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -99,4 +100,20 @@ func TestOnlyTelegramSpeedTestsReportBack(t *testing.T) {
 	s := &Server{}
 	// A web-started job returns before touching the service, which is nil here.
 	s.telegramSpeedDone(context.Background(), 1, service.SpeedRequest{})
+}
+
+// Every Bot API call the bot makes has to be allowed, or it fails silently:
+// the speed test's buttons edit their message in place.
+func TestTelegramCallsTheBotMakesAreAllowed(t *testing.T) {
+	for _, method := range []string{"sendMessage", "editMessageText", "answerCallbackQuery", "getUpdates", "setMyCommands"} {
+		if !slices.Contains(telegramMethods, method) {
+			t.Errorf("%s is not allowed", method)
+		}
+	}
+	for _, c := range telegramCommands {
+		if c["command"] == "speed" {
+			return
+		}
+	}
+	t.Fatal("/speed is in the command menu")
 }

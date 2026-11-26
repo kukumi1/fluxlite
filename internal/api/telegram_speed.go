@@ -100,7 +100,7 @@ func (s *Server) telegramSpeed(ctx context.Context, cfg telegramConfig, from tel
 	replyCtx, replyCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer replyCancel()
 	if err := s.sendTelegramRich(replyCtx, cfg, from.ID, editID, text, buttons.markup(), true); err != nil {
-		s.log.Debug("Telegram speed test reply failed")
+		s.log.Warn("Telegram speed test reply failed", "step", cmd, "edit", editID > 0, "error", err)
 	}
 	return true
 }

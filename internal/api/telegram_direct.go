@@ -268,8 +268,8 @@ func (s *Server) telegramDispatch(ctx context.Context, from telegramBotUser, com
 	panelURL := t.cfg.PanelURL
 	t.mu.Unlock()
 	page := strings.TrimPrefix(command, "/")
-	if page == "dashboard" || page == "start" || strings.HasPrefix(page, "traffic:") {
-		if page == "dashboard" || page == "start" {
+	if page == "dashboard" || page == "start" || page == "menu" || strings.HasPrefix(page, "traffic:") {
+		if page == "dashboard" || page == "start" || page == "menu" {
 			page = "traffic:0"
 		}
 		n, e := strconv.Atoi(strings.TrimPrefix(page, "traffic:"))

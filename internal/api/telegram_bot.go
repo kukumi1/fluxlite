@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,10 +23,21 @@ type telegramRateLimitError struct{ RetryAfter time.Duration }
 
 func (e *telegramRateLimitError) Error() string { return "Telegram rate limited the request" }
 
+// telegramMethods are the only Bot API calls the panel makes.
+var telegramMethods = []string{"getMe", "getUpdates", "sendMessage", "editMessageText", "answerCallbackQuery", "setMyCommands"}
+
+// telegramCommands is the menu Telegram shows when "/" is typed.
+var telegramCommands = []map[string]string{
+	{"command": "menu", "description": "菜单与整体仪表盘"},
+	{"command": "speed", "description": "测速：选机器、运营商和测速点"},
+	{"command": "nodes", "description": "机器列表"},
+	{"command": "routes", "description": "链路列表"},
+	{"command": "singbox", "description": "节点列表"},
+	{"command": "cancel", "description": "取消当前操作"},
+}
+
 func telegramCall(ctx context.Context, token, method string, payload, result any) error {
-	switch method {
-	case "getMe", "getUpdates", "sendMessage", "answerCallbackQuery":
-	default:
+	if !slices.Contains(telegramMethods, method) {
 		return errors.New("unsupported Telegram method")
 	}
 	body, err := json.Marshal(payload)
@@ -86,8 +98,8 @@ type telegramBotChat struct {
 type telegramBotMessage struct {
 	MessageID int64           `json:"message_id"`
 	From      telegramBotUser `json:"from"`
-	Chat telegramBotChat `json:"chat"`
-	Text string          `json:"text"`
+	Chat      telegramBotChat `json:"chat"`
+	Text      string          `json:"text"`
 }
 type telegramBotCallback struct {
 	ID      string              `json:"id"`
@@ -118,6 +130,8 @@ func (s *Server) RunTelegram(ctx context.Context) {
 	if s.telegram == nil {
 		return
 	}
+	// commandsFor is the token whose "/" menu has been set.
+	commandsFor := ""
 	for ctx.Err() == nil {
 		s.telegram.mu.Lock()
 		loadErr := s.telegram.load(ctx)
@@ -133,6 +147,11 @@ func (s *Server) RunTelegram(ctx context.Context) {
 				return
 			}
 			continue
+		}
+		if commandsFor != cfg.Token {
+			if err := telegramCall(ctx, cfg.Token, "setMyCommands", map[string]any{"commands": telegramCommands}, nil); err == nil {
+				commandsFor = cfg.Token
+			}
 		}
 		var updates []telegramUpdate
 		err := telegramCall(ctx, cfg.Token, "getUpdates", map[string]any{"offset": cfg.Offset, "timeout": 25, "limit": 50, "allowed_updates": []string{"message", "callback_query"}}, &updates)

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kukumi1/fluxlite/internal/report"
 	"github.com/kukumi1/fluxlite/internal/service"
 	"github.com/kukumi1/fluxlite/internal/store"
 )
@@ -164,5 +165,17 @@ func TestTelegramOffersDualStackToIPv6Machines(t *testing.T) {
 	text, buttons := telegramSpeedSettings(d)
 	if !strings.Contains(text, "协议：IPv4 + IPv6") || !strings.Contains(fmt.Sprint(buttons), "✅ 双栈") {
 		t.Fatalf("%s %v", text, buttons)
+	}
+}
+
+func TestSpeedReportSectionsFollowTheJob(t *testing.T) {
+	job := speedJobFixture("both")
+	job.Request.Items = []string{service.ItemSpeed}
+	var keys []string
+	for _, tab := range report.Sections(speedReportInput(job, 3, "")) {
+		keys = append(keys, tab.Key+" "+tab.Label)
+	}
+	if strings.Join(keys, ", ") != "single-6 IPv6单线程, multi-6 IPv6多线程" {
+		t.Fatal(keys)
 	}
 }

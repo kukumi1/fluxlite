@@ -279,9 +279,14 @@ function MachineResult({ job, nodeID, name }: { job: SpeedJob; nodeID: number; n
   const progress = job.progress.find((p) => p.node_id === nodeID);
   const code = regionOf(name);
   const measured = job.results.filter((r) => r.node_id === nodeID).length + job.quality.filter((q) => q.node_id === nodeID).length;
+  const tabs = [{ key: "overview", label: "总览" }, ...(job.sections?.[nodeID] ?? [])];
+  const [chosen, setChosen] = useState("overview");
+  const tab = tabs.some((t) => t.key === chosen) ? chosen : "overview";
+  // Images are drawn at twice their size; this shows them no larger than that.
+  const [natural, setNatural] = useState<number>();
   // The image is drawn from what has been measured so far; a new count asks
   // for a new one.
-  const src = `/api/speedtest/${job.id}/image?node=${nodeID}&v=${measured}-${job.status}`;
+  const src = `/api/speedtest/${job.id}/image?node=${nodeID}&section=${tab}&v=${measured}-${job.status}`;
 
   return (
     <div className="speed-machine">
@@ -296,8 +301,24 @@ function MachineResult({ job, nodeID, name }: { job: SpeedJob; nodeID: number; n
         {run?.error && <span className="warn-text">{run.error}</span>}
         {measured > 0 && <a className="speed-open" href={src} target="_blank" rel="noreferrer">查看大图</a>}
       </div>
+      {measured > 0 && tabs.length > 2 && (
+        <div className="speed-tabs" role="tablist" aria-label={`${name} 的报告`}>
+          {tabs.map((t) => (
+            <button key={t.key} type="button" role="tab" aria-selected={t.key === tab} className={t.key === tab ? "active" : ""} onClick={() => setChosen(t.key)}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
       {measured > 0 ? (
-        <img className="speed-report" src={src} alt={`${name} 的测速报告`} loading="lazy" />
+        <img
+          className="speed-report"
+          src={src}
+          alt={`${name} 的测速报告：${tabs.find((t) => t.key === tab)?.label}`}
+          loading="lazy"
+          style={natural ? { maxWidth: natural / 2 } : undefined}
+          onLoad={(e) => setNatural(e.currentTarget.naturalWidth)}
+        />
       ) : (
         !run?.error && <p className="muted speed-waiting">{job.status === "running" ? "检测中，第一批结果出来后会在这里显示报告图…" : "没有结果。"}</p>
       )}

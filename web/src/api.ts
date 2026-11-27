@@ -851,6 +851,13 @@ export interface SpeedJob {
   results: SpeedResult[];
   quality: QualityResult[];
   progress: SpeedProgress[];
+  /** Each machine's report tables, by machine id. */
+  sections?: Record<string, ReportTab[]>;
+}
+
+export interface ReportTab {
+  key: string;
+  label: string;
 }
 
 export interface SpeedOverview {

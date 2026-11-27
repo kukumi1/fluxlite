@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/kukumi1/fluxlite/internal/model"
+	"github.com/kukumi1/fluxlite/internal/report"
 	"github.com/kukumi1/fluxlite/internal/sshx"
 	"github.com/kukumi1/fluxlite/internal/store"
 
@@ -444,6 +445,8 @@ type SpeedJobView struct {
 	Results    []store.SpeedResult   `json:"results"`
 	Quality    []store.QualityResult `json:"quality"`
 	Progress   []SpeedProgress       `json:"progress"`
+	// Sections are each machine's report tables, filled in by the API.
+	Sections map[int64][]report.Tab `json:"sections,omitempty"`
 }
 
 type SpeedOverview struct {

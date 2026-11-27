@@ -33,6 +33,11 @@
 .dark .speed-status.s-running, .dark .speed-progress { color: var(--tone-sky); }
 .dark .speed-bar > span { background: var(--tone-sky); }
 .speed-report { display: block; width: 100%; max-width: 1000px; height: auto; border-radius: 14px; }
+.speed-tabs { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
+.speed-tabs button { margin-bottom: -1px; padding: 7px 14px; border: 1px solid transparent; border-radius: 8px 8px 0 0; background: none; color: var(--tone-sky-ink); font: inherit; font-size: 13px; cursor: pointer; }
+.speed-tabs button:hover { color: var(--foreground); }
+.speed-tabs button.active { border-color: var(--border); border-bottom-color: var(--card); background: var(--card); color: var(--foreground); font-weight: 600; }
+.dark .speed-tabs button:not(.active) { color: var(--tone-sky); }
 .speed-open { margin-left: auto; font-size: 12.5px; }
 .speed-waiting { font-size: 13px; }
 .speed-summary { margin: -4px 0 0; font-size: 13px; color: var(--muted-foreground); }

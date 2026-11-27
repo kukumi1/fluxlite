@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/kukumi1/fluxlite/internal/report"
 	"github.com/kukumi1/fluxlite/internal/service"
 )
 
@@ -14,6 +15,13 @@ func (s *Server) handleSpeedOverview(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "读取测速记录失败")
 		return
+	}
+	for i := range out.Jobs {
+		job := &out.Jobs[i]
+		job.Sections = map[int64][]report.Tab{}
+		for _, id := range job.Request.NodeIDs {
+			job.Sections[id] = report.Sections(speedReportInput(job, id, ""))
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

@@ -2,8 +2,12 @@ package report
 
 import (
 	"bytes"
+	"errors"
+	"image"
 	"image/png"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -37,19 +41,77 @@ func sample() Input {
 	return in
 }
 
-func TestRender(t *testing.T) {
-	b, err := Render(sample())
+func decode(t *testing.T, b []byte, err error) image.Image {
+	t.Helper()
 	if err != nil {
 		t.Fatal(err)
 	}
 	img, err := png.Decode(bytes.NewReader(b))
-	if err != nil || img.Bounds().Dx() != width*scale {
-		t.Fatalf("%v %v", img.Bounds(), err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if out := os.Getenv("REPORT_OUT"); out != "" {
-		if err := os.WriteFile(out, b, 0o644); err != nil {
+	return img
+}
+
+func save(t *testing.T, name string, b []byte) {
+	if dir := os.Getenv("REPORT_OUT"); dir != "" {
+		if err := os.WriteFile(filepath.Join(dir, name), b, 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestRenderOverview(t *testing.T) {
+	b, err := RenderOverview(sample())
+	img := decode(t, b, err)
+	if img.Bounds().Dx() < width*scale {
+		t.Fatal(img.Bounds())
+	}
+	save(t, "overview.png", b)
+
+	one := Input{Name: "Bage-SG", Families: []int{4, 6}, Points: []string{"四川移动"}, Items: []string{"route", "large", "udp", "speed"}, Modes: []string{"single", "multi"}}
+	for _, fam := range []int{4, 6} {
+		one.Quality = append(one.Quality,
+			Quality{Point: "四川移动", Item: "route", Family: fam, Line: "CMI", MS: iptr(120), Loss: iptr(0)},
+			Quality{Point: "四川移动", Item: "large", Family: fam, MS: iptr(120), Loss: iptr(55)},
+			Quality{Point: "四川移动", Item: "udp", Family: fam, Line: "CMI"})
+		for _, mode := range one.Modes {
+			one.Speeds = append(one.Speeds, Speed{Point: "四川移动", Mode: mode, Family: fam, RTT: "123ms", Down: fptr(294.8), Up: fptr(267.9), Retrans: fptr(0)})
+		}
+	}
+	b, err = RenderOverview(one)
+	if img := decode(t, b, err); img.Bounds().Dy() > 600*scale {
+		t.Fatalf("one point on both families is a short image: %v", img.Bounds())
+	}
+	save(t, "overview-one.png", b)
+
+	routeOnly := sample()
+	routeOnly.Items = []string{"route"}
+	narrow, err := RenderOverview(routeOnly)
+	if img := decode(t, narrow, err); img.Bounds().Dx() != width*scale {
+		t.Fatalf("without a speed test the table needs no extra width: %v", img.Bounds())
+	}
+}
+
+func TestRenderSections(t *testing.T) {
+	in := sample()
+	tabs := Sections(in)
+	var keys []string
+	for _, tab := range tabs {
+		keys = append(keys, tab.Key)
+	}
+	if strings.Join(keys, " ") != "route-4 large-4 udp-4 single-4 route-6" {
+		t.Fatal(keys)
+	}
+	for _, tab := range tabs {
+		b, err := RenderSection(in, tab.Key)
+		if img := decode(t, b, err); img.Bounds().Dx() != width*scale {
+			t.Fatal(tab, img.Bounds())
+		}
+		save(t, tab.Key+".png", b)
+	}
+	if _, err := RenderSection(in, "multi-4"); !errors.Is(err, ErrNoSection) {
+		t.Fatal(err)
 	}
 }
 
@@ -61,7 +123,7 @@ func TestRenderConcurrently(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := Render(sample()); err != nil {
+			if _, err := RenderOverview(sample()); err != nil {
 				errs <- err
 			}
 		}()

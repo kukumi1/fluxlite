@@ -546,7 +546,7 @@ func (s *Server) telegramSpeedDone(ctx context.Context, jobID int64, req service
 		if n, err := s.svc.Store().NodeByID(ctx, id); err == nil {
 			name = n.Name
 		}
-		png, err := report.Render(speedReportInput(job, id, name))
+		png, err := report.RenderOverview(speedReportInput(job, id, name))
 		if err == nil {
 			caption := fmt.Sprintf("%s<b>测速 | %s</b>\n%s", telegramFlag(name), html.EscapeString(name),
 				html.EscapeString(speedReportInput(job, id, name).Settings))

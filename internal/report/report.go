@@ -6,6 +6,7 @@ package report
 import (
 	"bytes"
 	_ "embed"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -220,14 +221,24 @@ const (
 	rowH     = 26
 	headerH  = 118
 	sectionG = 30
+	footerH  = 96
 )
 
-// Render draws the report.
-func Render(in Input) ([]byte, error) {
-	f, err := loadFaces()
-	if err != nil {
-		return nil, err
-	}
+// Tab names one section of the report, which the page shows on its own.
+type Tab struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+}
+
+type section struct {
+	Tab
+	height int
+	draw   func(c *canvas, y int)
+}
+
+// sections are the report's per-item tables, each family's in turn, IPv4
+// first, the way the reports this one copies are read.
+func sections(in Input) []section {
 	provs, used := provinces(in.Points)
 	var cols []string
 	for _, c := range carriers {
@@ -235,39 +246,24 @@ func Render(in Input) ([]byte, error) {
 			cols = append(cols, c)
 		}
 	}
-	quality := func(item string, family int) map[string]Quality {
-		m := map[string]Quality{}
-		for _, q := range in.Quality {
-			if q.Item == item && q.Family == family {
-				m[q.Point] = q
-			}
-		}
-		return m
-	}
-
-	type section struct {
-		height int
-		draw   func(c *canvas, y int)
-	}
-	var sections []section
 	tableH := func(rows int) int { return 64 + rows*rowH }
-	// Each family's sections follow one another, IPv4 first, the way the
-	// reports this one copies are read.
+	var out []section
 	for _, family := range in.Families {
 		fam := fmt.Sprintf("IPv%d", family)
-		route, large, udp := quality("route", family), quality("large", family), quality("udp", family)
+		key := func(item string) string { return fmt.Sprintf("%s-%d", item, family) }
+		route, large, udp := in.quality("route", family), in.quality("large", family), in.quality("udp", family)
 		if slices.Contains(in.Items, "route") && len(route) > 0 {
-			sections = append(sections, section{tableH(len(provs)), func(c *canvas, y int) {
+			out = append(out, section{Tab{key("route"), fam + "回程"}, tableH(len(provs)), func(c *canvas, y int) {
 				drawQualityTable(c, y, fam+"回程", provs, cols, route, route, true)
 			}})
 		}
 		if slices.Contains(in.Items, "large") && len(large) > 0 {
-			sections = append(sections, section{tableH(len(provs)), func(c *canvas, y int) {
+			out = append(out, section{Tab{key("large"), fam + "大包回程"}, tableH(len(provs)), func(c *canvas, y int) {
 				drawQualityTable(c, y, fam+"大包回程（1400B）", provs, cols, large, route, true)
 			}})
 		}
 		if slices.Contains(in.Items, "udp") && len(udp) > 0 {
-			sections = append(sections, section{tableH(len(provs)) - 22, func(c *canvas, y int) {
+			out = append(out, section{Tab{key("udp"), fam + " UDP回程"}, tableH(len(provs)) - 22, func(c *canvas, y int) {
 				drawQualityTable(c, y, fam+" UDP回程", provs, cols, udp, udp, false)
 			}})
 		}
@@ -275,73 +271,118 @@ func Render(in Input) ([]byte, error) {
 			continue
 		}
 		for _, mode := range in.Modes {
-			var rows []Speed
-			for _, p := range in.Points {
-				for _, s := range in.Speeds {
-					if s.Point == p && s.Mode == mode && s.Family == family {
-						rows = append(rows, s)
-					}
-				}
-			}
+			rows := in.speeds(mode, family)
 			if len(rows) == 0 {
 				continue
 			}
-			label := fam + map[string]string{"single": " 单线程测速", "multi": " 多线程测速"}[mode]
-			sections = append(sections, section{36 + 28 + len(rows)*rowH, func(c *canvas, y int) {
-				drawSpeedTable(c, y, label, fam, rows)
+			name := modeNames[mode]
+			out = append(out, section{Tab{key(mode), fam + name}, 36 + 28 + len(rows)*rowH, func(c *canvas, y int) {
+				drawSpeedTable(c, y, fam+" "+name+"测速", fam, rows)
 			}})
 		}
 	}
+	return out
+}
 
-	height := headerH
-	for _, s := range sections {
-		height += s.height + sectionG
+var modeNames = map[string]string{"single": "单线程", "multi": "多线程"}
+
+// quality is one item's results for a family, by point.
+func (in Input) quality(item string, family int) map[string]Quality {
+	m := map[string]Quality{}
+	for _, q := range in.Quality {
+		if q.Item == item && q.Family == family {
+			m[q.Point] = q
+		}
 	}
-	height += 96
-	c := &canvas{img: image.NewRGBA(image.Rect(0, 0, width*scale, height*scale)), faces: f}
-	c.rect(bg, 0, 0, width, height)
+	return m
+}
 
-	c.write(f.title, title, width/2, 40, 'c', "测速 | "+in.Name)
+// speeds are one mode's results for a family, in the order the points were asked.
+func (in Input) speeds(mode string, family int) []Speed {
+	var rows []Speed
+	for _, p := range in.Points {
+		for _, s := range in.Speeds {
+			if s.Point == p && s.Mode == mode && s.Family == family {
+				rows = append(rows, s)
+			}
+		}
+	}
+	return rows
+}
+
+// Sections lists the tables the report has, for the page's tabs.
+func Sections(in Input) []Tab {
+	tabs := []Tab{}
+	for _, s := range sections(in) {
+		tabs = append(tabs, s.Tab)
+	}
+	return tabs
+}
+
+// ErrNoSection is returned for a section the report does not have.
+var ErrNoSection = errors.New("report has no such section")
+
+// RenderSection draws one of the report's tables under the report's header.
+func RenderSection(in Input, key string) ([]byte, error) {
+	for _, s := range sections(in) {
+		if s.Key == key {
+			return render(in, width, s.height+sectionG, func(c *canvas, y int) { s.draw(c, y) })
+		}
+	}
+	return nil, ErrNoSection
+}
+
+// render draws the header, a body of the given height and the footer.
+func render(in Input, w, bodyH int, body func(c *canvas, y int)) ([]byte, error) {
+	f, err := loadFaces()
+	if err != nil {
+		return nil, err
+	}
+	height := headerH + bodyH + footerH
+	c := &canvas{img: image.NewRGBA(image.Rect(0, 0, w*scale, height*scale)), faces: f}
+	c.rect(bg, 0, 0, w, height)
+	c.write(f.title, title, w/2, 40, 'c', "测速 | "+in.Name)
 	sub := in.Settings
 	if in.Egress != "" {
 		sub = "出口 " + in.Egress + "    " + sub
 	}
-	c.write(f.small, muted, width/2, 66, 'c', sub)
+	c.write(f.small, muted, w/2, 66, 'c', sub)
 	if in.Note != "" {
-		c.write(f.small, fair, width/2, 88, 'c', in.Note)
+		c.write(f.small, fair, w/2, 88, 'c', in.Note)
 	}
-	c.dots(headerH-14, margin, width-margin)
-
-	y := headerH
-	for _, s := range sections {
-		s.draw(c, y)
-		y += s.height + sectionG
+	c.dots(headerH-14, margin, w-margin)
+	body(c, headerH)
+	drawFooter(c, in, w, headerH+bodyH+4)
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, c.img); err != nil {
+		return nil, err
 	}
+	return buf.Bytes(), nil
+}
 
-	legendY := y + 4
+func drawFooter(c *canvas, in Input, w, y int) {
+	f := c.faces
 	legend := []struct {
 		col  color.Color
 		text string
 	}{{good, "正常：零丢包 / ≤150ms"}, {fair, "一般：≤20% 丢包或重传 / 151-240ms"}, {bad, "异常：>20% / >240ms / 失败"}}
-	x := margin + 40
+	total := 0
 	for _, l := range legend {
-		c.write(f.small, l.col, x, legendY, 'l', "● "+l.text)
+		total += c.width(f.small, "● "+l.text)/scale + 36
+	}
+	x := (w - total + 36) / 2
+	for _, l := range legend {
+		c.write(f.small, l.col, x, y, 'l', "● "+l.text)
 		x += c.width(f.small, "● "+l.text)/scale + 36
 	}
 	foot := "报告时间：" + in.Finished.In(time.FixedZone("UTC+8", 8*3600)).Format("2006-01-02 15:04:05") + "（北京时间）"
 	if in.Elapsed > 0 {
 		foot += fmt.Sprintf("    耗时 %d 秒", in.Elapsed)
 	}
-	c.write(f.small, muted, width/2, legendY+32, 'c', foot)
+	c.write(f.small, muted, w/2, y+32, 'c', foot)
 	if in.Traffic != "" {
-		c.write(f.small, muted, width/2, legendY+56, 'c', in.Traffic)
+		c.write(f.small, muted, w/2, y+56, 'c', in.Traffic)
 	}
-
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, c.img); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 // drawQualityTable draws one return-quality section; lines come from

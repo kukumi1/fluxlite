@@ -141,7 +141,8 @@ func (s *Server) nodeName(ctx context.Context, id int64) string {
 	return fmt.Sprintf("机器 #%d", id)
 }
 
-// handleSpeedImage draws one machine's report of a job.
+// handleSpeedImage draws one machine's report of a job: the overview, or
+// the one table ?section= names.
 func (s *Server) handleSpeedImage(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
@@ -157,7 +158,17 @@ func (s *Server) handleSpeedImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "没有这次测试")
 		return
 	}
-	png, err := report.Render(speedReportInput(job, nodeID, s.nodeName(r.Context(), nodeID)))
+	in := speedReportInput(job, nodeID, s.nodeName(r.Context(), nodeID))
+	var png []byte
+	if section := r.URL.Query().Get("section"); section == "" || section == "overview" {
+		png, err = report.RenderOverview(in)
+	} else {
+		png, err = report.RenderSection(in, section)
+	}
+	if errors.Is(err, report.ErrNoSection) {
+		writeError(w, http.StatusNotFound, "报告里没有这一项")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "生成报告图失败")
 		return

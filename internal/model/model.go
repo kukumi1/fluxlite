@@ -517,6 +517,10 @@ type NodeMetrics struct {
 	// like a real machine.
 	Container string `json:"container"`
 
+	// Source is "agent" when the readings come from the machine's probe agent,
+	// live, rather than from the panel's sampling over SSH.
+	Source string `json:"source,omitempty"`
+
 	CollectedAt time.Time `json:"collected_at"`
 }
 

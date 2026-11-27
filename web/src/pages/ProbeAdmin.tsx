@@ -25,12 +25,19 @@ const TRAFFIC_TYPES: ReadonlyArray<readonly [string, string]> = [
   ["max", "上下行取大"], ["sum", "上下行相加"], ["up", "只算上行"], ["down", "只算下行"], ["min", "上下行取小"],
 ];
 
-export function MachineDialog({ machine, onClose, onSaved }: { machine: ProbeMachine; onClose: () => void; onSaved: () => void }) {
+/** A panel machine a probe machine can be paired with. */
+export interface PairableNode {
+  id: number;
+  name: string;
+}
+
+export function MachineDialog({ machine, nodes, onClose, onSaved }: { machine: ProbeMachine; nodes: PairableNode[]; onClose: () => void; onSaved: () => void }) {
   const d = machine.display;
   const [form, setForm] = useState({
     name: machine.name,
     hidden: machine.hidden,
-    weight: String(machine.weight),
+    notify: machine.notify,
+    node: machine.node_id === null ? "" : String(machine.node_id),
     region: flagCode(d.region) ?? "",
     group: d.group ?? "",
     tags: d.tags ?? "",
@@ -54,7 +61,7 @@ export function MachineDialog({ machine, onClose, onSaved }: { machine: ProbeMac
       await api.updateProbeMachine(machine.uuid, {
         name: form.name,
         hidden: form.hidden,
-        weight: Number(form.weight) || 0,
+        node_id: form.node === "" ? null : Number(form.node),
         display: {
           ...d,
           region: flagEmoji(form.region),
@@ -70,6 +77,7 @@ export function MachineDialog({ machine, onClose, onSaved }: { machine: ProbeMac
           traffic_limit_type: form.traffic_limit_type,
         },
       });
+      if (form.notify !== machine.notify) await api.setProbeNotify(machine.uuid, form.notify);
       onSaved();
     } catch (err) {
       setError(message(err, "保存失败"));
@@ -79,7 +87,7 @@ export function MachineDialog({ machine, onClose, onSaved }: { machine: ProbeMac
   }
 
   return (
-    <Modal title={`编辑 · ${machine.name}`} subtitle="这些信息只用在公开页上，agent 上报的硬件信息不在这里改。" onClose={onClose}>
+    <Modal title={`探针与公开页 · ${machine.name}`} subtitle="价格、到期这些只显示在公开页上；agent 上报的硬件信息不在这里改。" onClose={onClose}>
       {error && <Banner kind="err">{error}</Banner>}
       <form className="dialog-form" onSubmit={(e) => { e.preventDefault(); void save(); }}>
         <div className="grid2">
@@ -97,8 +105,14 @@ export function MachineDialog({ machine, onClose, onSaved }: { machine: ProbeMac
               {TRAFFIC_TYPES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
             </select>
           </label>
-          <label>排序<input inputMode="numeric" value={form.weight} onChange={set("weight")} placeholder="小的排前面" /></label>
         </div>
+        <label>对应的面板机器
+          <select value={form.node} onChange={set("node")}>
+            <option value="">无（只有 agent，没有 SSH）</option>
+            {nodes.map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
+          </select>
+        </label>
+        <p className="field-hint flush">同一台机器的 agent 和 SSH 关联后，机器页显示 agent 的实时数据，转发、终端、测速照常走 SSH；掉线只由机器页的告警通知一次。</p>
         <label>公开备注<input value={form.public_remark} onChange={set("public_remark")} /></label>
         <div className="switch-row">
           <div><strong>自动续费</strong></div>
@@ -110,6 +124,13 @@ export function MachineDialog({ machine, onClose, onSaved }: { machine: ProbeMac
           <button type="button" role="switch" aria-checked={form.hidden} aria-label="在公开页隐藏" className={`toggle-switch${form.hidden ? " on" : ""}`}
             onClick={() => setForm({ ...form, hidden: !form.hidden })}><span /></button>
         </div>
+        {form.node === "" && (
+          <div className="switch-row">
+            <div><strong>掉线通知</strong><span>超过 3 分钟没上报、恢复时各发一条 Telegram；总开关在「通知」页</span></div>
+            <button type="button" role="switch" aria-checked={form.notify} aria-label="掉线通知" className={`toggle-switch${form.notify ? " on" : ""}`}
+              onClick={() => setForm({ ...form, notify: !form.notify })}><span /></button>
+          </div>
+        )}
         <div className="setting-actions">
           <button className="btn primary" disabled={busy}>{busy ? "保存中…" : "保存"}</button>
           <button type="button" className="btn" onClick={onClose}>取消</button>
@@ -202,9 +223,9 @@ export function TaskDialog({ task, machines, onClose, onSaved }: { task: ProbeTa
   );
 }
 
-// EnrollCard gives the command that installs Komari's agent on a new
-// machine and registers it here.
-export function EnrollCard() {
+// AgentEnrollDialog gives the command that installs Komari's agent on a
+// new machine and registers it here.
+export function AgentEnrollDialog({ onClose }: { onClose: () => void }) {
   const [enroll, setEnroll] = useState<ProbeEnroll | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -224,14 +245,10 @@ export function EnrollCard() {
   }
 
   return (
-    <div className="card">
-      <h2>接入新机器</h2>
-      <p className="muted probe-note">
-        在新机器上用 root 运行下面的命令，它会装上 Komari 官方 agent 并自动注册到这里，之后在上面的机器列表里出现。
-      </p>
+    <Modal title="接入 agent" subtitle="在机器上用 root 运行下面的命令，它会装上 Komari 官方 agent 并自动注册到面板。已经在机器页的机器会按 IP 自动关联。" size="wide" onClose={onClose}>
       {error && <Banner kind="err">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
-      {enroll && !enroll.host && <Banner kind="warn">先在下面「公开页」里填好域名，agent 要连这个域名上报。</Banner>}
+      {enroll && !enroll.host && <Banner kind="warn">先在「探针」页的「公开页」里填好域名，agent 要连这个域名上报。</Banner>}
       {enroll?.command ? (
         <div className="probe-command">
           <code className="mono">{enroll.command}</code>
@@ -246,7 +263,7 @@ export function EnrollCard() {
         <button type="button" className="btn" onClick={() => void newKey()}><KeyRound size={14} />{enroll?.key ? "换一个注册密钥" : "生成注册密钥"}</button>
       </div>
       <p className="field-hint flush">注册密钥只用于新机器第一次注册；泄露了就换一个，已接入的机器各自有独立的 token。</p>
-    </div>
+    </Modal>
   );
 }
 

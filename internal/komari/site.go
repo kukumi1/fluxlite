@@ -76,6 +76,8 @@ func New(st *store.Store, hub *probe.Hub, themes string, secure bool, log *slog.
 		r.Post("/rpc2", s.handleRPCPost)
 		r.Get("/rpc2", s.handleRPCSocket)
 		r.Post("/admin/theme/settings", s.handleSaveThemeSettings)
+		r.Get("/admin/client/list", s.handleAdminClients)
+		r.Get("/admin/ping", s.handleAdminPing)
 		r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 			writeWrapped(w, http.StatusNotFound, nil, "Not found")
 		})
@@ -156,8 +158,11 @@ func (s *Site) Serves(r *http.Request) bool {
 	return strings.EqualFold(h, host)
 }
 
-// LoginURL makes a link that lets the panel's operator save the theme's
-// settings on the public page for a while.
+// themeSettingsView is the theme's own query for its settings page.
+const themeSettingsView = "theme-manage"
+
+// LoginURL makes a link that opens the theme's settings page with the
+// panel's operator signed in for a while.
 func (s *Site) LoginURL(ctx context.Context) (string, error) {
 	host := s.settings(ctx)[PublicHostSetting]
 	if host == "" {
@@ -167,7 +172,7 @@ func (s *Site) LoginURL(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	s.logins[token] = time.Now().Add(loginFor)
 	s.mu.Unlock()
-	return "https://" + host + "/?probe_login=" + token, nil
+	return "https://" + host + "/?view=" + themeSettingsView + "&probe_login=" + token, nil
 }
 
 // take consumes a valid token from a set; expired ones are dropped on the way.
@@ -208,7 +213,13 @@ func (s *Site) exchange(w http.ResponseWriter, r *http.Request, token string) {
 		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: session, Path: "/", MaxAge: int(sessionFor.Seconds()),
 			HttpOnly: true, Secure: s.secure, SameSite: http.SameSiteLaxMode})
 	}
-	http.Redirect(w, r, "/", http.StatusFound)
+	// Only the settings page is a destination, so the link cannot be made
+	// to send its holder anywhere else.
+	dest := "/"
+	if r.URL.Query().Get("view") == themeSettingsView {
+		dest = "/?view=" + themeSettingsView
+	}
+	http.Redirect(w, r, dest, http.StatusFound)
 }
 
 // writeWrapped answers the way Komari's REST routes do.
@@ -271,6 +282,42 @@ func (s *Site) handleSaveThemeSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeWrapped(w, http.StatusOK, nil, "")
+}
+
+// handleAdminClients lists every machine, hidden ones and addresses too, for
+// the theme's settings page to bind latency checks to.
+func (s *Site) handleAdminClients(w http.ResponseWriter, r *http.Request) {
+	if !s.loggedIn(r) {
+		writeWrapped(w, http.StatusUnauthorized, nil, "Unauthorized.")
+		return
+	}
+	clients, err := s.store.ProbeClients(r.Context())
+	if err != nil {
+		s.log.Error("list probe clients", "error", err)
+		writeWrapped(w, http.StatusInternalServerError, nil, "Failed to get client info")
+		return
+	}
+	out := make([]map[string]any, 0, len(clients))
+	for _, c := range clients {
+		out = append(out, node(c, true))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleAdminPing lists every latency check with its target, for the theme's
+// settings page.
+func (s *Site) handleAdminPing(w http.ResponseWriter, r *http.Request) {
+	if !s.loggedIn(r) {
+		writeWrapped(w, http.StatusUnauthorized, nil, "Unauthorized.")
+		return
+	}
+	tasks, err := s.store.ProbeTasks(r.Context())
+	if err != nil {
+		s.log.Error("list probe tasks", "error", err)
+		writeWrapped(w, http.StatusInternalServerError, nil, "Failed to get ping tasks")
+		return
+	}
+	writeWrapped(w, http.StatusOK, tasks, "")
 }
 
 // themeDir is the active theme's directory.

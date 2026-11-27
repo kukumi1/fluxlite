@@ -8,6 +8,7 @@ import {
   type Node,
   type NodeInput,
   type NodeMetrics,
+  type ProbeMachine,
   type ProbeResult,
   ipv6DialAddress,
 } from "../api";
@@ -27,6 +28,7 @@ import {
   Network,
   Pencil,
   Plus,
+  Radio,
   RotateCcw,
   Rows3,
   Server,
@@ -53,6 +55,8 @@ import { ChoiceGroup, DrawerActions, FormBlock, SwitchField } from "../component
 import "./management-redesign.css";
 import { regionOf, toneOf } from "../lib/region";
 import { EnrollDialog } from "./EnrollDialog";
+import { AgentEnrollDialog, MachineDialog } from "./ProbeAdmin";
+import { AgentOnlyMachines } from "./ProbeMachines";
 import { ReinstallDialog } from "./ReinstallDialog";
 
 const emptyInput: NodeInput = {
@@ -95,6 +99,16 @@ function statusTag(n: Node) {
   const label = n.status === "online" ? "在线" : n.status === "offline" ? "离线" : "未知";
   return <span className={`pill ${tone}`}><i />{label}</span>;
 }
+
+// liveTag marks readings that come from the machine's agent, live, rather
+// than the panel's SSH sample every ten seconds.
+function liveTag(m: NodeMetrics | undefined) {
+  return m?.source === "agent" ? <span className="tag live-tag" title="CPU、内存、网速来自这台机器上的 agent，每几秒更新">实时</span> : null;
+}
+
+// Agents report every few seconds; with one on a machine the page follows
+// it closely enough to read as live.
+const LIVE_REFRESH_MS = 3000;
 
 function MachineBadge({ name }: { name: string }) {
   const code = regionOf(name);
@@ -164,6 +178,9 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
   const [reinstalling, setReinstalling] = useState<Node | null>(null);
   const [removed, setRemoved] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<Record<string, NodeMetrics>>({});
+  const [probeMachines, setProbeMachines] = useState<ProbeMachine[]>([]);
+  const [editingProbe, setEditingProbe] = useState<ProbeMachine | null>(null);
+  const [agentEnrolling, setAgentEnrolling] = useState(false);
   const [view, setView] = useState<NodeView>(storedNodeView);
   const [confirm, confirmDialog] = useConfirm();
 
@@ -195,6 +212,7 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
             <ActionButton iconOnly={iconOnly} label="装内核" icon={Download} title="转发内核会在第一次下发链路时自动安装，这里可以提前装好" disabled={busy} onClick={() => void installRealm(n)} />
           )}
           <ActionButton iconOnly={iconOnly} label="编辑" icon={Pencil} disabled={order.pending} onClick={() => setEditing(n)} />
+          {probeByNode.get(n.id) && <ActionButton iconOnly={iconOnly} label="探针" icon={Radio} title="agent、公开页上的价格到期等" onClick={() => setEditingProbe(probeByNode.get(n.id) ?? null)} />}
         </div>
         <div className="machine-actions-side">
           {!telegram && <ActionButton iconOnly={iconOnly} label="重装" icon={RotateCcw} className="ghost" title="机器重装过系统？在这里拿一条命令重新接管，链路不用重建" disabled={order.pending} onClick={() => setReinstalling(n)} />}
@@ -204,12 +222,17 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
     );
   }
 
+  // The probe is optional to this page: if it cannot be read, the machines
+  // still show with their SSH samples.
+  const loadProbe = () => api.probeOverview().then((o) => o.machines, () => null);
+
   async function load() {
     const version = order.readVersion();
     try {
-      const [list, snapshot] = await Promise.all([api.listNodes(), api.metrics()]);
+      const [list, snapshot, probes] = await Promise.all([api.listNodes(), api.metrics(), loadProbe()]);
       if (order.acceptsRead(version)) setNodes(list ?? []);
       setMetrics(snapshot ?? {});
+      if (probes) setProbeMachines(probes);
     } catch (err) {
       fail(err);
     }
@@ -224,15 +247,52 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
   useEffect(() => {
     const timer = setInterval(() => {
       const version = order.readVersion();
-      Promise.all([api.listNodes(), api.metrics()])
-        .then(([list, snapshot]) => {
+      Promise.all([api.listNodes(), api.metrics(), loadProbe()])
+        .then(([list, snapshot, probes]) => {
           if (order.acceptsRead(version)) setNodes(list ?? []);
           setMetrics(snapshot ?? {});
+          if (probes) setProbeMachines(probes);
         })
         .catch(() => {});
     }, 10000);
     return () => clearInterval(timer);
   }, []);
+
+  const hasAgents = probeMachines.length > 0;
+  useEffect(() => {
+    if (!hasAgents) return;
+    const timer = setInterval(() => {
+      Promise.all([api.metrics(), loadProbe()])
+        .then(([snapshot, probes]) => {
+          setMetrics(snapshot ?? {});
+          if (probes) setProbeMachines(probes);
+        })
+        .catch(() => {});
+    }, LIVE_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [hasAgents]);
+
+  async function removeProbe(m: ProbeMachine) {
+    const ok = await confirm({
+      title: `删除探针机器 ${m.name}？`,
+      body: "这台机器的探针历史会一起删掉，它的 agent 也会因为 token 失效而连不上。要重新接入得在机器上重新装 agent。",
+      confirmLabel: "删除",
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await api.deleteProbeMachine(m.uuid);
+      setNotice(`已删除探针机器 ${m.name}`);
+      await load();
+    } catch (err) {
+      fail(err);
+    }
+  }
+
+  function addSSH(m: ProbeMachine) {
+    setCreateInput({ ...emptyInput, name: m.name, host: m.info.ipv4 || m.info.ipv6 || "" });
+    setCreating(true);
+  }
 
   async function runProbe(node: Node) {
     setBusyId(node.id);
@@ -302,6 +362,8 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
   const memTotal = readings.reduce((sum, m) => sum + (m.mem_total ?? 0), 0);
   const netRate = readings.reduce((sum, m) => sum + (m.net_rx_rate ?? 0) + (m.net_tx_rate ?? 0), 0);
   const onlineCount = shownNodes.filter((n) => n.status === "online").length;
+  const probeByNode = new Map(probeMachines.filter((m) => m.node_id !== null).map((m) => [m.node_id as number, m]));
+  const agentOnly = probeMachines.filter((m) => m.node_id === null);
 
   return (
     <div className="management-page machines-management">
@@ -327,6 +389,10 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
                 })}
               </div>
             )}
+            {!telegram && <button className="btn" onClick={() => setAgentEnrolling(true)} title="在机器上装 agent，实时上报 CPU、内存、网速">
+              <Radio size={15} />
+              接入 agent
+            </button>}
             <button className="btn" disabled={order.pending} onClick={() => setCreating(true)}>
               手动添加
             </button>
@@ -400,7 +466,7 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
                         <div><div className="machine-list-name"><strong>{n.name}</strong><button type="button" className="machine-detail-toggle" aria-expanded={!!expandedDetails[n.id]} aria-controls={`${detailsPrefix}-${n.id}`} aria-label={`${expandedDetails[n.id] ? "收起" : "展开"} ${n.name} 连接详情`} title="连接详情" onClick={() => setExpandedDetails((current) => ({ ...current, [n.id]: !current[n.id] }))}><ChevronDown size={15} /></button></div><div className="machine-list-system">{systemCell(n)}</div>{m?.container && <span className="tag" title={caveat ?? "运行在容器里"}>{m.container}</span>}</div>
                       </div>
                     </div>
-                    <div className="machine-list-status">{statusTag(n)}</div>
+                    <div className="machine-list-status">{statusTag(n)}{liveTag(m)}</div>
                     <div className="machine-list-resource machine-list-cpu"><MetricBar label="CPU" percent={m?.cpu_percent ?? null} detail={m?.cores ? `${m.cores} 核` : undefined} caveat={caveat} /></div>
                     <div className="machine-list-resource machine-list-memory"><MetricBar label="内存" percent={percentOf(m?.mem_used ?? null, m?.mem_total ?? null)} detail={ratioText(m?.mem_used ?? null, m?.mem_total ?? null)} caveat={caveat} /></div>
                     <div className="machine-list-resource machine-list-disk"><MetricBar label="磁盘" percent={percentOf(m?.disk_used ?? null, m?.disk_total ?? null)} detail={ratioText(m?.disk_used ?? null, m?.disk_total ?? null)} /></div>
@@ -436,6 +502,7 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
                   </div>
                   <div className="machine-card-status">
                     {statusTag(n)}
+                    {liveTag(m)}
                     {m?.container && <span className="tag" title={caveat ?? "运行在容器里"}>{m.container}</span>}
                   </div>
                 </div>
@@ -468,6 +535,37 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
           })}
         </div>
       )}
+
+      {agentOnly.length > 0 && (!search.trim() || agentOnly.some((m) => m.name.toLowerCase().includes(search.trim().toLowerCase()))) && (
+        <AgentOnlyMachines
+          machines={agentOnly}
+          setMachines={(next) => setProbeMachines((cur) => [...cur.filter((m) => m.node_id !== null), ...next])}
+          reload={async () => {
+            const probes = await loadProbe();
+            return probes ? probes.filter((m) => m.node_id === null) : null;
+          }}
+          onError={setError}
+          onAddSSH={addSSH}
+          onEdit={setEditingProbe}
+          onDelete={(m) => void removeProbe(m)}
+          disabled={creating || !!editing || !!editingProbe}
+        />
+      )}
+
+      {editingProbe && (
+        <MachineDialog
+          machine={editingProbe}
+          nodes={nodes.map((n) => ({ id: n.id, name: n.name }))}
+          onClose={() => setEditingProbe(null)}
+          onSaved={() => {
+            setEditingProbe(null);
+            setNotice("已保存");
+            void load();
+          }}
+        />
+      )}
+
+      {agentEnrolling && <AgentEnrollDialog onClose={() => setAgentEnrolling(false)} />}
 
       {removed && (
         <Modal title={`节点 ${removed} 已从面板删除`} onClose={() => setRemoved(null)}>

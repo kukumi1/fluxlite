@@ -502,7 +502,7 @@ func (s *Server) telegramList(ctx context.Context, kind string, page int) (strin
 		if e != nil {
 			return "", nil, e
 		}
-		metrics, e := s.svc.Store().ListNodeMetrics(ctx)
+		metrics, e := s.nodeMetrics(ctx)
 		if e != nil {
 			return "", nil, e
 		}

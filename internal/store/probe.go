@@ -408,8 +408,8 @@ func (s *Store) ReplaceProbe(ctx context.Context, in ProbeImport) error {
 
 // UpdateProbeClient changes what the panel says about a machine.
 func (s *Store) UpdateProbeClient(ctx context.Context, c ProbeClient) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE probe_clients SET name = ?, display = ?, hidden = ?, weight = ?, updated_at = ? WHERE uuid = ?`,
-		c.Name, rawOr(c.Display), c.Hidden, c.Weight, time.Now().Unix(), c.UUID)
+	res, err := s.db.ExecContext(ctx, `UPDATE probe_clients SET name = ?, display = ?, hidden = ?, updated_at = ? WHERE uuid = ?`,
+		c.Name, rawOr(c.Display), c.Hidden, time.Now().Unix(), c.UUID)
 	if err != nil {
 		return fmt.Errorf("update probe client: %w", err)
 	}
@@ -417,6 +417,98 @@ func (s *Store) UpdateProbeClient(ctx context.Context, c ProbeClient) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SetProbeNode matches a probe machine to the panel's machine, or to none,
+// as the operator chose; address matching no longer changes it.
+func (s *Store) SetProbeNode(ctx context.Context, uuid string, nodeID *int64) error {
+	err := s.inTx(ctx, func(tx *sql.Tx) error {
+		if nodeID != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE probe_clients SET node_id = NULL WHERE node_id = ? AND uuid <> ?`, *nodeID, uuid); err != nil {
+				return fmt.Errorf("unmatch probe client: %w", err)
+			}
+		}
+		res, err := tx.ExecContext(ctx, `UPDATE probe_clients SET node_id = ?, node_manual = 1 WHERE uuid = ?`, nodeID, uuid)
+		if err != nil {
+			if isForeignKeyViolation(err) {
+				return fmt.Errorf("node %d: %w", *nodeID, ErrNotFound)
+			}
+			return fmt.Errorf("match probe client: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return s.SyncProbeWeights(ctx)
+}
+
+// ProbeLinkCandidates lists the probe machines address matching may still
+// pair: unmatched, and not left unmatched by the operator.
+func (s *Store) ProbeLinkCandidates(ctx context.Context) ([]ProbeClient, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+probeClientColumns+` FROM probe_clients WHERE node_id IS NULL AND node_manual = 0`)
+	if err != nil {
+		return nil, fmt.Errorf("list probe link candidates: %w", err)
+	}
+	defer rows.Close()
+	var out []ProbeClient
+	for rows.Next() {
+		c, err := scanProbeClient(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *c)
+	}
+	return out, rows.Err()
+}
+
+// AutoLinkProbeClient pairs a probe machine with the panel's machine found
+// at its address, unless either has been paired meanwhile.
+func (s *Store) AutoLinkProbeClient(ctx context.Context, uuid string, nodeID int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE probe_clients SET node_id = ?
+		WHERE uuid = ? AND node_id IS NULL AND node_manual = 0
+		AND NOT EXISTS (SELECT 1 FROM probe_clients WHERE node_id = ?)`, nodeID, uuid, nodeID)
+	if err != nil {
+		return false, fmt.Errorf("link probe client: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// unmatchedWeight puts the probe machines without a panel machine after
+// those with one, which take the panel's order (0, 1, 2…).
+const unmatchedWeight = 100000
+
+// SyncProbeWeights orders the public page as the panel lists its machines:
+// matched probe machines take their machine's place, the rest keep their
+// own order after them.
+func (s *Store) SyncProbeWeights(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `UPDATE probe_clients
+		SET weight = (SELECT COALESCE(sort_order, 0) FROM nodes WHERE nodes.id = probe_clients.node_id)
+		WHERE node_id IS NOT NULL`); err != nil {
+		return fmt.Errorf("sync probe order: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE probe_clients SET weight = weight + ?
+		WHERE node_id IS NULL AND weight < ?`, unmatchedWeight, unmatchedWeight); err != nil {
+		return fmt.Errorf("sync probe order: %w", err)
+	}
+	return nil
+}
+
+// ReorderProbeClients saves the order of the probe machines without a panel
+// machine; the matched ones follow the panel's machines and are ignored.
+func (s *Store) ReorderProbeClients(ctx context.Context, uuids []string) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		for i, uuid := range uuids {
+			if _, err := tx.ExecContext(ctx, `UPDATE probe_clients SET weight = ? WHERE uuid = ? AND node_id IS NULL`, unmatchedWeight+i, uuid); err != nil {
+				return fmt.Errorf("save probe order: %w", err)
+			}
+		}
+		return nil
+	})
 }
 
 // DeleteProbeClient removes a machine and its history; its agent's token

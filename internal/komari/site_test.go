@@ -177,7 +177,12 @@ func TestPageAndThemeFiles(t *testing.T) {
 	if code, body := get(t, srv.URL+"/api/public"); code != 200 || !strings.Contains(body, `"sitename":"Kukumi"`) || !strings.Contains(body, `"theme_settings":{"hiddenNodes":[]}`) {
 		t.Fatal(code, body)
 	}
-	if code, body := get(t, srv.URL+"/api/admin/client/list"); code != 404 || !strings.Contains(body, `"status":"error"`) {
+	for _, p := range []string{"/api/admin/client/list", "/api/admin/ping"} {
+		if code, body := get(t, srv.URL+p); code != http.StatusUnauthorized || !strings.Contains(body, `"status":"error"`) {
+			t.Fatal(p, code, body)
+		}
+	}
+	if code, body := get(t, srv.URL+"/api/admin/clients"); code != 404 || !strings.Contains(body, `"status":"error"`) {
 		t.Fatal(code, body)
 	}
 }
@@ -200,17 +205,21 @@ func TestThemeSettingsNeedThePanelsLink(t *testing.T) {
 		t.Fatal("a visitor cannot save the theme's settings")
 	}
 	link, err := site.LoginURL(context.Background())
-	if err != nil || !strings.HasPrefix(link, "https://status.example.com/?probe_login=") {
+	const prefix = "https://status.example.com/?view=theme-manage&probe_login="
+	if err != nil || !strings.HasPrefix(link, prefix) {
 		t.Fatal(link, err)
 	}
-	token := strings.TrimPrefix(link, "https://status.example.com/?probe_login=")
+	token := strings.TrimPrefix(link, prefix)
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	exchange := func() *http.Cookie {
-		resp, err := client.Get(srv.URL + "/?probe_login=" + token)
+		resp, err := client.Get(srv.URL + "/?view=theme-manage&probe_login=" + token)
 		if err != nil {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
+		if loc := resp.Header.Get("Location"); loc != "/?view=theme-manage" {
+			t.Fatalf("the link lands on the theme's settings page, not %q", loc)
+		}
 		for _, c := range resp.Cookies() {
 			if c.Name == sessionCookie {
 				return c
@@ -231,10 +240,42 @@ func TestThemeSettingsNeedThePanelsLink(t *testing.T) {
 	if v, _ := st.ProbeSetting(context.Background(), probe.ThemeSettingsPrefix+"LuminaPlus"); v != `{"accent":"lime"}` {
 		t.Fatal(v)
 	}
-	var nodes map[string]any
+	var nodes map[string]map[string]any
 	json.Unmarshal(call(t, srv, "common:getNodes", `{}`, cookie)["result"], &nodes)
 	if len(nodes) != 2 {
 		t.Fatal("the operator sees hidden machines too")
+	}
+	if nodes["u-1"]["ipv4"] != "192.0.2.10" {
+		t.Fatalf("the operator sees addresses, for the theme's V4/V6 marks: %v", nodes["u-1"])
+	}
+
+	adminGet := func(path string, v any) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+		req.AddCookie(cookie)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatal(path, resp.Status)
+		}
+		if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+			t.Fatal(path, err)
+		}
+	}
+	var clients []map[string]any
+	adminGet("/api/admin/client/list", &clients)
+	if len(clients) != 2 {
+		t.Fatalf("the settings page lists every machine: %v", clients)
+	}
+	var ping struct {
+		Data []store.ProbeTask `json:"data"`
+	}
+	adminGet("/api/admin/ping", &ping)
+	if len(ping.Data) != 1 || ping.Data[0].ID != 7 || len(ping.Data[0].Clients) == 0 {
+		t.Fatalf("the settings page lists the latency checks: %+v", ping)
 	}
 }
 

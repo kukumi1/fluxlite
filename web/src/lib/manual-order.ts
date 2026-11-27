@@ -1,5 +1,5 @@
 /** Move only visible IDs; hidden records retain their full-list slots. */
-export function reorderVisible(full: number[], visible: number[], source: number, target: number): number[] {
+export function reorderVisible<K extends number | string>(full: K[], visible: K[], source: K, target: K): K[] {
   const all = new Set(full);
   const selected = new Set(visible);
   if (all.size !== full.length || selected.size !== visible.length || visible.some(id => !all.has(id)) || !selected.has(source) || !selected.has(target)) {

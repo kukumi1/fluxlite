@@ -17,8 +17,13 @@ const (
 )
 
 // ReorderNodes saves the complete node order without touching node configuration.
+// The probe machines matched to them follow, so the public page lists
+// machines in the panel's order.
 func (s *Store) ReorderNodes(ctx context.Context, ids []int64) error {
-	return s.reorder(ctx, nodeOrder, ids)
+	if err := s.reorder(ctx, nodeOrder, ids); err != nil {
+		return err
+	}
+	return s.SyncProbeWeights(ctx)
 }
 
 // ReorderRoutes saves display order, never the forwarding hops within a route.

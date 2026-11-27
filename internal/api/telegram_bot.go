@@ -329,7 +329,7 @@ func (s *Server) telegramView(ctx context.Context, page string) (string, error) 
 		if err != nil {
 			return "", err
 		}
-		metrics, err := st.ListNodeMetrics(ctx)
+		metrics, err := s.nodeMetrics(ctx)
 		if err != nil {
 			return "", err
 		}

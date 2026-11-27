@@ -650,6 +650,11 @@ func init() {
 			PRIMARY KEY (task, client, res, bucket)
 		) WITHOUT ROWID`,
 		`CREATE TABLE IF NOT EXISTS probe_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
+
+	// A probe machine is matched to the panel's machine by address; once the
+	// operator picks one, or picks none, the matching leaves it alone.
+	migrations = append(migrations,
+		`ALTER TABLE probe_clients ADD COLUMN node_manual INTEGER NOT NULL DEFAULT 0`)
 }
 
 // retiredMigration holds the place of a migration whose feature was withdrawn

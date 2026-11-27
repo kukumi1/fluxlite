@@ -31,3 +31,10 @@
 .probe-command { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: 12px; background: var(--muted); }
 .probe-command code { flex: 1; font-size: 12px; line-height: 1.6; word-break: break-all; }
 .probe-theme-upload { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.live-tag { margin-left: 6px; border-color: transparent; background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+.agent-only { margin-top: 18px; }
+.agent-only-head { flex-wrap: wrap; justify-content: flex-start; padding: 16px 18px 6px; }
+.agent-only-head .muted { font-size: 12.5px; }
+.agent-only .probe-actions .btn { margin-right: 6px; vertical-align: middle; }
+.agent-only .quality-node .sort-handle { margin-right: 2px; }
+.probe-offline td.probe-actions { opacity: 1; }

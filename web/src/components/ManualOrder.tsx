@@ -7,17 +7,17 @@ export function SortHandle(props: ButtonHTMLAttributes<HTMLButtonElement>) {
 }
 
 /** Polls started before a drag/save must not restore an obsolete server order. */
-export function useManualOrder<T extends { id: number }>({ items, setItems, save, reload, onError, disabled }: {
+export function useManualOrder<K extends number | string, T extends { id: K }>({ items, setItems, save, reload, onError, disabled }: {
   items: T[];
   setItems: (items: T[]) => void;
-  save: (ids: number[]) => Promise<unknown>;
+  save: (ids: K[]) => Promise<unknown>;
   reload: () => Promise<T[] | null>;
   onError: (message: string) => void;
   disabled: boolean;
 }) {
   const gate = useRef({ epoch: 0, dragging: false, saving: false });
-  const source = useRef<number | null>(null);
-  const [target, setTarget] = useState<number | null>(null);
+  const source = useRef<K | null>(null);
+  const [target, setTarget] = useState<K | null>(null);
   const [pending, setPending] = useState(false);
 
   function cancel() {
@@ -27,7 +27,7 @@ export function useManualOrder<T extends { id: number }>({ items, setItems, save
     setTarget(null);
   }
 
-  async function move(visible: number[], from: number, to: number) {
+  async function move(visible: K[], from: K, to: K) {
     if (disabled || gate.current.saving) return;
     gate.current.saving = true;
     gate.current.epoch++;
@@ -57,7 +57,7 @@ export function useManualOrder<T extends { id: number }>({ items, setItems, save
     pending,
     readVersion: () => gate.current.epoch,
     acceptsRead: (version: number) => version === gate.current.epoch && !gate.current.dragging && !gate.current.saving,
-    handleProps(id: number, name: string, visible: number[]): ButtonHTMLAttributes<HTMLButtonElement> {
+    handleProps(id: K, name: string, visible: K[]): ButtonHTMLAttributes<HTMLButtonElement> {
       return {
         "aria-label": `拖动排序 ${name}`,
         disabled: disabled || pending || visible.length < 2,
@@ -83,7 +83,7 @@ export function useManualOrder<T extends { id: number }>({ items, setItems, save
         },
       };
     },
-    targetProps(id: number, visible: number[]) {
+    targetProps(id: K, visible: K[]) {
       return {
         className: target === id ? "is-drag-target" : "",
         onDragOver: (event: DragEvent<HTMLElement>) => {

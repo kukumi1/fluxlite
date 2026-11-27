@@ -143,6 +143,8 @@ export interface NodeMetrics {
   mem_source: "host" | "cgroup";
   /** 非空表示检测到容器化，值是检测到的类型。 */
   container: string;
+  /** "agent" when the readings are the probe agent's live report rather than the SSH sample. */
+  source?: "agent";
   collected_at: string;
 }
 
@@ -480,6 +482,7 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, body?.error ?? `上传失败 (${res.status})`);
     return { version: body?.version ?? "" };
   },
+  reorderProbeMachines: (uuids: string[]) => request<{ ok: boolean }>("/probe/order", { method: "PUT", body: JSON.stringify({ uuids }) }),
   setProbeNotify: (uuid: string, notify: boolean) =>
     request<{ notify: boolean }>(`/probe/machines/${uuid}/notify`, { method: "PUT", body: JSON.stringify({ notify }) }),
   probeSite: () => request<ProbeSite>("/probe/site", { cache: "no-store" }),
@@ -901,7 +904,7 @@ export interface ProbeReport {
 export interface ProbeMachine {
   uuid: string;
   name: string;
-  info: { os?: string; arch?: string; cpu_name?: string; cpu_cores?: number; virtualization?: string; version?: string };
+  info: { os?: string; arch?: string; cpu_name?: string; cpu_cores?: number; virtualization?: string; version?: string; ipv4?: string; ipv6?: string };
   display: ProbeDisplay;
   hidden: boolean;
   weight: number;
@@ -943,8 +946,9 @@ export interface ProbeDisplay {
 export interface ProbeMachineInput {
   name: string;
   hidden: boolean;
-  weight: number;
   display: ProbeDisplay;
+  /** The panel machine it is, reached over SSH; null for none. */
+  node_id: number | null;
 }
 
 export interface ProbeEnroll {

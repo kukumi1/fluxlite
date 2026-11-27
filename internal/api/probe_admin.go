@@ -21,8 +21,9 @@ import (
 type probeMachineInput struct {
 	Name    string          `json:"name"`
 	Hidden  bool            `json:"hidden"`
-	Weight  int             `json:"weight"`
 	Display json.RawMessage `json:"display"`
+	// NodeID is the panel machine it is, null for none.
+	NodeID *int64 `json:"node_id"`
 }
 
 func (s *Server) handleUpdateProbeMachine(w http.ResponseWriter, r *http.Request) {
@@ -37,14 +38,51 @@ func (s *Server) handleUpdateProbeMachine(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "名称不能为空，最多 100 个字")
 		return
 	}
-	err := s.svc.Store().UpdateProbeClient(r.Context(), store.ProbeClient{
-		UUID: chi.URLParam(r, "uuid"), Name: in.Name, Hidden: in.Hidden, Weight: in.Weight, Display: in.Display,
-	})
+	st := s.svc.Store()
+	uuid := chi.URLParam(r, "uuid")
+	clients, err := st.ProbeClients(r.Context())
 	if err != nil {
+		writeError(w, http.StatusInternalServerError, "读取探针机器失败")
+		return
+	}
+	i := slices.IndexFunc(clients, func(c store.ProbeClient) bool { return c.UUID == uuid })
+	if i < 0 {
+		writeError(w, http.StatusNotFound, "这台探针机器不存在")
+		return
+	}
+	if err := st.UpdateProbeClient(r.Context(), store.ProbeClient{UUID: uuid, Name: in.Name, Hidden: in.Hidden, Display: in.Display}); err != nil {
 		writeError(w, statusForError(err), "保存失败")
 		return
 	}
+	if !sameNode(clients[i].NodeID, in.NodeID) {
+		if err := st.SetProbeNode(r.Context(), uuid, in.NodeID); err != nil {
+			writeError(w, statusForError(err), "关联机器失败，那台机器可能已被删除")
+			return
+		}
+	}
 	s.audit(r, "probe.machine.update", in.Name, "")
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func sameNode(a, b *int64) bool {
+	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
+}
+
+// handleReorderProbeMachines saves the order of the probe machines that are
+// not one of the panel's machines; the others follow the panel's order.
+func (s *Server) handleReorderProbeMachines(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		UUIDs []string `json:"uuids"`
+	}
+	if err := decodeJSON(r, &in); err != nil || in.UUIDs == nil {
+		writeError(w, http.StatusBadRequest, "uuids must be an array")
+		return
+	}
+	if err := s.svc.Store().ReorderProbeClients(r.Context(), in.UUIDs); err != nil {
+		writeError(w, statusForError(err), "保存顺序失败")
+		return
+	}
+	s.audit(r, "probe.machines.reorder", "", "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

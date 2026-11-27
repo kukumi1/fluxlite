@@ -130,6 +130,10 @@ type Hub struct {
 	hook StatusHook
 }
 
+// linkEvery is how often probe machines not yet paired with the panel's
+// machines are matched again, for agents and machines added since.
+const linkEvery = 10 * time.Minute
+
 func New(st *store.Store, log *slog.Logger) *Hub {
 	return &Hub{
 		store: st, log: log,
@@ -213,7 +217,7 @@ func (h *Hub) Run(ctx context.Context) {
 	}
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
-	lastFlush, lastPrune := time.Now(), time.Time{}
+	lastFlush, lastPrune, lastLink := time.Now(), time.Time{}, time.Time{}
 	for {
 		select {
 		case <-ctx.Done():
@@ -231,6 +235,12 @@ func (h *Hub) Run(ctx context.Context) {
 					h.log.Error("prune probe history", "error", err)
 				}
 				lastPrune = now
+			}
+			// Matching may wait on name lookups, which must not hold up the
+			// checks due this second.
+			if now.Sub(lastLink) >= linkEvery {
+				go h.Link(ctx)
+				lastLink = now
 			}
 		}
 	}

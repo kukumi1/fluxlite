@@ -220,6 +220,7 @@ func (s *Server) panelHandler() http.Handler {
 			r.Get("/speedtest/{id}/image", s.handleSpeedImage)
 			r.Get("/probe", s.handleProbeOverview)
 			r.Put("/probe/machines/{uuid}/notify", s.handleProbeNotify)
+			r.Put("/probe/order", s.handleReorderProbeMachines)
 			r.Put("/probe/machines/{uuid}", s.handleUpdateProbeMachine)
 			r.Delete("/probe/machines/{uuid}", s.handleDeleteProbeMachine)
 			r.Post("/probe/tasks", s.handleSaveProbeTask)

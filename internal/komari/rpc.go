@@ -191,9 +191,10 @@ func normaliseTime(v any) any {
 	return v
 }
 
-// node is a machine as Komari's Client model presents it to a visitor:
-// its description and display fields, without addresses or private notes.
-func node(c store.ProbeClient) map[string]any {
+// node is a machine as Komari's Client model presents it: its description
+// and display fields, without private notes, and without addresses unless
+// the operator is asking, as Komari does when guests are not sent them.
+func node(c store.ProbeClient, admin bool) map[string]any {
 	out := map[string]any{}
 	for _, raw := range []json.RawMessage{c.Info, c.Display} {
 		var m map[string]any
@@ -205,8 +206,12 @@ func node(c store.ProbeClient) map[string]any {
 			}
 		}
 	}
-	for _, k := range []string{"ipv4", "ipv6", "remark", "version", "token"} {
+	for _, k := range []string{"remark", "version", "token"} {
 		delete(out, k)
+	}
+	if !admin {
+		delete(out, "ipv4")
+		delete(out, "ipv6")
 	}
 	out["expired_at"] = normaliseTime(out["expired_at"])
 	out["uuid"], out["name"], out["weight"], out["hidden"] = c.UUID, c.Name, c.Weight, c.Hidden
@@ -232,9 +237,9 @@ func (s *Site) nodes(ctx context.Context, params json.RawMessage, admin bool) (a
 	out := map[string]any{}
 	for _, c := range clients {
 		if p.UUID != "" && c.UUID == p.UUID {
-			return node(c), nil
+			return node(c, admin), nil
 		}
-		out[c.UUID] = node(c)
+		out[c.UUID] = node(c, admin)
 	}
 	if p.UUID != "" {
 		return nil, &rpcError{errBadParams, "Node not found"}

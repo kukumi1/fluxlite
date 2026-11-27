@@ -221,9 +221,15 @@ func (s *Server) probeStatus(ctx context.Context, client string, down bool, last
 	}
 	name := client
 	for _, c := range clients {
-		if c.UUID == client {
-			name = c.Name
+		if c.UUID != client {
+			continue
 		}
+		// A machine the panel also reaches over SSH is reported by the
+		// panel's own offline alert; a second notice would only repeat it.
+		if c.NodeID != nil {
+			return
+		}
+		name = c.Name
 	}
 	text := service.ProbeOnlineText(name, lasted)
 	if down {

@@ -262,6 +262,7 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "node.create", node.Name, node.Addr())
+	s.matchProbes(r)
 	writeJSON(w, http.StatusCreated, node)
 }
 
@@ -294,6 +295,7 @@ func (s *Server) handleUpdateNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "node.update", node.Name, node.Addr())
+	s.matchProbes(r)
 	writeJSON(w, http.StatusOK, node)
 }
 
@@ -538,7 +540,7 @@ func (s *Server) handleDailyTotals(w http.ResponseWriter, r *http.Request) {
 // Nodes absent from the response have never been collected, and individual
 // fields may be null on nodes that could not produce them. Neither is a zero.
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	metrics, err := s.svc.NodeMetrics(r.Context())
+	metrics, err := s.nodeMetrics(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

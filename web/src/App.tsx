@@ -66,6 +66,18 @@ const ADMIN_NAV = [
   { id: "audit", label: "审计日志", icon: ScrollText, tone: "lilac" },
 ] as const;
 
+// A link from elsewhere (the probe's public page) may name the page to open
+// with ?tab=; it is read once and taken off the address.
+function initialTab(): Tab {
+  const params = new URLSearchParams(window.location.search);
+  const wanted = params.get("tab");
+  if (wanted === null) return "dashboard";
+  params.delete("tab");
+  const rest = params.toString();
+  window.history.replaceState(null, "", window.location.pathname + (rest ? `?${rest}` : "") + window.location.hash);
+  return [...MAIN_NAV, ...ADMIN_NAV].find((item) => item.id === wanted)?.id ?? "dashboard";
+}
+
 export function App() {
   const theme = useThemeState();
   return (
@@ -80,7 +92,7 @@ function Shell() {
   const [recovering, setRecovering] = useState(false);
   const [username, setUsername] = useState("");
   const [avatar, setAvatar] = useState("");
-  const [tab, setTab] = useState<Tab>("dashboard");
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [consoleNode, setConsoleNode] = useState<number | null>(null);
   const { theme, toggle } = useTheme();
   const [collapsed, setCollapsed] = useState(() => readPreference("fluxlite-sidebar-collapsed") === "true");

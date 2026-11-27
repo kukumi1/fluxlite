@@ -157,6 +157,11 @@ func (s *Server) handleProbeThemeLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// The theme links to its back office for latency checks; the public
+	// page sends those links here, to the panel the operator came from.
+	if err := s.svc.Store().SetProbeSetting(r.Context(), komari.PanelURLSetting, "https://"+r.Host); err != nil {
+		s.log.Error("remember the panel's address", "error", err)
+	}
 	s.audit(r, "probe.theme_login", "", "")
 	writeJSON(w, http.StatusOK, map[string]string{"url": url})
 }

@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -27,7 +28,10 @@ import (
 
 // Settings the public page uses, kept with the probe's.
 const (
-	PublicHostSetting  = "public_host"
+	PublicHostSetting = "public_host"
+	// PanelURLSetting is where the panel was last opened from; the theme's
+	// links into Komari's back office go there instead.
+	PanelURLSetting    = "panel_url"
 	SiteNameSetting    = "sitename"
 	DescriptionSetting = "description"
 	CustomHeadSetting  = "custom_head"
@@ -83,6 +87,9 @@ func New(st *store.Store, hub *probe.Hub, themes string, secure bool, log *slog.
 		})
 	})
 	r.Get("/favicon.ico", s.handleFavicon)
+	r.Get("/sw.js", handleRetiredWorker)
+	r.Get("/admin", s.handleBackOffice)
+	r.Get("/admin/*", s.handleBackOffice)
 	r.Get("/themes/{id}/*", s.handleThemeFile)
 	r.NotFound(s.handlePage)
 	s.handler = r
@@ -102,7 +109,7 @@ func (s *Site) settings(ctx context.Context) map[string]string {
 	}
 	s.mu.Unlock()
 	out := map[string]string{}
-	for _, key := range []string{PublicHostSetting, SiteNameSetting, DescriptionSetting, CustomHeadSetting, CustomBodySetting, ThemeSetting} {
+	for _, key := range []string{PublicHostSetting, SiteNameSetting, DescriptionSetting, CustomHeadSetting, CustomBodySetting, ThemeSetting, PanelURLSetting} {
 		v, err := s.store.ProbeSetting(ctx, key)
 		if err != nil {
 			s.log.Error("read probe setting", "key", key, "error", err)
@@ -318,6 +325,37 @@ func (s *Site) handleAdminPing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeWrapped(w, http.StatusOK, tasks, "")
+}
+
+// retiredWorker replaces the service worker Komari's pages installed. Left
+// in place it answers page loads from Komari's cache, and the theme reads
+// its failing updates as a broken back office; this one clears the cache
+// and removes itself.
+const retiredWorker = `self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    for (const key of await caches.keys()) await caches.delete(key);
+    await self.registration.unregister();
+    for (const client of await self.clients.matchAll({ type: "window" })) client.navigate(client.url);
+  })());
+});
+`
+
+func handleRetiredWorker(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	io.WriteString(w, retiredWorker)
+}
+
+// handleBackOffice sends the theme's links into Komari's back office, which
+// the panel replaces, to the panel's probe page.
+func (s *Site) handleBackOffice(w http.ResponseWriter, r *http.Request) {
+	panel := s.settings(r.Context())[PanelURLSetting]
+	if panel == "" {
+		http.Error(w, "后台在 fluxlite 面板的「探针」页", http.StatusNotFound)
+		return
+	}
+	http.Redirect(w, r, panel+"/?tab=probe", http.StatusFound)
 }
 
 // themeDir is the active theme's directory.

@@ -289,3 +289,36 @@ func TestServesOnlyItsDomain(t *testing.T) {
 		}
 	}
 }
+
+// The theme's links into Komari's back office land on the panel's probe
+// page, and Komari's leftover service worker is replaced by one that leaves.
+func TestBackOfficeAndRetiredWorker(t *testing.T) {
+	site, st, srv := fixture(t)
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	if resp, err := client.Get(srv.URL + "/admin/ping"); err != nil || resp.StatusCode != http.StatusNotFound {
+		t.Fatal("without a known panel there is nowhere to send it", err)
+	}
+	if err := st.SetProbeSetting(context.Background(), PanelURLSetting, "https://panel.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	site.Forget()
+	for _, p := range []string{"/admin", "/admin/ping"} {
+		resp, err := client.Get(srv.URL + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if loc := resp.Header.Get("Location"); resp.StatusCode != http.StatusFound || loc != "https://panel.example.com/?tab=probe" {
+			t.Fatalf("%s → %d %q", p, resp.StatusCode, loc)
+		}
+	}
+	resp, err := http.Get(srv.URL + "/sw.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/javascript") || !strings.Contains(string(body), "unregister") {
+		t.Fatalf("%s %s", resp.Header.Get("Content-Type"), body)
+	}
+}

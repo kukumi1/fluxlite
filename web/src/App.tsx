@@ -4,6 +4,7 @@ import {
   BellRing,
   LayoutDashboard,
   Radar,
+  Radio,
   Menu,
   X,
   ChevronRight,
@@ -36,12 +37,13 @@ import { SingBox } from "./pages/SingBox";
 import { Subscriptions } from "./pages/Subscriptions";
 import { LineQuality } from "./pages/LineQuality";
 import { Speedtest } from "./pages/Speedtest";
+import { Probe } from "./pages/Probe";
 import { Notifications } from "./pages/Notifications";
 
 // 终端页连同 xterm 一起单独打包：不开终端的人不该为它下载一份终端模拟器。
 const Console = lazy(() => import("./pages/Console").then((m) => ({ default: m.Console })));
 
-type Tab = "dashboard" | "routes" | "nodes" | "line-quality" | "speedtest" | "singbox" | "subscriptions" | "traffic-audit" | "console" | "notifications" | "audit" | "account";
+type Tab = "dashboard" | "routes" | "nodes" | "line-quality" | "speedtest" | "probe" | "singbox" | "subscriptions" | "traffic-audit" | "console" | "notifications" | "audit" | "account";
 type AuthState = "checking" | "in" | "out";
 
 // Each place keeps one tone, so its icon chip in the sidebar is how it is
@@ -52,6 +54,7 @@ const MAIN_NAV = [
   { id: "nodes", label: "机器", icon: Server, tone: "sky" },
   { id: "line-quality", label: "线路质量", icon: Activity, tone: "sun" },
   { id: "speedtest", label: "测速", icon: Gauge, tone: "lime" },
+  { id: "probe", label: "探针", icon: Radio, tone: "sky" },
   { id: "singbox", label: "节点", icon: Network, tone: "peach" },
   { id: "subscriptions", label: "订阅", icon: ScrollText, tone: "sun" },
   { id: "traffic-audit", label: "流量审计", icon: Radar, tone: "sky" },
@@ -248,6 +251,7 @@ function Shell() {
           {tab === "nodes" && <Nodes onOpenConsole={openConsole} />}
           {tab === "line-quality" && <LineQuality />}
           {tab === "speedtest" && <Speedtest />}
+          {tab === "probe" && <Probe />}
           {tab === "singbox" && <SingBox />}
           {tab === "subscriptions" && <Subscriptions />}
           {tab === "traffic-audit" && <TrafficAudit />}

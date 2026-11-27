@@ -19,6 +19,7 @@ import (
 	"github.com/kukumi1/fluxlite/internal/applier"
 	"github.com/kukumi1/fluxlite/internal/auth"
 	"github.com/kukumi1/fluxlite/internal/cryptox"
+	"github.com/kukumi1/fluxlite/internal/probe"
 	"github.com/kukumi1/fluxlite/internal/service"
 	"github.com/kukumi1/fluxlite/internal/sshx"
 	"github.com/kukumi1/fluxlite/internal/store"
@@ -31,6 +32,13 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "import-komari" {
+		if err := importKomari(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "fluxlited import-komari:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "fluxlited:", err)
 		os.Exit(1)
@@ -105,6 +113,7 @@ func run() error {
 		logger.Warn("close speed tests left running", "error", err)
 	}
 	authSvc := auth.New(st)
+	hub := probe.New(st, logger)
 
 	static, err := web.Handler()
 	if err != nil {
@@ -117,6 +126,7 @@ func run() error {
 		Logger:        logger,
 		Static:        static,
 		SecureCookies: !*insecure,
+		Probe:         hub,
 	})
 
 	w := watcher.New(watcher.Config{
@@ -129,6 +139,11 @@ func run() error {
 		Notify:          srv.NotifyTelegram,
 	})
 	go w.Run(ctx)
+	probeDone := make(chan struct{})
+	go func() {
+		hub.Run(ctx)
+		close(probeDone)
+	}()
 	go srv.RunTelegram(ctx)
 
 	httpServer := &http.Server{
@@ -161,6 +176,52 @@ func run() error {
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("shutdown: %w", err)
+	}
+	// The probe writes the minutes it still holds on the way out.
+	<-probeDone
+	return nil
+}
+
+// importKomari replaces the probe's machines, latency checks, site settings
+// and last week of history with a Komari server's, and copies its active
+// theme. Komari's files are only read. Run it with the panel stopped.
+func importKomari(args []string) error {
+	fs := flag.NewFlagSet("import-komari", flag.ContinueOnError)
+	dataDir := fs.String("data", "/var/lib/fluxlite", "fluxlite data directory")
+	komari := fs.String("komari", "", "Komari data directory, holding komari.db, metrics.db and theme/")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *komari == "" {
+		return errors.New("--komari is required")
+	}
+	ctx := context.Background()
+	in, err := probe.ImportKomari(ctx, filepath.Join(*komari, "komari.db"), filepath.Join(*komari, "metrics.db"), time.Now())
+	if err != nil {
+		return err
+	}
+	st, err := store.Open(ctx, filepath.Join(*dataDir, "fluxlite.db"))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if err := st.ReplaceProbe(ctx, in); err != nil {
+		return err
+	}
+	samples, pings := 0, 0
+	for _, v := range in.Samples {
+		samples += len(v)
+	}
+	for _, v := range in.Pings {
+		pings += len(v)
+	}
+	fmt.Printf("imported %d machines, %d latency checks, %d load buckets, %d latency buckets\n", len(in.Clients), len(in.Tasks), samples, pings)
+	if theme := in.Settings["theme"]; theme != "" {
+		dst := filepath.Join(*dataDir, "themes", theme)
+		if err := probe.CopyTheme(filepath.Join(*komari, "theme", theme), dst); err != nil {
+			return fmt.Errorf("copy theme %s: %w", theme, err)
+		}
+		fmt.Println("copied theme", theme, "to", dst)
 	}
 	return nil
 }

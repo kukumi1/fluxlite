@@ -588,6 +588,68 @@ func init() {
 		`ALTER TABLE quality_results_v2 RENAME TO quality_results`,
 		`CREATE INDEX IF NOT EXISTS idx_speed_results_job ON speed_results(job_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_quality_results_job ON quality_results(job_id)`)
+
+	// The probe: machines report to the panel through Komari's agent, which
+	// needs no SSH access. Uuids and tokens are the agents' own, so agents
+	// moved over from Komari keep working; display holds the fields only the
+	// public page shows. Samples are kept as sums so minutes, five minutes
+	// and hours can each be added to as they arrive.
+	migrations = append(migrations,
+		`CREATE TABLE IF NOT EXISTS probe_clients (
+			uuid       TEXT PRIMARY KEY,
+			token      TEXT NOT NULL UNIQUE,
+			name       TEXT NOT NULL,
+			info       TEXT NOT NULL DEFAULT '{}',
+			display    TEXT NOT NULL DEFAULT '{}',
+			hidden     INTEGER NOT NULL DEFAULT 0,
+			weight     INTEGER NOT NULL DEFAULT 0,
+			node_id    INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS probe_metrics (
+			client     TEXT NOT NULL,
+			res        INTEGER NOT NULL,
+			bucket     INTEGER NOT NULL,
+			n          INTEGER NOT NULL,
+			cpu        REAL NOT NULL,
+			ram        REAL NOT NULL,
+			swap       REAL NOT NULL,
+			load1      REAL NOT NULL,
+			load5      REAL NOT NULL,
+			load15     REAL NOT NULL,
+			disk       REAL NOT NULL,
+			net_in     REAL NOT NULL,
+			net_out    REAL NOT NULL,
+			process    REAL NOT NULL,
+			tcp        REAL NOT NULL,
+			udp        REAL NOT NULL,
+			total_up   INTEGER NOT NULL,
+			total_down INTEGER NOT NULL,
+			PRIMARY KEY (client, res, bucket)
+		) WITHOUT ROWID`,
+		`CREATE TABLE IF NOT EXISTS probe_ping_tasks (
+			id       INTEGER PRIMARY KEY,
+			name     TEXT NOT NULL,
+			type     TEXT NOT NULL,
+			target   TEXT NOT NULL,
+			interval INTEGER NOT NULL,
+			weight   INTEGER NOT NULL DEFAULT 0,
+			clients  TEXT NOT NULL DEFAULT '[]'
+		)`,
+		`CREATE TABLE IF NOT EXISTS probe_ping (
+			task   INTEGER NOT NULL,
+			client TEXT NOT NULL,
+			res    INTEGER NOT NULL,
+			bucket INTEGER NOT NULL,
+			sent   INTEGER NOT NULL,
+			lost   INTEGER NOT NULL,
+			sum    REAL NOT NULL,
+			min    REAL,
+			max    REAL,
+			PRIMARY KEY (task, client, res, bucket)
+		) WITHOUT ROWID`,
+		`CREATE TABLE IF NOT EXISTS probe_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
 }
 
 // retiredMigration holds the place of a migration whose feature was withdrawn

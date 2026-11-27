@@ -19,6 +19,7 @@ import (
 
 	"github.com/kukumi1/fluxlite/internal/auth"
 	"github.com/kukumi1/fluxlite/internal/model"
+	"github.com/kukumi1/fluxlite/internal/probe"
 	"github.com/kukumi1/fluxlite/internal/service"
 	"github.com/kukumi1/fluxlite/internal/store"
 )
@@ -41,6 +42,7 @@ type Server struct {
 	secure   bool
 	limiter  *rateLimiter
 	telegram *telegramState
+	probe    *probe.Hub
 }
 
 // Config configures the HTTP server.
@@ -49,6 +51,8 @@ type Config struct {
 	Service *service.Service
 	Logger  *slog.Logger
 	Static  http.Handler
+	// Probe takes reports from Komari agents; nil leaves the probe off.
+	Probe *probe.Hub
 	// SecureCookies marks session cookies Secure. It is on whenever the panel
 	// is reached over HTTPS, which is the supported deployment.
 	SecureCookies bool
@@ -63,6 +67,7 @@ func NewServer(cfg Config) *Server {
 		secure:   cfg.SecureCookies,
 		limiter:  newRateLimiter(10, time.Minute),
 		telegram: newTelegramState(cfg.Service),
+		probe:    cfg.Probe,
 	}
 	if cfg.Service != nil {
 		cfg.Service.SetSpeedDone(s.telegramSpeedDone)
@@ -110,6 +115,11 @@ func (s *Server) Handler() http.Handler {
 		r.With(s.rateLimit).Get("/enroll/key", s.handleEnrollKey)
 		r.With(s.rateLimit).Get("/enroll/realm", s.handleEnrollRealm)
 		r.With(s.rateLimit).Post("/enroll/report", s.handleEnrollReport)
+
+		// Komari agents authenticate with their own token on every request.
+		if s.probe != nil {
+			s.probe.Routes(r)
+		}
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
@@ -185,6 +195,7 @@ func (s *Server) Handler() http.Handler {
 			r.Post("/speedtest/{id}/cancel", s.handleCancelSpeedtest)
 			r.Delete("/speedtest/{id}", s.handleDeleteSpeedtest)
 			r.Get("/speedtest/{id}/image", s.handleSpeedImage)
+			r.Get("/probe", s.handleProbeOverview)
 			r.Get("/audit", s.handleAudit)
 			r.Get("/traffic-audit", s.handleTrafficAudit)
 

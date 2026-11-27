@@ -129,6 +129,12 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The server's write timeout bounds a whole request; a shell held open
+	// longer would be cut off mid-session.
+	rc := http.NewResponseController(w)
+	if err := errors.Join(rc.SetReadDeadline(time.Time{}), rc.SetWriteDeadline(time.Time{})); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		s.log.Warn("console deadlines", "error", err)
+	}
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		// Accept has already written a response describing the refusal.

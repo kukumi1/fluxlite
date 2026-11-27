@@ -461,6 +461,7 @@ export const api = {
   probeLatency: (nodeID: number) => post<{ ok: boolean }>(`/latency/nodes/${nodeID}/probe`),
   traceReturnRoutes: (nodeID: number) => post<{ ok: boolean }>(`/latency/nodes/${nodeID}/trace`),
   blockCheck: () => post<BlockResult[]>("/latency/block-check"),
+  probeOverview: () => request<ProbeOverview>("/probe", { cache: "no-store" }),
   speedOverview: () => request<SpeedOverview>("/speedtest", { cache: "no-store" }),
   startSpeedtest: (req: SpeedRequest) => post<{ id: number }>("/speedtest", req),
   cancelSpeedtest: (id: number) => post<{ ok: boolean }>(`/speedtest/${id}/cancel`),
@@ -858,6 +859,48 @@ export interface SpeedJob {
 export interface ReportTab {
   key: string;
   label: string;
+}
+
+export interface ProbeReport {
+  cpu: { usage: number };
+  ram: { total: number; used: number };
+  swap: { total: number; used: number };
+  load: { load1: number; load5: number; load15: number };
+  disk: { total: number; used: number };
+  network: { up: number; down: number; totalUp: number; totalDown: number };
+  connections: { tcp: number; udp: number };
+  uptime: number;
+  process: number;
+}
+
+export interface ProbeMachine {
+  uuid: string;
+  name: string;
+  info: { os?: string; arch?: string; cpu_name?: string; cpu_cores?: number; virtualization?: string; version?: string };
+  display: { region?: string; group?: string; expired_at?: string | null };
+  hidden: boolean;
+  weight: number;
+  node_id: number | null;
+  online: boolean;
+  /** Unix seconds of the last report this run of the panel received; 0 when none yet. */
+  at: number;
+  report: ProbeReport | null;
+}
+
+export interface ProbeTask {
+  id: number;
+  name: string;
+  type: "icmp" | "tcp" | "http";
+  target: string;
+  interval: number;
+  weight: number;
+  clients: string[];
+}
+
+export interface ProbeOverview {
+  enabled: boolean;
+  machines: ProbeMachine[];
+  tasks: ProbeTask[];
 }
 
 export interface SpeedOverview {

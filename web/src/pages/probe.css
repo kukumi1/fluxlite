@@ -1,0 +1,21 @@
+.probe-table-wrap { overflow-x: auto; }
+.probe-table { min-width: 980px; }
+.probe-table td { vertical-align: middle; }
+.probe-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.probe-system { display: block; margin-top: 2px; font-size: 11.5px; }
+.probe-state { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; white-space: nowrap; }
+.probe-state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.probe-state.on { color: var(--ok); }
+.probe-state.off { color: var(--err); }
+.probe-state.wait { color: var(--muted-foreground); }
+.probe-offline td { opacity: 0.55; }
+.probe-offline td:nth-child(-n + 2) { opacity: 1; }
+.probe-meter { display: inline-flex; align-items: center; gap: 8px; min-width: 110px; }
+.probe-meter-bar { flex: 1; height: 6px; overflow: hidden; border-radius: 999px; background: var(--muted); }
+.probe-meter-bar > span { display: block; height: 100%; border-radius: inherit; transition: width 0.4s ease; }
+.probe-meter-bar > .ok { background: var(--ok); }
+.probe-meter-bar > .warn { background: var(--warn); }
+.probe-meter-bar > .bad { background: var(--err); }
+.probe-meter-text { min-width: 34px; font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+.probe-rate { display: block; font-size: 12px; }
+.probe-note { margin: -4px 0 12px; font-size: 12.5px; }

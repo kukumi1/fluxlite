@@ -17,6 +17,9 @@ interface Props {
   nodes: Node[];
   onClose: () => void;
   onEnrolled: () => void;
+  /** A machine already reporting through its agent: its name and address,
+   *  so the command gives it SSH and keeps that agent. */
+  initial?: { name: string; host: string };
 }
 
 const SCRIPT_STEPS = [
@@ -34,10 +37,10 @@ function expiryText(expiresAt: string): string {
   return `${at.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 前有效（约 ${minutes} 分钟）· 仅可使用一次`;
 }
 
-export function EnrollDialog({ nodes, onClose, onEnrolled }: Props) {
+export function EnrollDialog({ nodes, onClose, onEnrolled, initial }: Props) {
   const [form, setForm] = useState<EnrollRequest>({
-    name: "",
-    host: "",
+    name: initial?.name ?? "",
+    host: initial?.host ?? "",
     ssh_port: 22,
     ssh_user: "root",
     port_start: DEFAULT_PORT_START,

@@ -48,6 +48,25 @@ func TestEnrollGivesTheMachineAnAgent(t *testing.T) {
 	if list, _ := st.ProbeClients(ctx); len(list) != 1 {
 		t.Fatalf("one machine, one agent: %d", len(list))
 	}
+
+	// A machine that so far reported only through its agent keeps that agent
+	// when it is enrolled for SSH.
+	if err := st.CreateProbeClient(ctx, store.ProbeClient{UUID: "agent-only", Token: "t-agent", Name: "喵喵2", Info: []byte(`{"ipv4":"198.51.100.7"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	m := &model.Node{Name: "喵喵2", Host: "198.51.100.7", SSHPort: 22, SSHUser: "root", AuthType: model.AuthKey, AuthSecret: []byte("secret"), PortStart: 10000, PortEnd: 20000}
+	if err := st.CreateNode(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	if _, token := s.enrollAgent(ctx, &service.EnrollOutcome{NodeID: m.ID, Name: m.Name}); token != "t-agent" {
+		t.Fatalf("the agent already there is kept, not a second one made: %q", token)
+	}
+	if c, _ := st.ProbeClientByToken(ctx, "t-agent"); c.NodeID == nil || *c.NodeID != m.ID {
+		t.Fatal("and it is paired with the machine")
+	}
+	if list, _ := st.ProbeClients(ctx); len(list) != 2 {
+		t.Fatalf("two machines, two agents: %d", len(list))
+	}
 }
 
 // Deleting a probe machine takes it out of every latency check, and

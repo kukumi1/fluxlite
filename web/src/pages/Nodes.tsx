@@ -213,6 +213,7 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
   const [probeMachines, setProbeMachines] = useState<ProbeMachine[]>([]);
   const [editingProbe, setEditingProbe] = useState<ProbeMachine | null>(null);
   const [agentEnrolling, setAgentEnrolling] = useState(false);
+  const [enrollDraft, setEnrollDraft] = useState<{ name: string; host: string } | null>(null);
   const [view, setView] = useState<NodeView>(storedNodeView);
   const [confirm, confirmDialog] = useConfirm();
 
@@ -235,7 +236,7 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
     return (
       <div className="machine-actions">
         <div className="machine-actions-main">
-          <ActionButton iconOnly={iconOnly} label="补 SSH" icon={KeyRound} title="填上 SSH，让面板能在这台机器上转发、测速、开终端" disabled={agentOrder.pending} onClick={() => addSSH(m)} />
+          <ActionButton iconOnly={iconOnly} label="补 SSH" icon={KeyRound} title="生成一条命令到这台机器上执行，面板就能 SSH 进去转发、测速、开终端，现有的 agent 保留" disabled={agentOrder.pending} onClick={() => addSSH(m)} />
           <ActionButton iconOnly={iconOnly} label="探针" icon={Radio} title="agent、公开页上的价格到期等" onClick={() => setEditingProbe(m)} />
         </div>
         <div className="machine-actions-side">
@@ -345,9 +346,18 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
     }
   }
 
+  // Giving an agent-only machine SSH is the same one command as enrolling a
+  // new one: run on the machine, it lets the panel in and keeps the agent.
+  // The Telegram app has no enrollment, so there it is the manual form.
   function addSSH(m: ProbeMachine) {
-    setCreateInput({ ...emptyInput, name: m.name, host: m.info.ipv4 || m.info.ipv6 || "" });
-    setCreating(true);
+    const draft = { name: m.name, host: m.info.ipv4 || m.info.ipv6 || "" };
+    if (telegram) {
+      setCreateInput({ ...emptyInput, ...draft });
+      setCreating(true);
+      return;
+    }
+    setEnrollDraft(draft);
+    setEnrolling(true);
   }
 
   async function runProbe(node: Node) {
@@ -712,7 +722,11 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
       {!telegram && enrolling && (
         <EnrollDialog
           nodes={nodes}
-          onClose={() => setEnrolling(false)}
+          initial={enrollDraft ?? undefined}
+          onClose={() => {
+            setEnrolling(false);
+            setEnrollDraft(null);
+          }}
           onEnrolled={() => void load()}
         />
       )}

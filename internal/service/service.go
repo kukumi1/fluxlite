@@ -150,6 +150,29 @@ func allowListenIPv6(entry *model.Node, was, want bool) error {
 	return ErrIPv6Unavailable
 }
 
+// checkCredential refuses a key the panel could never log in with, while
+// the operator is still looking at the form, rather than at the first
+// connection. A public key pasted for the private one is the usual mistake.
+func checkCredential(kind model.AuthType, secret string) error {
+	if kind != model.AuthKey {
+		return nil
+	}
+	trimmed := strings.TrimSpace(secret)
+	for _, prefix := range []string{"ssh-", "ecdsa-sha2-", "sk-"} {
+		if strings.HasPrefix(trimmed, prefix) {
+			return errors.New("填的是公钥（" + prefix + "… 开头的那一行）；这里要填私钥，即 -----BEGIN … PRIVATE KEY----- 开头的整段")
+		}
+	}
+	if _, err := ssh.ParsePrivateKey([]byte(trimmed + "\n")); err != nil {
+		var protected *ssh.PassphraseMissingError
+		if errors.As(err, &protected) {
+			return errors.New("这把私钥设了密码，面板用不了；换一把没有密码的私钥，或改用密码登录")
+		}
+		return errors.New("私钥读不出来，请粘贴 -----BEGIN … PRIVATE KEY----- 到 -----END … PRIVATE KEY----- 的完整内容：" + err.Error())
+	}
+	return nil
+}
+
 // CreateNode stores a node with its credential encrypted at rest.
 func (s *Service) CreateNode(ctx context.Context, in NodeInput) (*model.Node, error) {
 	if err := model.ValidateDisplayName(in.Name); err != nil {
@@ -157,6 +180,9 @@ func (s *Service) CreateNode(ctx context.Context, in NodeInput) (*model.Node, er
 	}
 	if in.Secret == "" {
 		return nil, errors.New("credential must not be empty")
+	}
+	if err := checkCredential(in.AuthType, in.Secret); err != nil {
+		return nil, err
 	}
 	sealed, err := s.sealer.Seal([]byte(in.Secret))
 	if err != nil {
@@ -233,6 +259,9 @@ func (s *Service) UpdateNode(ctx context.Context, id int64, in NodeInput) (*mode
 	node.IPv6Entry = entry
 
 	if in.Secret != "" {
+		if err := checkCredential(in.AuthType, in.Secret); err != nil {
+			return nil, err
+		}
 		sealed, err := s.sealer.Seal([]byte(in.Secret))
 		if err != nil {
 			return nil, fmt.Errorf("seal credential: %w", err)

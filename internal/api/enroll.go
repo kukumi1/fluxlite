@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -151,11 +153,14 @@ func (s *Server) enrollAgent(ctx context.Context, outcome *service.EnrollOutcome
 	if err != nil || host == "" {
 		return "", ""
 	}
-	c, err := st.ProbeClientByNode(ctx, outcome.NodeID)
+	nodeID := outcome.NodeID
+	c, err := st.ProbeClientByNode(ctx, nodeID)
 	if errors.Is(err, store.ErrNotFound) {
-		nodeID := outcome.NodeID
-		c = &store.ProbeClient{UUID: uuid.NewString(), Token: rand.Text()[:22], Name: outcome.Name, NodeID: &nodeID}
-		if err = st.CreateProbeClient(ctx, *c); err == nil {
+		if c, err = s.agentAt(ctx, nodeID); err == nil && c == nil {
+			c = &store.ProbeClient{UUID: uuid.NewString(), Token: rand.Text()[:22], Name: outcome.Name}
+			err = st.CreateProbeClient(ctx, *c)
+		}
+		if err == nil {
 			err = st.SetProbeNode(ctx, c.UUID, &nodeID)
 		}
 	}
@@ -164,6 +169,43 @@ func (s *Server) enrollAgent(ctx context.Context, outcome *service.EnrollOutcome
 		return "", ""
 	}
 	return "https://" + host, c.Token
+}
+
+// agentAt finds the agent already reporting from the machine's address and
+// paired with nothing, so enrolling a machine that has only an agent so far
+// gives it SSH and keeps that agent, its history and its public-page
+// details. An address two unpaired agents share names neither; nil then.
+func (s *Server) agentAt(ctx context.Context, nodeID int64) (*store.ProbeClient, error) {
+	st := s.svc.Store()
+	node, err := st.NodeByID(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	host := net.ParseIP(node.Host)
+	if host == nil {
+		return nil, nil
+	}
+	candidates, err := st.ProbeLinkCandidates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var found *store.ProbeClient
+	for i, c := range candidates {
+		var info struct {
+			IPv4 string `json:"ipv4"`
+			IPv6 string `json:"ipv6"`
+		}
+		if json.Unmarshal(c.Info, &info) != nil {
+			continue
+		}
+		if host.Equal(net.ParseIP(info.IPv4)) || host.Equal(net.ParseIP(info.IPv6)) {
+			if found != nil {
+				return nil, nil
+			}
+			found = &candidates[i]
+		}
+	}
+	return found, nil
 }
 
 // externalBaseURL reconstructs the address the operator's browser used, so the

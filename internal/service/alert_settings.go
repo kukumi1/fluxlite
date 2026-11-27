@@ -24,7 +24,10 @@ type AlertEvents struct {
 	// ProbeOffline is a probe machine's agent going quiet; which machines
 	// it is sent for is chosen on the probe page.
 	ProbeOffline bool `json:"probe_offline"`
-	Daily        bool `json:"daily"`
+	// MachineExpiry is a machine's paid time running out, by the expiry
+	// set on the probe page.
+	MachineExpiry bool `json:"machine_expiry"`
+	Daily         bool `json:"daily"`
 }
 
 // The events that are about one machine, each with its own list of machines
@@ -36,9 +39,13 @@ const (
 	EventLatencySpike = "latency_spike"
 	EventRouteChange  = "route_change"
 	EventBlocked      = "blocked"
+	EventMachineDue   = "machine_expiry"
 )
 
-var machineEvents = []string{EventNodeOffline, EventLatency, EventLatencySpike, EventRouteChange, EventBlocked}
+var machineEvents = []string{EventNodeOffline, EventLatency, EventLatencySpike, EventRouteChange, EventBlocked, EventMachineDue}
+
+// expiryAheadChoices are how many days ahead a machine's expiry can be told.
+var expiryAheadChoices = []int{3, 7, 15, 30}
 
 // AlertSettings is what the operator chose on the notification page.
 type AlertSettings struct {
@@ -49,6 +56,9 @@ type AlertSettings struct {
 	LossPercent int `json:"loss_percent"`
 	// LatencyMS, when above zero, also counts a slower average as bad.
 	LatencyMS int `json:"latency_ms"`
+	// MachineExpiryDays is how many days before a machine expires it is
+	// first told, and how far ahead the daily summary looks.
+	MachineExpiryDays int `json:"machine_expiry_days"`
 	// ExcludedNodes lists, per machine event, the machines it is not sent
 	// for. A machine added later is included until it is left out.
 	ExcludedNodes map[string][]int64 `json:"excluded_nodes"`
@@ -63,17 +73,19 @@ func defaultAlertSettings() AlertSettings {
 	return AlertSettings{
 		Events: AlertEvents{
 			NodeOffline: true, RouteDown: true, Quota: true, Expiry: true,
-			Latency: true, LatencySpike: true, RouteChange: true, Blocked: true, ProbeOffline: true, Daily: true,
+			Latency: true, LatencySpike: true, RouteChange: true, Blocked: true, ProbeOffline: true, MachineExpiry: true, Daily: true,
 		},
-		DailyHour:     9,
-		LossPercent:   20,
-		ExcludedNodes: map[string][]int64{},
+		DailyHour:         9,
+		LossPercent:       20,
+		MachineExpiryDays: 7,
+		ExcludedNodes:     map[string][]int64{},
 	}
 }
 
 func (a AlertSettings) validate() error {
 	if a.DailyHour < 0 || a.DailyHour > 23 || a.LossPercent < 1 || a.LossPercent > 100 ||
-		a.LatencyMS < 0 || a.LatencyMS > 10000 {
+		a.LatencyMS < 0 || a.LatencyMS > 10000 ||
+		(a.MachineExpiryDays != 0 && !slices.Contains(expiryAheadChoices, a.MachineExpiryDays)) {
 		return ErrAlertSettings
 	}
 	for event := range a.ExcludedNodes {
@@ -99,6 +111,9 @@ func (a *AlertSettings) normalize() {
 		}
 	}
 	a.MutedNodes = nil
+	if a.MachineExpiryDays == 0 {
+		a.MachineExpiryDays = 7
+	}
 	for _, event := range machineEvents {
 		if a.ExcludedNodes[event] == nil {
 			a.ExcludedNodes[event] = []int64{}

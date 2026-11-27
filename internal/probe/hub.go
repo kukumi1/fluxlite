@@ -240,6 +240,11 @@ func (h *Hub) Run(ctx context.Context) {
 				if err := h.store.PruneProbe(ctx, now); err != nil {
 					h.log.Error("prune probe history", "error", err)
 				}
+				if n, err := h.store.AdvanceProbeRenewals(ctx, now); err != nil {
+					h.log.Error("renew probe machines", "error", err)
+				} else if n > 0 {
+					h.log.Info("moved renewed machines' expiry on", "count", n)
+				}
 				lastPrune = now
 			}
 			// Matching may wait on name lookups, which must not hold up the

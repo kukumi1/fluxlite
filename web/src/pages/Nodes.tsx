@@ -8,6 +8,7 @@ import {
   type Node,
   type NodeInput,
   type NodeMetrics,
+  type ProbeDisplay,
   type ProbeMachine,
   type ProbeResult,
   ipv6DialAddress,
@@ -18,6 +19,7 @@ import {
   ArrowUp,
   ChevronDown,
   Cpu,
+  CalendarClock,
   Download,
   Gauge,
   Hash,
@@ -57,6 +59,7 @@ import "./probe.css";
 import { regionOf, toneOf } from "../lib/region";
 import { EnrollDialog } from "./EnrollDialog";
 import { AgentEnrollDialog, flagCode, MachineDialog } from "./ProbeAdmin";
+import { expiryDate, expiryLeft, expiryOf, expiryTitle } from "../lib/expiry";
 import { ReinstallDialog } from "./ReinstallDialog";
 
 const emptyInput: NodeInput = {
@@ -150,6 +153,21 @@ function agentStatusTag(m: ProbeMachine) {
 const agentSystem = (m: ProbeMachine) => [m.info.os, m.info.arch].filter(Boolean).join(" · ") || "agent 还没上报系统信息";
 
 const agentOnlyTag = <span className="tag" title="面板没有这台机器的 SSH，所以不能转发、测速、开终端；点「补 SSH」补上">仅 agent</span>;
+
+// ExpiryTag is how long a machine has left, by the expiry set on the probe
+// page: a chip on a card, a tag on a list row; nothing when none is set.
+function ExpiryTag({ display, chip = false }: { display: ProbeDisplay | undefined; chip?: boolean }) {
+  const e = expiryOf(display);
+  if (!e) return null;
+  if (chip) {
+    return (
+      <span className={`machine-chip expiry-chip${e.tone ? ` is-${e.tone}` : ""}`} title={expiryTitle(e)}>
+        <b>到期</b><code>{expiryDate(e)}</code>{expiryLeft(e)}{e.autoRenew && <small>自动续费</small>}
+      </span>
+    );
+  }
+  return <span className={`tag expiry-tag${e.tone ? ` is-${e.tone}` : ""}`} title={expiryTitle(e)}>{expiryLeft(e)} · {expiryDate(e)}</span>;
+}
 
 function SummaryFigure({ icon: Icon, tone, label, value, note }: { icon: LucideIcon; tone: string; label: string; value: string; note?: string }) {
   return (
@@ -461,6 +479,11 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
   const netRate = readings.reduce((sum, m) => sum + (m.net_rx_rate ?? 0) + (m.net_tx_rate ?? 0), 0);
   const onlineCount = shownNodes.filter((n) => n.status === "online").length + shownAgents.filter((m) => m.online).length;
   const probeByNode = new Map(probeMachines.filter((m) => m.node_id !== null).map((m) => [m.node_id as number, m]));
+  // Machines due within a month, soonest first, of those shown.
+  const dueSoon = [
+    ...shownNodes.map((n) => ({ name: n.name, e: expiryOf(probeByNode.get(n.id)?.display) })),
+    ...shownAgents.map((a) => ({ name: a.name, e: expiryOf(a.display) })),
+  ].flatMap(({ name, e }) => (e && e.days <= 30 ? [{ name, e }] : [])).sort((a, b) => a.e.days - b.e.days);
 
   return (
     <div className="management-page machines-management">
@@ -525,6 +548,8 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
           <SummaryFigure icon={Cpu} tone="sky" label="平均 CPU" value={cpuReadings.length ? `${Math.round(cpuReadings.reduce((a, b) => a + b, 0) / cpuReadings.length)}%` : "—"} note={cpuReadings.length ? `${cpuReadings.length} 台有读数` : undefined} />
           <SummaryFigure icon={MemoryStick} tone="lilac" label="内存占用" value={memTotal ? formatBytes(memUsed) : "—"} note={memTotal ? `/ ${formatBytes(memTotal)}` : undefined} />
           <SummaryFigure icon={Gauge} tone="peach" label="实时网速 · 入 + 出" value={readings.length ? formatRate(netRate) : "—"} />
+          <SummaryFigure icon={CalendarClock} tone="sun" label="30 天内到期" value={`${dueSoon.length}`}
+            note={dueSoon.length ? `${expiryDate(dueSoon[0].e)} ${dueSoon[0].name}` : "台"} />
         </dl>
       )}
       {totalCount > 0 && shownCount === 0 && <Card><p className="muted">没有符合筛选条件的机器。</p></Card>}
@@ -560,7 +585,7 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
                       <div className="machine-list-identity">
                         <SortHandle {...order.handleProps(n.id, n.name, visibleIDs)} />
                         <MachineBadge name={n.name} />
-                        <div><div className="machine-list-name"><strong>{n.name}</strong><button type="button" className="machine-detail-toggle" aria-expanded={!!expandedDetails[n.id]} aria-controls={`${detailsPrefix}-${n.id}`} aria-label={`${expandedDetails[n.id] ? "收起" : "展开"} ${n.name} 连接详情`} title="连接详情" onClick={() => setExpandedDetails((current) => ({ ...current, [n.id]: !current[n.id] }))}><ChevronDown size={15} /></button></div><div className="machine-list-system">{systemCell(n)}</div>{m?.container && <span className="tag" title={caveat ?? "运行在容器里"}>{m.container}</span>}</div>
+                        <div><div className="machine-list-name"><strong>{n.name}</strong><button type="button" className="machine-detail-toggle" aria-expanded={!!expandedDetails[n.id]} aria-controls={`${detailsPrefix}-${n.id}`} aria-label={`${expandedDetails[n.id] ? "收起" : "展开"} ${n.name} 连接详情`} title="连接详情" onClick={() => setExpandedDetails((current) => ({ ...current, [n.id]: !current[n.id] }))}><ChevronDown size={15} /></button></div><div className="machine-list-system">{systemCell(n)}</div>{m?.container && <span className="tag" title={caveat ?? "运行在容器里"}>{m.container}</span>}<ExpiryTag display={probeByNode.get(n.id)?.display} /></div>
                       </div>
                     </div>
                     <div className="machine-list-status">{statusTag(n)}{liveTag(m)}</div>
@@ -590,7 +615,7 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
                       <div className="machine-list-identity">
                         <SortHandle {...agentOrder.handleProps(a.id, a.name, visibleAgentIDs)} />
                         <MachineBadge name={a.name} region={region} />
-                        <div><div className="machine-list-name"><strong>{a.name}</strong></div><div className="machine-list-system">{agentSystem(a)}</div>{agentOnlyTag}</div>
+                        <div><div className="machine-list-name"><strong>{a.name}</strong></div><div className="machine-list-system">{agentSystem(a)}</div>{agentOnlyTag}<ExpiryTag display={a.display} /></div>
                       </div>
                     </div>
                     <div className="machine-list-status">{agentStatusTag(a)}{a.online && liveTag(m)}</div>
@@ -647,6 +672,7 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
                   <span className="machine-chip"><b>端口池</b><code>{n.port_start}–{n.port_end}</code></span>
                   <span className="machine-chip"><b>UDP</b>{udpTag(n)}</span>
                   <span className="machine-chip"><b>跳板</b>{viaName(n)}</span>
+                  <ExpiryTag display={probeByNode.get(n.id)?.display} chip />
                 </div>
 
                 {nodeActions(n, false)}
@@ -688,6 +714,7 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
 
                 <div className="machine-chips">
                   {agentOnlyTag}
+                  <ExpiryTag display={a.display} chip />
                   {a.info.ipv4 && <span className="machine-chip"><b>IPv4</b><code>{a.info.ipv4}</code><CopyIconButton text={a.info.ipv4} title="复制 IPv4 地址" /></span>}
                   {a.info.ipv6 && <span className="machine-chip"><b>IPv6</b><code>{a.info.ipv6}</code><CopyIconButton text={a.info.ipv6} title="复制 IPv6 地址" /></span>}
                 </div>

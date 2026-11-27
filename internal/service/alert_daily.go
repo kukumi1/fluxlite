@@ -105,7 +105,14 @@ func (s *Service) buildDailySummary(ctx context.Context, now time.Time, cfg Aler
 		}
 	}
 	if nearQuota+spent+expiring > 0 {
-		fmt.Fprintf(&b, "\n需要处理：流量将用完 %d、已用完 %d、3 天内到期 %d", nearQuota, spent, expiring)
+		fmt.Fprintf(&b, "\n需要处理：流量将用完 %d、已用完 %d、节点 3 天内到期 %d", nearQuota, spent, expiring)
+	}
+	due, err := s.machinesDue(ctx)
+	if err != nil {
+		return "", err
+	}
+	if soon := machinesDueSoon(due, now, cfg.MachineExpiryDays); len(soon) > 0 {
+		fmt.Fprintf(&b, "\n%d 天内到期的机器：%s", cfg.MachineExpiryDays, strings.Join(soon, "、"))
 	}
 
 	if bad, err := s.badLatencyPoints(ctx, now, cfg); err != nil {

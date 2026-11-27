@@ -680,10 +680,13 @@ export interface AlertSettings {
     route_change: boolean;
     blocked: boolean;
     probe_offline: boolean;
+    machine_expiry: boolean;
     daily: boolean;
   };
   /** 每日汇总在 UTC+8 的哪个小时发。 */
   daily_hour: number;
+  /** 机器到期前几天开始提醒：3、7、15 或 30。 */
+  machine_expiry_days: number;
   loss_percent: number;
   /** 0 表示不按延迟提醒，只看丢包。 */
   latency_ms: number;

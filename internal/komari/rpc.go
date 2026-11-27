@@ -176,18 +176,13 @@ func (s *Site) visible(ctx context.Context, admin bool) ([]store.ProbeClient, *r
 	return out, nil
 }
 
-// expiryLayouts are the ways Komari's database has written a time.
-var expiryLayouts = []string{time.RFC3339Nano, "2006-01-02 15:04:05.999999999-07:00", "2006-01-02 15:04:05-07:00", "2006-01-02 15:04:05", "2006-01-02"}
-
 func normaliseTime(v any) any {
 	s, ok := v.(string)
 	if !ok || s == "" {
 		return v
 	}
-	for _, layout := range expiryLayouts {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t.UTC().Format(time.RFC3339)
-		}
+	if t, ok := store.ParseProbeTime(s); ok {
+		return t.UTC().Format(time.RFC3339)
 	}
 	return v
 }

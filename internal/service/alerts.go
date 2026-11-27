@@ -170,8 +170,16 @@ func (s *Service) AlertDigest(ctx context.Context) (string, error) {
 			parts = append(parts, alertEventText(ev))
 		}
 	}
+	due, err := s.machinesDue(ctx)
+	if err != nil {
+		return "", err
+	}
+	levels = append(levels, machineExpiryLevels(due, now, cfg.MachineExpiryDays)...)
 	for _, ev := range s.levels.observe(levels) {
-		if (ev.kind == levelQuota && cfg.Events.Quota) || (ev.kind == levelExpiry && cfg.Events.Expiry) {
+		switch {
+		case ev.kind == levelQuota && cfg.Events.Quota, ev.kind == levelExpiry && cfg.Events.Expiry:
+			parts = append(parts, ev.text)
+		case ev.kind == levelMachineExpiry && cfg.Events.MachineExpiry && !cfg.excluded(EventMachineDue, ev.nodeID):
 			parts = append(parts, ev.text)
 		}
 	}

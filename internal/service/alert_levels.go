@@ -17,6 +17,7 @@ type levelKind int
 const (
 	levelQuota levelKind = iota
 	levelExpiry
+	levelMachineExpiry
 )
 
 // levelSubject is something that only gets worse until it is reset: an
@@ -27,11 +28,15 @@ type levelSubject struct {
 	kind  levelKind
 	level int
 	texts map[int]string
+	// nodeID is the machine a subject is about, for the per-machine
+	// choice of who is told; zero when it is about no one machine.
+	nodeID int64
 }
 
 type levelEvent struct {
-	kind levelKind
-	text string
+	kind   levelKind
+	text   string
+	nodeID int64
 }
 
 // levelTracker reports a subject once each time it reaches a higher level.
@@ -61,7 +66,7 @@ func (t *levelTracker) observe(subjects []levelSubject) []levelEvent {
 			continue
 		}
 		if text := sub.texts[sub.level]; text != "" {
-			events = append(events, levelEvent{kind: sub.kind, text: text})
+			events = append(events, levelEvent{kind: sub.kind, text: text, nodeID: sub.nodeID})
 		}
 	}
 	for key := range t.levels {

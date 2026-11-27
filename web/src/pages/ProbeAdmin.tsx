@@ -154,7 +154,10 @@ export function TaskDialog({ task, machines, onClose, onSaved }: { task: ProbeTa
     interval: String(task?.interval ?? 60),
     weight: String(task?.weight ?? 0),
   });
-  const [chosen, setChosen] = useState<Set<string>>(() => new Set(task?.clients ?? machines.map((m) => m.uuid)));
+  const [chosen, setChosen] = useState<Set<string>>(() => {
+    const exists = new Set(machines.map((m) => m.uuid));
+    return new Set(task ? task.clients.filter((c) => exists.has(c)) : exists);
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const hint = TASK_TYPES.find(([t]) => t === form.type)?.[2];

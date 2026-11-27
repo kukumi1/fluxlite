@@ -41,7 +41,7 @@ else
 fi
 
 # ---------- 系统识别 ----------
-step 1/6 "识别系统"
+step 1/7 "识别系统"
 
 case "$(uname -m)" in
     x86_64|amd64)  ARCH=amd64 ;;
@@ -67,7 +67,7 @@ fi
 ok "$OSID / $ARCH / $INIT"
 
 # ---------- 安装公钥 ----------
-step 2/6 "安装面板公钥"
+step 2/7 "安装面板公钥"
 
 KEY="$(http_get "$PANEL/api/enroll/key?token=$TOKEN")" || die "获取公钥失败：令牌无效或已过期"
 [ -n "$KEY" ] || die "面板返回了空公钥"
@@ -96,7 +96,7 @@ if command -v restorecon >/dev/null 2>&1; then
 fi
 
 # ---------- sshd 前置条件 ----------
-step 3/6 "检查 sshd 配置"
+step 3/7 "检查 sshd 配置"
 
 SSHD_CONF=/etc/ssh/sshd_config
 if [ -r "$SSHD_CONF" ]; then
@@ -117,7 +117,7 @@ else
 fi
 
 # ---------- 安装 realm ----------
-step 4/6 "安装转发内核 realm"
+step 4/7 "安装转发内核 realm"
 
 REALM_VER=""
 if [ -x /usr/local/bin/realm ]; then
@@ -146,7 +146,7 @@ mkdir -p /etc/fluxlite/realm /var/log/fluxlite
 ok "工作目录就绪"
 
 # ---------- 安装辅助工具 ----------
-step 5/6 "安装辅助工具"
+step 5/7 "安装辅助工具"
 
 # 两个工具都只决定面板「能不能看清楚」，都不参与转发：
 #
@@ -223,7 +223,7 @@ else
 fi
 
 # ---------- 上报 ----------
-step 6/6 "向面板注册"
+step 6/7 "向面板注册"
 
 HOSTNAME_VAL="$(hostname 2>/dev/null || echo unknown)"
 PAYLOAD="$(printf '{"token":"%s","arch":"%s","os_id":"%s","init_system":"%s","realm_version":"%s","hostname":"%s"}' \
@@ -265,6 +265,26 @@ else
     say "  · sshd 不允许公钥登录或不允许该用户登录"
     say ""
     say "修正后可在面板节点页点「探测」重试，无需重新执行本命令。"
+fi
+
+# ---------- 探针 agent ----------
+# 面板开了探针时，注册结果里带着这台机器专属的 agent 身份。装上 Komari 的
+# agent 后，面板里这台机器的 CPU、内存、网速就是它每几秒的实时上报。
+# 和辅助工具一样，这一步失败不影响转发，只是机器页退回 SSH 采样。
+say ""
+step 7/7 "安装探针 agent"
+AGENT_ENDPOINT="$(printf '%s' "$RESP" | sed -n 's/.*"agent_endpoint":"\([^"]*\)".*//p')"
+AGENT_TOKEN="$(printf '%s' "$RESP" | sed -n 's/.*"agent_token":"\([^"]*\)".*//p')"
+AGENT_LOG=/tmp/.fluxlite-agent.log
+if [ -z "$AGENT_ENDPOINT" ] || [ -z "$AGENT_TOKEN" ]; then
+    warn "面板没有开启探针公开页，跳过；机器页会用 SSH 采样显示资源"
+elif http_get "https://raw.githubusercontent.com/komari-monitor/komari-agent/refs/heads/main/install.sh" > /tmp/.komari-install.sh 2>> "$AGENT_LOG"     && sh /tmp/.komari-install.sh -e "$AGENT_ENDPOINT" -t "$AGENT_TOKEN" --disable-web-ssh --disable-auto-update >> "$AGENT_LOG" 2>&1; then
+    rm -f /tmp/.komari-install.sh "$AGENT_LOG"
+    ok "agent 已安装，面板里这台机器会显示实时数据"
+else
+    rm -f /tmp/.komari-install.sh
+    warn "agent 安装失败，转发功能不受影响；安装日志: $AGENT_LOG"
+    warn "可稍后在面板「机器」页点「接入 agent」拿命令手动安装"
 fi
 say ""
 `

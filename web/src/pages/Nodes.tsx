@@ -53,10 +53,10 @@ import { PageHeader } from "../components/PageHeader";
 import { Drawer } from "../components/Drawer";
 import { ChoiceGroup, DrawerActions, FormBlock, SwitchField } from "../components/DrawerForm";
 import "./management-redesign.css";
+import "./probe.css";
 import { regionOf, toneOf } from "../lib/region";
 import { EnrollDialog } from "./EnrollDialog";
-import { AgentEnrollDialog, MachineDialog } from "./ProbeAdmin";
-import { AgentOnlyMachines } from "./ProbeMachines";
+import { AgentEnrollDialog, flagCode, MachineDialog } from "./ProbeAdmin";
 import { ReinstallDialog } from "./ReinstallDialog";
 
 const emptyInput: NodeInput = {
@@ -110,14 +110,46 @@ function liveTag(m: NodeMetrics | undefined) {
 // it closely enough to read as live.
 const LIVE_REFRESH_MS = 3000;
 
-function MachineBadge({ name }: { name: string }) {
-  const code = regionOf(name);
+function MachineBadge({ name, region }: { name: string; region?: string | null }) {
+  const code = region ?? regionOf(name);
   return (
     <span className={`machine-badge tone-${toneOf(code)}`} title={code ?? undefined} aria-hidden>
       {code ? <>{code}<Flag code={code} /></> : <Server size={17} />}
     </span>
   );
 }
+
+// A machine known only by its agent: it reports, but the panel holds no SSH
+// for it, so it shows the same way with nothing it cannot do.
+type AgentRow = ProbeMachine & { id: string };
+
+const asAgentRow = (m: ProbeMachine): AgentRow => ({ ...m, id: m.uuid });
+
+const agentRegion = (m: ProbeMachine) => flagCode(m.display.region) ?? regionOf(m.name);
+
+// reportMetrics reads an agent's report as the panel's own readings, so the
+// machine is drawn by the same rings and bars as the rest.
+function reportMetrics(m: ProbeMachine): NodeMetrics | undefined {
+  const r = m.report;
+  if (!r) return undefined;
+  return {
+    node_id: 0, cpu_percent: r.cpu.usage, cores: m.info.cpu_cores ?? null, cpu_model: m.info.cpu_name ?? "",
+    mem_total: r.ram.total, mem_used: r.ram.used, swap_total: r.swap.total, swap_used: r.swap.used,
+    disk_total: r.disk.total, disk_used: r.disk.used, load1: r.load.load1, load5: r.load.load5, load15: r.load.load15,
+    uptime_sec: r.uptime, kernel: "", net_rx_bytes: r.network.totalDown, net_tx_bytes: r.network.totalUp,
+    net_rx_rate: r.network.down, net_tx_rate: r.network.up, mem_source: "host", container: "", source: "agent",
+    collected_at: new Date(m.at * 1000).toISOString(),
+  };
+}
+
+function agentStatusTag(m: ProbeMachine) {
+  if (m.online) return <span className="pill ok"><i />在线</span>;
+  return m.at ? <span className="pill err"><i />离线</span> : <span className="pill"><i />等待上报</span>;
+}
+
+const agentSystem = (m: ProbeMachine) => [m.info.os, m.info.arch].filter(Boolean).join(" · ") || "agent 还没上报系统信息";
+
+const agentOnlyTag = <span className="tag" title="面板没有这台机器的 SSH，所以不能转发、测速、开终端；点「补 SSH」补上">仅 agent</span>;
 
 function SummaryFigure({ icon: Icon, tone, label, value, note }: { icon: LucideIcon; tone: string; label: string; value: string; note?: string }) {
   return (
@@ -188,6 +220,30 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
     items: nodes, setItems: setNodes, save: api.reorderNodes, reload: api.listNodes, onError: setError,
     disabled: busyId !== null || creating || !!editing || enrolling || !!reinstalling,
   });
+
+  const agentRows = probeMachines.filter((m) => m.node_id === null).map(asAgentRow);
+  const agentOrder = useManualOrder<string, AgentRow>({
+    items: agentRows,
+    setItems: (rows) => setProbeMachines((cur) => [...cur.filter((m) => m.node_id !== null), ...rows]),
+    save: api.reorderProbeMachines,
+    reload: async () => (await loadProbe())?.filter((m) => m.node_id === null).map(asAgentRow) ?? null,
+    onError: setError,
+    disabled: creating || !!editing || !!editingProbe,
+  });
+
+  function agentActions(m: AgentRow, iconOnly: boolean) {
+    return (
+      <div className="machine-actions">
+        <div className="machine-actions-main">
+          <ActionButton iconOnly={iconOnly} label="补 SSH" icon={KeyRound} title="填上 SSH，让面板能在这台机器上转发、测速、开终端" disabled={agentOrder.pending} onClick={() => addSSH(m)} />
+          <ActionButton iconOnly={iconOnly} label="探针" icon={Radio} title="agent、公开页上的价格到期等" onClick={() => setEditingProbe(m)} />
+        </div>
+        <div className="machine-actions-side">
+          <ActionButton iconOnly={iconOnly} label="删除" icon={Trash2} className="ghost danger" disabled={agentOrder.pending} onClick={() => void removeProbe(m)} />
+        </div>
+      </div>
+    );
+  }
 
   function chooseView(next: NodeView) {
     setView(next);
@@ -350,20 +406,28 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
     }
   }
 
-  const searchedNodes = nodes.filter((node) => `${node.name} ${node.host} ${node.os_id} ${node.arch}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const query = search.trim().toLowerCase();
+  const searchedNodes = nodes.filter((node) => `${node.name} ${node.host} ${node.os_id} ${node.arch}`.toLowerCase().includes(query));
   const shownNodes = searchedNodes.filter((node) => statusFilter === "all" || node.status === statusFilter);
   const unknownCount = searchedNodes.filter((n) => n.status === "unknown").length;
   const visibleIDs = shownNodes.map(item => item.id);
 
+  const agentStatus = (m: ProbeMachine) => (m.online ? "online" : "offline");
+  const searchedAgents = agentRows.filter((m) => `${m.name} ${m.info.ipv4 ?? ""} ${m.info.ipv6 ?? ""} ${m.info.os ?? ""}`.toLowerCase().includes(query));
+  const shownAgents = searchedAgents.filter((m) => statusFilter === "all" || agentStatus(m) === statusFilter);
+  const visibleAgentIDs = shownAgents.map((m) => m.id);
+  const agentMetrics = new Map(shownAgents.map((m) => [m.id, reportMetrics(m)]));
+  const shownCount = shownNodes.length + shownAgents.length;
+  const totalCount = nodes.length + agentRows.length;
+
   // 汇总只算量到了的机器：没读数的机器不是空闲，把它当 0 平均进去会把数字拉低。
-  const readings = shownNodes.map((n) => metrics[n.id]).filter((m): m is NodeMetrics => !!m);
+  const readings = [...shownNodes.map((n) => metrics[n.id]), ...agentMetrics.values()].filter((m): m is NodeMetrics => !!m);
   const cpuReadings = readings.map((m) => m.cpu_percent).filter((v): v is number => v !== null);
   const memUsed = readings.reduce((sum, m) => sum + (m.mem_used ?? 0), 0);
   const memTotal = readings.reduce((sum, m) => sum + (m.mem_total ?? 0), 0);
   const netRate = readings.reduce((sum, m) => sum + (m.net_rx_rate ?? 0) + (m.net_tx_rate ?? 0), 0);
-  const onlineCount = shownNodes.filter((n) => n.status === "online").length;
+  const onlineCount = shownNodes.filter((n) => n.status === "online").length + shownAgents.filter((m) => m.online).length;
   const probeByNode = new Map(probeMachines.filter((m) => m.node_id !== null).map((m) => [m.node_id as number, m]));
-  const agentOnly = probeMachines.filter((m) => m.node_id === null);
 
   return (
     <div className="management-page machines-management">
@@ -416,22 +480,22 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
         filter={statusFilter}
         onFilter={setStatusFilter}
         filters={[
-          { value: "all", label: "全部", count: searchedNodes.length },
-          { value: "online", label: "在线", count: searchedNodes.filter((n) => n.status === "online").length, tone: "ok" },
-          { value: "offline", label: "离线", count: searchedNodes.filter((n) => n.status === "offline").length, tone: "err" },
+          { value: "all", label: "全部", count: searchedNodes.length + searchedAgents.length },
+          { value: "online", label: "在线", count: searchedNodes.filter((n) => n.status === "online").length + searchedAgents.filter((m) => m.online).length, tone: "ok" },
+          { value: "offline", label: "离线", count: searchedNodes.filter((n) => n.status === "offline").length + searchedAgents.filter((m) => !m.online).length, tone: "err" },
           ...(unknownCount > 0 || statusFilter === "unknown" ? [{ value: "unknown", label: "未知", count: unknownCount, tone: "warn" as const }] : []),
         ]}
       />
-      {shownNodes.length > 0 && (
+      {shownCount > 0 && (
         <dl className="stat-strip">
-          <SummaryFigure icon={Server} tone="lime" label="在线" value={`${onlineCount}`} note={`/ ${shownNodes.length} 台`} />
+          <SummaryFigure icon={Server} tone="lime" label="在线" value={`${onlineCount}`} note={`/ ${shownCount} 台`} />
           <SummaryFigure icon={Cpu} tone="sky" label="平均 CPU" value={cpuReadings.length ? `${Math.round(cpuReadings.reduce((a, b) => a + b, 0) / cpuReadings.length)}%` : "—"} note={cpuReadings.length ? `${cpuReadings.length} 台有读数` : undefined} />
           <SummaryFigure icon={MemoryStick} tone="lilac" label="内存占用" value={memTotal ? formatBytes(memUsed) : "—"} note={memTotal ? `/ ${formatBytes(memTotal)}` : undefined} />
           <SummaryFigure icon={Gauge} tone="peach" label="实时网速 · 入 + 出" value={readings.length ? formatRate(netRate) : "—"} />
         </dl>
       )}
-      {nodes.length > 0 && shownNodes.length === 0 && <Card><p className="muted">没有符合筛选条件的机器。</p></Card>}
-      {nodes.length === 0 ? (
+      {totalCount > 0 && shownCount === 0 && <Card><p className="muted">没有符合筛选条件的机器。</p></Card>}
+      {totalCount === 0 ? (
         <Card>
           <EmptyState
             icon={<Server size={22} />}
@@ -478,6 +542,29 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
                       {ipv6 && <span className="machine-address" title={v6Title(n)}><span className="machine-address-label">IPv6</span><code>{ipv6}</code><CopyIconButton text={ipv6} title="复制 IPv6 地址" />{n.ipv6_entry && <span className="tag">映射</span>}</span>}
                     </div>
                     <div className="machine-address-meta"><span>端口池 <code>{n.port_start}–{n.port_end}</code></span><span>UDP {udpTag(n)}</span><span>跳板 <strong>{viaName(n)}</strong></span></div>
+                  </div>
+                </div>
+              );
+            })}
+            {shownAgents.map((a) => {
+              const m = agentMetrics.get(a.id);
+              const target = agentOrder.targetProps(a.id, visibleAgentIDs);
+              const region = agentRegion(a);
+              return (
+                <div role="listitem" key={a.id} {...target} className={`lane-row machine-lane tone-${toneOf(region)} ${target.className}`}>
+                  <div className="machine-resource-row">
+                    <div className="machine-identity-cell">
+                      <div className="machine-list-identity">
+                        <SortHandle {...agentOrder.handleProps(a.id, a.name, visibleAgentIDs)} />
+                        <MachineBadge name={a.name} region={region} />
+                        <div><div className="machine-list-name"><strong>{a.name}</strong></div><div className="machine-list-system">{agentSystem(a)}</div>{agentOnlyTag}</div>
+                      </div>
+                    </div>
+                    <div className="machine-list-status">{agentStatusTag(a)}{a.online && liveTag(m)}</div>
+                    <div className="machine-list-resource machine-list-cpu"><MetricBar label="CPU" percent={m?.cpu_percent ?? null} detail={m?.cores ? `${m.cores} 核` : undefined} /></div>
+                    <div className="machine-list-resource machine-list-memory"><MetricBar label="内存" percent={percentOf(m?.mem_used ?? null, m?.mem_total ?? null)} detail={ratioText(m?.mem_used ?? null, m?.mem_total ?? null)} /></div>
+                    <div className="machine-list-resource machine-list-disk"><MetricBar label="磁盘" percent={percentOf(m?.disk_used ?? null, m?.disk_total ?? null)} detail={ratioText(m?.disk_used ?? null, m?.disk_total ?? null)} /></div>
+                    <div className="machine-list-actions">{agentActions(a, true)}</div>
                   </div>
                 </div>
               );
@@ -533,23 +620,50 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
               </Card>
             );
           })}
-        </div>
-      )}
+          {shownAgents.map((a, i) => {
+            const m = agentMetrics.get(a.id);
+            const target = agentOrder.targetProps(a.id, visibleAgentIDs);
+            const region = agentRegion(a);
+            return (
+              <Card index={shownNodes.length + i} key={a.id} {...target} className={`machine-card tone-${toneOf(region)} ${target.className}`}>
+                <div className="machine-card-head">
+                  <SortHandle {...agentOrder.handleProps(a.id, a.name, visibleAgentIDs)} />
+                  <MachineBadge name={a.name} region={region} />
+                  <div className="machine-card-title">
+                    <h2>{a.name}</h2>
+                    <div className="machine-card-system" title={m?.cpu_model || undefined}>{agentSystem(a)}</div>
+                  </div>
+                  <div className="machine-card-status">
+                    {agentStatusTag(a)}
+                    {a.online && liveTag(m)}
+                  </div>
+                </div>
 
-      {agentOnly.length > 0 && (!search.trim() || agentOnly.some((m) => m.name.toLowerCase().includes(search.trim().toLowerCase()))) && (
-        <AgentOnlyMachines
-          machines={agentOnly}
-          setMachines={(next) => setProbeMachines((cur) => [...cur.filter((m) => m.node_id !== null), ...next])}
-          reload={async () => {
-            const probes = await loadProbe();
-            return probes ? probes.filter((m) => m.node_id === null) : null;
-          }}
-          onError={setError}
-          onAddSSH={addSSH}
-          onEdit={setEditingProbe}
-          onDelete={(m) => void removeProbe(m)}
-          disabled={creating || !!editing || !!editingProbe}
-        />
+                <div className="machine-rings">
+                  <MetricRing label="CPU" percent={m?.cpu_percent ?? null} detail={m?.cores ? `${m.cores} 核` : undefined} />
+                  <MetricRing label="内存" percent={percentOf(m?.mem_used ?? null, m?.mem_total ?? null)} detail={ratioText(m?.mem_used ?? null, m?.mem_total ?? null)} />
+                  <MetricRing label="磁盘" percent={percentOf(m?.disk_used ?? null, m?.disk_total ?? null)} detail={ratioText(m?.disk_used ?? null, m?.disk_total ?? null)} />
+                  {m?.swap_total ? <MetricRing label="交换" percent={percentOf(m.swap_used, m.swap_total)} detail={ratioText(m.swap_used, m.swap_total)} /> : null}
+                </div>
+
+                <dl className="leader-rows">
+                  <div><dt>网速</dt><dd>{m ? <><ArrowDown size={11} />{formatRate(m.net_rx_rate ?? 0)} <ArrowUp size={11} />{formatRate(m.net_tx_rate ?? 0)}</> : "—"}</dd></div>
+                  <div><dt>累计</dt><dd>{m ? `↓ ${formatBytes(m.net_rx_bytes ?? 0)} ／ ↑ ${formatBytes(m.net_tx_bytes ?? 0)}` : "—"}</dd></div>
+                  <div><dt>负载</dt><dd>{m ? `${(m.load1 ?? 0).toFixed(2)} / ${(m.load5 ?? 0).toFixed(2)} / ${(m.load15 ?? 0).toFixed(2)}` : "—"}</dd></div>
+                  <div><dt>开机</dt><dd>{m?.uptime_sec ? formatUptime(m.uptime_sec) : "—"}</dd></div>
+                </dl>
+
+                <div className="machine-chips">
+                  {agentOnlyTag}
+                  {a.info.ipv4 && <span className="machine-chip"><b>IPv4</b><code>{a.info.ipv4}</code><CopyIconButton text={a.info.ipv4} title="复制 IPv4 地址" /></span>}
+                  {a.info.ipv6 && <span className="machine-chip"><b>IPv6</b><code>{a.info.ipv6}</code><CopyIconButton text={a.info.ipv6} title="复制 IPv6 地址" /></span>}
+                </div>
+
+                {agentActions(a, false)}
+              </Card>
+            );
+          })}
+        </div>
       )}
 
       {editingProbe && (

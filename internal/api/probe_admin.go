@@ -93,6 +93,9 @@ func (s *Server) handleDeleteProbeMachine(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.probe.Forget(id)
+	if err := s.probe.ReloadTasks(r.Context()); err != nil {
+		s.log.Error("reload probe tasks", "error", err)
+	}
 	s.audit(r, "probe.machine.delete", id, "")
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

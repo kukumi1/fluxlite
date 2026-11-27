@@ -520,6 +520,9 @@ func (s *Store) DeleteProbeClient(ctx context.Context, uuid string) error {
 				return fmt.Errorf("delete probe history: %w", err)
 			}
 		}
+		if err := pruneTaskClients(ctx, tx, `SELECT uuid FROM probe_clients WHERE uuid <> ?`, uuid); err != nil {
+			return err
+		}
 		res, err := tx.ExecContext(ctx, `DELETE FROM probe_clients WHERE uuid = ?`, uuid)
 		if err != nil {
 			return fmt.Errorf("delete probe client: %w", err)
@@ -529,6 +532,85 @@ func (s *Store) DeleteProbeClient(ctx context.Context, uuid string) error {
 		}
 		return nil
 	})
+}
+
+// PruneProbeTaskClients drops, from every latency check, machines that no
+// longer exist, so a check does not count or wait on them.
+func (s *Store) PruneProbeTaskClients(ctx context.Context) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		return pruneTaskClients(ctx, tx, `SELECT uuid FROM probe_clients`)
+	})
+}
+
+// pruneTaskClients keeps, in each check's machines, only those the query
+// lists.
+func pruneTaskClients(ctx context.Context, tx *sql.Tx, existing string, args ...any) error {
+	rows, err := tx.QueryContext(ctx, existing, args...)
+	if err != nil {
+		return fmt.Errorf("list probe clients: %w", err)
+	}
+	known := map[string]bool{}
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			rows.Close()
+			return err
+		}
+		known[uuid] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	tasks, err := tx.QueryContext(ctx, `SELECT id, clients FROM probe_ping_tasks`)
+	if err != nil {
+		return fmt.Errorf("list probe tasks: %w", err)
+	}
+	changed := map[int64]string{}
+	for tasks.Next() {
+		var id int64
+		var raw string
+		if err := tasks.Scan(&id, &raw); err != nil {
+			tasks.Close()
+			return err
+		}
+		var clients []string
+		if json.Unmarshal([]byte(raw), &clients) != nil {
+			continue
+		}
+		kept := []string{}
+		for _, c := range clients {
+			if known[c] {
+				kept = append(kept, c)
+			}
+		}
+		if len(kept) != len(clients) {
+			b, _ := json.Marshal(kept)
+			changed[id] = string(b)
+		}
+	}
+	tasks.Close()
+	if err := tasks.Err(); err != nil {
+		return err
+	}
+	for id, clients := range changed {
+		if _, err := tx.ExecContext(ctx, `UPDATE probe_ping_tasks SET clients = ? WHERE id = ?`, clients, id); err != nil {
+			return fmt.Errorf("prune probe task: %w", err)
+		}
+	}
+	return nil
+}
+
+// ProbeClientByNode finds the probe machine paired with a panel machine.
+func (s *Store) ProbeClientByNode(ctx context.Context, nodeID int64) (*ProbeClient, error) {
+	c, err := scanProbeClient(s.db.QueryRowContext(ctx, `SELECT `+probeClientColumns+` FROM probe_clients WHERE node_id = ?`, nodeID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find probe client: %w", err)
+	}
+	return c, nil
 }
 
 // SaveProbeTask adds a latency check, or replaces the one with its id.

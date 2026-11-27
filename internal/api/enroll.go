@@ -1,11 +1,18 @@
 package api
 
 import (
+	"context"
+	"crypto/rand"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
+
+	"github.com/kukumi1/fluxlite/internal/komari"
 	"github.com/kukumi1/fluxlite/internal/service"
+	"github.com/kukumi1/fluxlite/internal/store"
 )
 
 // handleEnrollScript serves the installer. It carries no secret of its own:
@@ -117,7 +124,46 @@ func (s *Server) handleEnrollReport(w http.ResponseWriter, r *http.Request) {
 		action = "enroll.reinstall_complete"
 	}
 	s.audit(r, action, outcome.Name, outcome.Detail)
-	writeJSON(w, http.StatusOK, outcome)
+	out := enrollReply{EnrollOutcome: outcome}
+	out.AgentEndpoint, out.AgentToken = s.enrollAgent(r.Context(), outcome)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// enrollReply is the enrollment verdict, plus where the machine's probe
+// agent should report, when the panel's probe is on.
+type enrollReply struct {
+	*service.EnrollOutcome
+	AgentEndpoint string `json:"agent_endpoint,omitempty"`
+	AgentToken    string `json:"agent_token,omitempty"`
+}
+
+// enrollAgent gives a newly enrolled machine its probe identity, paired with
+// it from the start, so the installer can set up the agent and the machine
+// shows live readings as soon as it appears. A machine enrolled again keeps
+// the identity it had, and with it its history. Without the probe's public
+// domain there is nowhere for an agent to report, and nothing is returned.
+func (s *Server) enrollAgent(ctx context.Context, outcome *service.EnrollOutcome) (endpoint, token string) {
+	if s.probe == nil {
+		return "", ""
+	}
+	st := s.svc.Store()
+	host, err := st.ProbeSetting(ctx, komari.PublicHostSetting)
+	if err != nil || host == "" {
+		return "", ""
+	}
+	c, err := st.ProbeClientByNode(ctx, outcome.NodeID)
+	if errors.Is(err, store.ErrNotFound) {
+		nodeID := outcome.NodeID
+		c = &store.ProbeClient{UUID: uuid.NewString(), Token: rand.Text()[:22], Name: outcome.Name, NodeID: &nodeID}
+		if err = st.CreateProbeClient(ctx, *c); err == nil {
+			err = st.SetProbeNode(ctx, c.UUID, &nodeID)
+		}
+	}
+	if err != nil {
+		s.log.Error("prepare the enrolled machine's probe agent", "node", outcome.Name, "error", err)
+		return "", ""
+	}
+	return "https://" + host, c.Token
 }
 
 // externalBaseURL reconstructs the address the operator's browser used, so the

@@ -10,6 +10,8 @@ import "./probe.css";
 
 const TASK_TYPES: Record<string, string> = { icmp: "ICMP", tcp: "TCP", http: "HTTP" };
 
+const REFRESH_MS = 5000;
+
 // Probe holds what belongs to the probe as a whole: the latency checks the
 // agents run, the public page, and enrolling agents. The machines themselves
 // are on the machines page, each with its SSH and its agent together.
@@ -30,8 +32,12 @@ export function Probe() {
     }
   }, []);
 
+  // Machines come and go on the machines page and agents report all the
+  // time, so the counts here follow along.
   useEffect(() => {
     void load();
+    const timer = setInterval(() => void load(), REFRESH_MS);
+    return () => clearInterval(timer);
   }, [load]);
 
   async function deleteTask(t: ProbeTask) {
@@ -102,7 +108,7 @@ export function Probe() {
                     <td>{TASK_TYPES[t.type] ?? t.type}</td>
                     <td className="mono">{t.target}</td>
                     <td className="num">{t.interval} 秒</td>
-                    <td className="muted" title={t.clients.map((c) => names.get(c) ?? c).join("、")}>{t.clients.length} 台</td>
+                    <td className="muted" title={t.clients.flatMap((c) => names.get(c) ?? []).join("、")}>{t.clients.filter((c) => names.has(c)).length} 台</td>
                     <td className="probe-actions">
                       <button type="button" className="icon-btn" title="编辑" aria-label={`编辑 ${t.name}`} onClick={() => setTask(t)}><Pencil size={15} /></button>
                       <button type="button" className="icon-btn" title="删除" aria-label={`删除 ${t.name}`} onClick={() => void deleteTask(t)}><Trash2 size={15} /></button>

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowLeft, ArrowRight, Cpu, Download, Info, KeyRound, RadioTower, Settings2, Timer } from "lucide-react";
+import { ArrowLeft, ArrowRight, Cpu, Download, Info, KeyRound, Radio, RadioTower, Settings2, Timer, Wrench } from "lucide-react";
 import {
   api,
   ApiError,
@@ -23,7 +23,9 @@ const SCRIPT_STEPS = [
   { icon: Cpu, tone: "sky", title: "识别环境", text: "系统、架构与 init，支持 systemd / OpenRC、amd64 / arm64" },
   { icon: KeyRound, tone: "lilac", title: "写入公钥", text: "面板公钥进 authorized_keys，私钥始终留在面板" },
   { icon: Download, tone: "peach", title: "安装 realm", text: "从面板下载，机器不需要能访问 GitHub" },
+  { icon: Wrench, tone: "sun", title: "辅助工具", text: "tcpdump 与 iptables，用于验证投递与统计流量；装不上不影响转发" },
   { icon: RadioTower, tone: "lime", title: "回连验证", text: "回报系统信息，面板当场回连并告诉你结果" },
+  { icon: Radio, tone: "sky", title: "探针 agent", text: "开了探针公开页时顺带装上，机器一出现就有实时数据；装不上不影响转发" },
 ] as const;
 
 function expiryText(expiresAt: string): string {

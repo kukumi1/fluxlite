@@ -94,9 +94,6 @@ export function Probe() {
               <button type="button" className="btn sm" onClick={() => setTask("new")}><Plus size={14} />新增</button>
             </span>
           </div>
-          <p className="muted probe-note">
-            面板按间隔把检测发给选中机器的 agent 执行，结果画在<strong>执行它的那台机器</strong>的延迟图里：一个测 FAC-TW 的任务选了 5 台机器，就出现在这 5 台的图里，不在 FAC-TW 自己的图里。
-          </p>
           {tasks.length === 0 ? (
             <p className="muted">还没有延迟任务。先「新增」一个目标（IP 或域名加端口），再选哪些机器去测。</p>
           ) : taskView === "machine" ? (

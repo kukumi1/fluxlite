@@ -215,6 +215,9 @@ func (h *Hub) Run(ctx context.Context) {
 	if err := h.store.PruneProbeTaskClients(ctx); err != nil {
 		h.log.Error("drop deleted machines from latency checks", "error", err)
 	}
+	if err := h.store.SyncProbeWeights(ctx); err != nil {
+		h.log.Error("order probe machines", "error", err)
+	}
 	if err := h.ReloadTasks(ctx); err != nil {
 		h.log.Error("load probe tasks", "error", err)
 	}

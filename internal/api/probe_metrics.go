@@ -64,10 +64,18 @@ func applyAgentReport(m *model.NodeMetrics, r *probe.Report, at time.Time) {
 	m.Source = "agent"
 }
 
-// matchProbes pairs probe agents with a machine just added or moved, in the
-// background, since it may wait on looking the machine's name up.
+// matchProbes pairs probe agents with a machine just added or moved, and
+// keeps the public page in the panel's order, in the background, since it may
+// wait on looking the machine's name up.
 func (s *Server) matchProbes(r *http.Request) {
-	if s.probe != nil {
-		go s.probe.Link(context.WithoutCancel(r.Context()))
+	if s.probe == nil {
+		return
 	}
+	ctx := context.WithoutCancel(r.Context())
+	go func() {
+		s.probe.Link(ctx)
+		if err := s.svc.Store().SyncProbeWeights(ctx); err != nil {
+			s.log.Error("order probe machines", "error", err)
+		}
+	}()
 }

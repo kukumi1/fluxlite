@@ -226,8 +226,11 @@ export function TaskDialog({ task, machines, onClose, onSaved }: { task: ProbeTa
   );
 }
 
+const TASK_KIND: Record<string, string> = { icmp: "ICMP", tcp: "TCP", http: "HTTP" };
+
 // MachineTasks is the latency checks seen from one machine: pick it, then
-// tick the checks it should run.
+// switch on the checks it should run. Same table as the by-task view, so the
+// two read as one list turned around.
 export function MachineTasks({ machines, tasks, onSaved, onError }: {
   machines: ProbeMachine[];
   tasks: ProbeTask[];
@@ -268,33 +271,50 @@ export function MachineTasks({ machines, tasks, onSaved, onError }: {
   }
 
   return (
-    <div className="probe-by-machine">
-      <div className="probe-machine-list" role="listbox" aria-label="机器">
+    <>
+      <div className="mute-chips probe-machine-chips" role="radiogroup" aria-label="机器">
         {machines.map((m) => (
-          <button key={m.uuid} type="button" role="option" aria-selected={m.uuid === uuid} className={m.uuid === uuid ? "active" : ""} onClick={() => pick(m.uuid)}>
-            <span className={`probe-state ${m.online ? "on" : m.at ? "off" : "wait"}`} />
-            {m.name}
-            <small>{runs(m.uuid).size}</small>
+          <button key={m.uuid} type="button" role="radio" aria-checked={m.uuid === uuid}
+            className={`mute-chip${m.uuid === uuid ? " muted" : ""}`} onClick={() => pick(m.uuid)}>
+            {m.name}<small>{runs(m.uuid).size}</small>
           </button>
         ))}
       </div>
       {machine && (
-        <div className="probe-machine-tasks">
-          <strong>{machine.name} 要测的目标（已选 {chosen.size} / {tasks.length}）</strong>
-          {tasks.map((t) => (
-            <label key={t.id} className="probe-task-check">
-              <input type="checkbox" checked={chosen.has(t.id)} onChange={() => toggle(t.id)} />
-              <span>{t.name}</span>
-              <span className="mono muted">{t.type.toUpperCase()} {t.target}</span>
-            </label>
-          ))}
-          <div className="setting-actions">
-            <button type="button" className="btn primary" disabled={busy || !dirty} onClick={() => void save()}>{busy ? "保存中…" : "保存"}</button>
+        <>
+          <table>
+            <thead>
+              <tr>
+                <th>名称</th>
+                <th>方式</th>
+                <th>目标</th>
+                <th className="num">间隔</th>
+                <th className="probe-run-col">{machine.name} 测</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tasks.map((t) => (
+                <tr key={t.id}>
+                  <td><strong>{t.name}</strong></td>
+                  <td>{TASK_KIND[t.type] ?? t.type}</td>
+                  <td className="mono">{t.target}</td>
+                  <td className="num">{t.interval} 秒</td>
+                  <td className="probe-run-col">
+                    <button type="button" role="switch" aria-checked={chosen.has(t.id)} aria-label={`${machine.name} 测 ${t.name}`}
+                      className={`toggle-switch${chosen.has(t.id) ? " on" : ""}`} onClick={() => toggle(t.id)}><span /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="probe-machine-save">
+            <span className="muted">已选 {chosen.size} / {tasks.length}</span>
             {dirty && <button type="button" className="btn" onClick={() => setChosen(saved)}>还原</button>}
+            <button type="button" className="btn primary" disabled={busy || !dirty} onClick={() => void save()}>{busy ? "保存中…" : "保存"}</button>
           </div>
-        </div>
+        </>
       )}
-    </div>
+    </>
   );
 }
 

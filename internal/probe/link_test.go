@@ -106,3 +106,29 @@ func TestLinkMatchesByAddress(t *testing.T) {
 		t.Fatal("a machine that does not exist cannot be chosen")
 	}
 }
+
+// A machine with no saved place yet comes after those with one, on the
+// public page as on the panel's machine list.
+func TestNewMachinesComeLastOnThePublicPage(t *testing.T) {
+	_, st, _ := fixture(t)
+	ctx := context.Background()
+	if err := st.ReplaceProbe(ctx, store.ProbeImport{Clients: []store.ProbeClient{{UUID: "old", Token: "t1", Name: "Old"}, {UUID: "new", Token: "t2", Name: "New"}}}); err != nil {
+		t.Fatal(err)
+	}
+	a := node(t, st, "zz-placed", "192.0.2.1")
+	if err := st.ReorderNodes(ctx, []int64{a.ID}); err != nil {
+		t.Fatal(err)
+	}
+	b := node(t, st, "aa-new", "192.0.2.2")
+	if err := st.SetProbeNode(ctx, "old", &a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProbeNode(ctx, "new", &b.ID); err != nil {
+		t.Fatal(err)
+	}
+	nodes, _ := st.ListNodes(ctx)
+	got := clientsByUUID(t, st)
+	if nodes[0].ID != a.ID || got["old"].Weight >= got["new"].Weight {
+		t.Fatalf("panel order %v, weights old %d new %d", []int64{nodes[0].ID, nodes[1].ID}, got["old"].Weight, got["new"].Weight)
+	}
+}

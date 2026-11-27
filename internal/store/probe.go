@@ -487,8 +487,13 @@ const unmatchedWeight = 100000
 // matched probe machines take their machine's place, the rest keep their
 // own order after them.
 func (s *Store) SyncProbeWeights(ctx context.Context) error {
+	// A machine's place is its rank as the panel lists them (ListNodes), so a
+	// machine added since the last reorder, with no saved place, comes last
+	// on both pages rather than first on one.
 	if _, err := s.db.ExecContext(ctx, `UPDATE probe_clients
-		SET weight = (SELECT COALESCE(sort_order, 0) FROM nodes WHERE nodes.id = probe_clients.node_id)
+		SET weight = (SELECT r.rank FROM (
+			SELECT id, ROW_NUMBER() OVER (ORDER BY sort_order IS NULL, sort_order, name, id) - 1 AS rank FROM nodes
+		) r WHERE r.id = probe_clients.node_id)
 		WHERE node_id IS NOT NULL`); err != nil {
 		return fmt.Errorf("sync probe order: %w", err)
 	}

@@ -15,8 +15,8 @@ const (
 	// last half hour so a spike under way does not raise its own bar.
 	spikeBaselineSpan = 24 * time.Hour
 	spikeBaselineGap  = 30 * time.Minute
-	// spikeBaselineRounds is the fewest connected rounds a baseline needs;
-	// a link measured for an hour has no "usual" yet.
+	// spikeBaselineRounds is the fewest five-minute steps with an answer a
+	// baseline needs; a link measured for an hour has no "usual" yet.
 	spikeBaselineRounds = 20
 	spikeBaselineTTL    = 10 * time.Minute
 	// A round spikes at twice the baseline and at least spikeMinRiseMS
@@ -44,15 +44,9 @@ func (s *Service) baselines(ctx context.Context, now time.Time) (map[linkKey]int
 	if s.spikeBase.byL != nil && now.Sub(s.spikeBase.at) < spikeBaselineTTL {
 		return s.spikeBase.byL, nil
 	}
-	rows, err := s.store.LatencyBaselines(ctx, now.Add(-spikeBaselineSpan).Unix(), now.Add(-spikeBaselineGap).Unix())
+	byL, err := s.probeBaselines(ctx, now)
 	if err != nil {
 		return nil, err
-	}
-	byL := make(map[linkKey]int, len(rows))
-	for _, b := range rows {
-		if b.Rounds >= spikeBaselineRounds {
-			byL[linkKey{b.NodeID, b.Target, b.Family}] = b.MS
-		}
 	}
 	s.spikeBase.at, s.spikeBase.byL = now, byL
 	return byL, nil
@@ -68,7 +62,7 @@ func (r spikeReading) spiking() bool {
 }
 
 func (r spikeReading) text(withRise bool) string {
-	s := fmt.Sprintf("%s IPv%d：%dms（基线 %dms", r.link.target, r.link.family, r.ms, r.base)
+	s := fmt.Sprintf("%s：%dms（基线 %dms", r.link.target, r.ms, r.base)
 	if withRise && r.base > 0 {
 		s += fmt.Sprintf("，+%d%%", (r.ms-r.base)*100/r.base)
 	}
@@ -84,7 +78,7 @@ func (s *Service) spikeSubjects(ctx context.Context, now time.Time) ([]alertSubj
 	if err != nil {
 		return nil, err
 	}
-	latest, err := s.store.LatestLatency(ctx, now.Add(-latencyFreshFor).Unix())
+	latest, err := s.probeLinks(ctx, now)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +141,7 @@ func spikeEventText(ev alertEvent) string {
 	sub := ev.subject
 	var text string
 	if ev.failing {
-		text = fmt.Sprintf("⚠️ 延迟异常暴涨：%s\n触发：连续 3 轮高于历史基线 %d 倍（且至少高出 %dms）", sub.name, spikeFactor, spikeMinRiseMS)
+		text = fmt.Sprintf("⚠️ 延迟异常暴涨：%s\n触发：持续 6 分钟以上高于近一天基线 %d 倍（且至少高出 %dms）", sub.name, spikeFactor, spikeMinRiseMS)
 	} else {
 		text = fmt.Sprintf("✅ 延迟恢复正常：%s（持续 %s）\n现在：", sub.name, describeOutage(ev.lasted))
 	}

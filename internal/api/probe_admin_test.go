@@ -49,3 +49,35 @@ func TestDeleteProbeClientTakesItsHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Choosing a machine's latency checks adds it to those and takes it out of
+// the rest, leaving the other machines where they were.
+func TestSetProbeClientTasks(t *testing.T) {
+	_, st := newAuditTestServer(t)
+	ctx := context.Background()
+	err := st.ReplaceProbe(ctx, store.ProbeImport{
+		Clients: []store.ProbeClient{{UUID: "a", Token: "ta", Name: "A"}, {UUID: "b", Token: "tb", Name: "B"}},
+		Tasks: []store.ProbeTask{
+			{ID: 1, Name: "成都电信", Type: "tcp", Target: "x:1", Interval: 60, Clients: []string{"a", "b"}},
+			{ID: 2, Name: "FAC-TW", Type: "tcp", Target: "y:1", Interval: 60, Clients: []string{"b"}},
+			{ID: 3, Name: "四川移动", Type: "tcp", Target: "z:1", Interval: 60, Clients: []string{}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProbeClientTasks(ctx, "a", []int64{2, 3}); err != nil {
+		t.Fatal(err)
+	}
+	tasks, _ := st.ProbeTasks(ctx)
+	got := map[int64][]string{}
+	for _, task := range tasks {
+		got[task.ID] = task.Clients
+	}
+	if len(got[1]) != 1 || got[1][0] != "b" || len(got[2]) != 2 || len(got[3]) != 1 || got[3][0] != "a" {
+		t.Fatalf("%v", got)
+	}
+	if err := st.SetProbeClientTasks(ctx, "gone", nil); err != store.ErrNotFound {
+		t.Fatal(err)
+	}
+}

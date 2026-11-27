@@ -226,6 +226,78 @@ export function TaskDialog({ task, machines, onClose, onSaved }: { task: ProbeTa
   );
 }
 
+// MachineTasks is the latency checks seen from one machine: pick it, then
+// tick the checks it should run.
+export function MachineTasks({ machines, tasks, onSaved, onError }: {
+  machines: ProbeMachine[];
+  tasks: ProbeTask[];
+  onSaved: (name: string) => void;
+  onError: (message: string) => void;
+}) {
+  const [uuid, setUUID] = useState(machines[0]?.uuid ?? "");
+  const runs = (id: string) => new Set(tasks.filter((t) => t.clients.includes(id)).map((t) => t.id));
+  const [chosen, setChosen] = useState<Set<number>>(() => runs(uuid));
+  const [busy, setBusy] = useState(false);
+  const machine = machines.find((m) => m.uuid === uuid);
+  const saved = runs(uuid);
+  const dirty = chosen.size !== saved.size || [...chosen].some((id) => !saved.has(id));
+
+  function pick(next: string) {
+    setUUID(next);
+    setChosen(runs(next));
+  }
+
+  const toggle = (id: number) => setChosen((cur) => {
+    const next = new Set(cur);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+
+  async function save() {
+    if (!machine) return;
+    setBusy(true);
+    try {
+      await api.setProbeMachineTasks(machine.uuid, [...chosen]);
+      onSaved(machine.name);
+    } catch (err) {
+      onError(message(err, "保存失败"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="probe-by-machine">
+      <div className="probe-machine-list" role="listbox" aria-label="机器">
+        {machines.map((m) => (
+          <button key={m.uuid} type="button" role="option" aria-selected={m.uuid === uuid} className={m.uuid === uuid ? "active" : ""} onClick={() => pick(m.uuid)}>
+            <span className={`probe-state ${m.online ? "on" : m.at ? "off" : "wait"}`} />
+            {m.name}
+            <small>{runs(m.uuid).size}</small>
+          </button>
+        ))}
+      </div>
+      {machine && (
+        <div className="probe-machine-tasks">
+          <strong>{machine.name} 要测的目标（已选 {chosen.size} / {tasks.length}）</strong>
+          {tasks.map((t) => (
+            <label key={t.id} className="probe-task-check">
+              <input type="checkbox" checked={chosen.has(t.id)} onChange={() => toggle(t.id)} />
+              <span>{t.name}</span>
+              <span className="mono muted">{t.type.toUpperCase()} {t.target}</span>
+            </label>
+          ))}
+          <div className="setting-actions">
+            <button type="button" className="btn primary" disabled={busy || !dirty} onClick={() => void save()}>{busy ? "保存中…" : "保存"}</button>
+            {dirty && <button type="button" className="btn" onClick={() => setChosen(saved)}>还原</button>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // AgentEnrollDialog gives the command that installs Komari's agent on a
 // new machine and registers it here.
 export function AgentEnrollDialog({ onClose }: { onClose: () => void }) {

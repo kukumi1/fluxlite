@@ -159,3 +159,4 @@
 .notify-machines-pick { margin-top: 8px; }
 .notify-machines-pick .mute-chips { margin-bottom: 8px; }
 .notify-machines-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
+.quality-checked { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }

@@ -273,8 +273,8 @@ fi
 # 和辅助工具一样，这一步失败不影响转发，只是机器页退回 SSH 采样。
 say ""
 step 7/7 "安装探针 agent"
-AGENT_ENDPOINT="$(printf '%s' "$RESP" | sed -n 's/.*"agent_endpoint":"\([^"]*\)".*//p')"
-AGENT_TOKEN="$(printf '%s' "$RESP" | sed -n 's/.*"agent_token":"\([^"]*\)".*//p')"
+AGENT_ENDPOINT="$(printf '%s' "$RESP" | sed -n 's/.*"agent_endpoint":"\([^"]*\)".*/\1/p')"
+AGENT_TOKEN="$(printf '%s' "$RESP" | sed -n 's/.*"agent_token":"\([^"]*\)".*/\1/p')"
 AGENT_LOG=/tmp/.fluxlite-agent.log
 if [ -z "$AGENT_ENDPOINT" ] || [ -z "$AGENT_TOKEN" ]; then
     warn "面板没有开启探针公开页，跳过；机器页会用 SSH 采样显示资源"

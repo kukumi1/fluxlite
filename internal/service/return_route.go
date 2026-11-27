@@ -21,10 +21,11 @@ import (
 const (
 	returnSettingsKey = "return.settings"
 
-	// A return route is traced once a day; a trace that failed is retried
+	// A return route is traced every six hours, as the block check runs, so
+	// the two read as of the same time; a trace that failed is retried
 	// sooner, since the cause is often a machine that was briefly down.
-	routeTraceEvery = 24 * time.Hour
-	routeRetryAfter = 6 * time.Hour
+	routeTraceEvery = 6 * time.Hour
+	routeRetryAfter = time.Hour
 
 	// natPortSpan is the widest port range still taken for a NAT machine
 	// when the operator has not chosen which machines to trace. A NAT share
@@ -588,4 +589,68 @@ func ensureTool(ctx context.Context, client *ssh.Client, node *model.Node, tool 
 		return "", fmt.Errorf("上传%s失败：%w", label, err)
 	}
 	return bin, nil
+}
+
+// RouteSummary is one traced return route as a public page shows it: the
+// verdict and how it was reached at, without the hops or any address.
+type RouteSummary struct {
+	City       string   `json:"city"`
+	Carrier    string   `json:"carrier"`
+	Line       string   `json:"line"`
+	Handoff    string   `json:"handoff,omitempty"`
+	Entry      string   `json:"entry,omitempty"`
+	Tier       int      `json:"tier"`
+	Confidence string   `json:"confidence"`
+	Evidence   string   `json:"evidence"`
+	Chain      []string `json:"chain"`
+	Error      string   `json:"error,omitempty"`
+}
+
+// NodeRouteSummary is a machine's return routes, in the order of the
+// targets traced, and when the newest of them was traced.
+type NodeRouteSummary struct {
+	CheckedAt int64          `json:"checked_at"`
+	Routes    []RouteSummary `json:"routes"`
+}
+
+// ReturnRouteSummaries is every traced machine's return routes for the
+// probe's public page, by machine.
+func (s *Service) ReturnRouteSummaries(ctx context.Context) (map[int64]NodeRouteSummary, error) {
+	ov, err := s.returnOverview(ctx)
+	if err != nil {
+		return nil, err
+	}
+	targets := map[string]ReturnTarget{}
+	for _, t := range ov.Presets {
+		targets[t.Name] = t
+	}
+	order := map[string]int{}
+	for i, name := range ov.Settings.Targets {
+		order[name] = i
+	}
+	out := map[int64]NodeRouteSummary{}
+	for _, r := range ov.Routes {
+		t, ok := targets[r.Target]
+		if _, wanted := order[r.Target]; !ok || !wanted || slices.Contains(ov.Settings.SkipNodes, r.NodeID) {
+			continue
+		}
+		sum := out[r.NodeID]
+		sum.CheckedAt = max(sum.CheckedAt, r.CheckedAt)
+		chain := r.Verdict.Chain
+		if chain == nil {
+			chain = []string{}
+		}
+		sum.Routes = append(sum.Routes, RouteSummary{
+			City: t.City, Carrier: t.Carrier, Line: r.Verdict.Line, Handoff: r.Verdict.Handoff, Entry: r.Verdict.Entry,
+			Tier: r.Verdict.Tier, Confidence: r.Verdict.Confidence, Evidence: r.Verdict.Evidence, Chain: chain, Error: r.Error,
+		})
+		out[r.NodeID] = sum
+	}
+	for id, sum := range out {
+		slices.SortStableFunc(sum.Routes, func(a, b RouteSummary) int {
+			return order[a.City+a.Carrier] - order[b.City+b.Carrier]
+		})
+		out[id] = sum
+	}
+	return out, nil
 }

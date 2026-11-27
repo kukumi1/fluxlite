@@ -139,25 +139,41 @@ type enrollReply struct {
 	AgentToken    string `json:"agent_token,omitempty"`
 }
 
+// errProbeOff is why a machine cannot be given an agent: without the probe's
+// public domain there is nowhere for one to report.
+var errProbeOff = errors.New("探针没有启用：先在「探针」页填好公开页域名")
+
 // enrollAgent gives a newly enrolled machine its probe identity, paired with
 // it from the start, so the installer can set up the agent and the machine
-// shows live readings as soon as it appears. A machine enrolled again keeps
-// the identity it had, and with it its history. Without the probe's public
-// domain there is nowhere for an agent to report, and nothing is returned.
+// shows live readings as soon as it appears. Without the probe nothing is
+// returned and the installer skips the agent.
 func (s *Server) enrollAgent(ctx context.Context, outcome *service.EnrollOutcome) (endpoint, token string) {
+	endpoint, token, err := s.agentIdentity(ctx, outcome.NodeID, outcome.Name)
+	if err != nil && !errors.Is(err, errProbeOff) {
+		s.log.Error("prepare the enrolled machine's probe agent", "node", outcome.Name, "error", err)
+	}
+	return endpoint, token
+}
+
+// agentIdentity is where a machine's agent reports and the token it uses:
+// the identity already paired with the machine, so it keeps its history;
+// else the agent already reporting from its address; else a new one.
+func (s *Server) agentIdentity(ctx context.Context, nodeID int64, name string) (endpoint, token string, err error) {
 	if s.probe == nil {
-		return "", ""
+		return "", "", errProbeOff
 	}
 	st := s.svc.Store()
 	host, err := st.ProbeSetting(ctx, komari.PublicHostSetting)
-	if err != nil || host == "" {
-		return "", ""
+	if err != nil {
+		return "", "", err
 	}
-	nodeID := outcome.NodeID
+	if host == "" {
+		return "", "", errProbeOff
+	}
 	c, err := st.ProbeClientByNode(ctx, nodeID)
 	if errors.Is(err, store.ErrNotFound) {
 		if c, err = s.agentAt(ctx, nodeID); err == nil && c == nil {
-			c = &store.ProbeClient{UUID: uuid.NewString(), Token: rand.Text()[:22], Name: outcome.Name}
+			c = &store.ProbeClient{UUID: uuid.NewString(), Token: rand.Text()[:22], Name: name}
 			err = st.CreateProbeClient(ctx, *c)
 		}
 		if err == nil {
@@ -165,10 +181,9 @@ func (s *Server) enrollAgent(ctx context.Context, outcome *service.EnrollOutcome
 		}
 	}
 	if err != nil {
-		s.log.Error("prepare the enrolled machine's probe agent", "node", outcome.Name, "error", err)
-		return "", ""
+		return "", "", err
 	}
-	return "https://" + host, c.Token
+	return "https://" + host, c.Token, nil
 }
 
 // agentAt finds the agent already reporting from the machine's address and
@@ -224,4 +239,33 @@ func externalBaseURL(r *http.Request) string {
 		host = strings.Split(fwd, ",")[0]
 	}
 	return scheme + "://" + strings.TrimSpace(host)
+}
+
+// handleInstallNodeAgent installs the probe agent on a machine the panel
+// reaches over SSH, or reinstalls it with the machine's identity, which also
+// repairs an agent started with the wrong address.
+func (s *Server) handleInstallNodeAgent(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	node, err := s.svc.Store().NodeByID(r.Context(), id)
+	if err != nil {
+		writeError(w, statusForError(err), "机器不存在")
+		return
+	}
+	endpoint, token, err := s.agentIdentity(r.Context(), id, node.Name)
+	if err != nil {
+		if !errors.Is(err, errProbeOff) {
+			s.log.Error("prepare a probe agent", "node", node.Name, "error", err)
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.svc.InstallProbeAgent(r.Context(), id, endpoint, token); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	s.audit(r, "node.agent_install", node.Name, endpoint)
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

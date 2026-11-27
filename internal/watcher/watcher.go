@@ -85,7 +85,7 @@ func New(cfg Config) *Watcher {
 // sample interval promises.
 func (w *Watcher) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(11)
+	wg.Add(10)
 
 	go func() {
 		defer wg.Done()
@@ -117,10 +117,6 @@ func (w *Watcher) Run(ctx context.Context) {
 	}()
 	go func() {
 		defer wg.Done()
-		w.loop(ctx, service.LatencyInterval, w.sampleLatency, true)
-	}()
-	go func() {
-		defer wg.Done()
 		w.loop(ctx, routeTraceCheck, w.traceReturnRoutes, false)
 	}()
 	go func() {
@@ -141,12 +137,6 @@ func (w *Watcher) Run(ctx context.Context) {
 // routeTraceCheck is how often the watcher looks for return routes due for a
 // trace. Each one is traced about once a day; this only bounds how late.
 const routeTraceCheck = 10 * time.Minute
-
-func (w *Watcher) sampleLatency(ctx context.Context) {
-	if err := w.svc.SampleLatency(ctx); err != nil {
-		w.log.Warn("latency sampling", "error", err)
-	}
-}
 
 func (w *Watcher) traceReturnRoutes(ctx context.Context) {
 	if err := w.svc.TraceReturnRoutes(ctx); err != nil {

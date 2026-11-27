@@ -8,34 +8,19 @@ import (
 	"net"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/kukumi1/fluxlite/internal/model"
-	"github.com/kukumi1/fluxlite/internal/sshx"
 	"github.com/kukumi1/fluxlite/internal/store"
-	"github.com/kukumi1/fluxlite/internal/verifier"
 )
 
 const (
 	latencyTargetsKey = "latency.targets"
-	// latencyProbes is how many connections each round opens to a test
-	// point; loss is reported in steps of one in four.
-	latencyProbes = 4
 	// synRetryMS marks a connection whose first SYN was lost: the kernel
 	// resends it after a second, so the connect still succeeds but its time
 	// is that timer, not the path. Such a probe counts as a lost packet.
-	synRetryMS = 1000
-	// LatencyInterval is how often every machine measures its test points.
-	LatencyInterval = 3 * time.Minute
-	// latencyKeep bounds the history kept for trends.
-	latencyKeep = 7 * 24 * time.Hour
-	// latencyFreshFor is how old a sample may be and still describe a link.
-	latencyFreshFor = 10 * time.Minute
-	// latencyAlertHold is three rounds: one bad round is not an outage.
-	latencyAlertHold  = 2*LatencyInterval + 30*time.Second
+	synRetryMS        = 1000
 	maxLatencyTargets = 12
 )
 
@@ -268,79 +253,8 @@ func resolveIP(ctx context.Context, host string, family int) (string, error) {
 	return addrs[0].String(), nil
 }
 
-// SampleLatency measures every online machine, a few at a time, and drops
-// history older than a week.
-func (s *Service) SampleLatency(ctx context.Context) error {
-	targets, err := s.resolveTargets(ctx)
-	if err != nil || len(targets) == 0 {
-		return err
-	}
-	nodes, err := s.store.ListNodes(ctx)
-	if err != nil {
-		return err
-	}
-	var wg sync.WaitGroup
-	slots := make(chan struct{}, 4)
-	for _, n := range nodes {
-		if n.Status != model.StatusOnline {
-			continue
-		}
-		wg.Add(1)
-		slots <- struct{}{}
-		go func(n *model.Node) {
-			defer wg.Done()
-			defer func() { <-slots }()
-			nodeCtx, cancel := context.WithTimeout(ctx, time.Minute)
-			defer cancel()
-			if err := s.measureNode(nodeCtx, n, forNode(targets, n)); err != nil {
-				s.log.Debug("latency sample failed", "node", n.Name, "error", err)
-			}
-		}(n)
-	}
-	wg.Wait()
-	return s.store.PruneLatency(ctx, time.Now().Add(-latencyKeep).Unix())
-}
-
-// MeasureNodeLatency measures one machine now, for the page's retest button.
-func (s *Service) MeasureNodeLatency(ctx context.Context, nodeID int64) error {
-	node, err := s.store.NodeByID(ctx, nodeID)
-	if err != nil {
-		return err
-	}
-	targets, err := s.resolveTargets(ctx)
-	if err != nil {
-		return err
-	}
-	return s.measureNode(ctx, node, forNode(targets, node))
-}
-
-func (s *Service) measureNode(ctx context.Context, node *model.Node, targets []resolvedTarget) error {
-	client, err := s.pool.Get(ctx, node)
-	if err != nil {
-		return err
-	}
-	res, err := sshx.Run(ctx, client.Client, latencyScript(targets))
-	if err != nil {
-		return err
-	}
-	samples := parseLatency(res.Stdout, targets, node.ID, time.Now().Unix())
-	return s.store.AddLatencySamples(ctx, samples)
-}
-
-// latencyScript probes every test point at once, each one latencyProbes
-// times in a row, and prints "<index> <ok|fail|none> <ms|->" per probe.
-func latencyScript(targets []resolvedTarget) string {
-	var b strings.Builder
-	for i, t := range targets {
-		fmt.Fprintf(&b, "( for n in%s; do r=$(%s); echo \"%d $r\"; done ) &\n",
-			strings.Repeat(" x", latencyProbes), verifier.TCPProbeCommand(t.ip, t.Port), i)
-	}
-	b.WriteString("wait\n")
-	return b.String()
-}
-
-// median is the round's latency. One slow connect among four is a hiccup on
-// that connect, not the path; the mean would carry it into the whole round.
+// median is a run of readings' usual value: one slow reading among them is a
+// hiccup, not the path, and the mean would carry it into the whole run.
 func median(times []int) int {
 	slices.Sort(times)
 	mid := len(times) / 2
@@ -348,58 +262,6 @@ func median(times []int) int {
 		return (times[mid-1] + times[mid]) / 2
 	}
 	return times[mid]
-}
-
-func parseLatency(out string, targets []resolvedTarget, nodeID, at int64) []store.LatencySample {
-	type tally struct {
-		ok, done int
-		times    []int
-	}
-	counts := make([]tally, len(targets))
-	for _, line := range strings.Split(out, "\n") {
-		f := strings.Fields(line)
-		if len(f) < 2 {
-			continue
-		}
-		i, err := strconv.Atoi(f[0])
-		if err != nil || i < 0 || i >= len(targets) || f[1] == "none" {
-			continue
-		}
-		c := &counts[i]
-		c.done++
-		if f[1] != "ok" {
-			continue
-		}
-		ms, timed := 0, false
-		if len(f) > 2 {
-			if v, err := strconv.Atoi(f[2]); err == nil {
-				ms, timed = v, true
-			}
-		}
-		if timed && ms >= synRetryMS {
-			continue
-		}
-		c.ok++
-		if timed {
-			c.times = append(c.times, ms)
-		}
-	}
-	var samples []store.LatencySample
-	for i, c := range counts {
-		if c.done == 0 {
-			continue
-		}
-		sample := store.LatencySample{
-			NodeID: nodeID, Target: targets[i].Name, Family: targets[i].family, At: at,
-			Loss: (c.done - c.ok) * 100 / c.done,
-		}
-		if len(c.times) > 0 {
-			ms := median(c.times)
-			sample.AvgMS = &ms
-		}
-		samples = append(samples, sample)
-	}
-	return samples
 }
 
 // latencyVerdict says why a sample is bad under the thresholds, or "".
@@ -420,45 +282,30 @@ func (s *Service) latencySubjects(ctx context.Context, now time.Time, cfg AlertS
 	if err != nil {
 		return nil, err
 	}
-	latest, err := s.store.LatestLatency(ctx, now.Add(-latencyFreshFor).Unix())
+	links, err := s.probeLinks(ctx, now)
 	if err != nil {
 		return nil, err
 	}
-	// Alerts and the daily summary follow IPv4, which every machine has and
-	// most users connect over; IPv6 is shown on the page only.
-	byNode := make(map[int64]map[string]store.LatencySample)
-	for _, l := range latest {
-		if l.Family != 4 {
+	online := map[int64]*model.Node{}
+	for _, n := range nodes {
+		if n.Status == model.StatusOnline {
+			online[n.ID] = n
+		}
+	}
+	subjects := make([]alertSubject, 0, len(links))
+	for _, l := range links {
+		n, ok := online[l.NodeID]
+		if !ok {
 			continue
 		}
-		if byNode[l.NodeID] == nil {
-			byNode[l.NodeID] = map[string]store.LatencySample{}
+		sub := alertSubject{
+			key: fmt.Sprintf("lat:%d:%s", n.ID, l.Target), kind: alertLatency, nodeID: n.ID,
+			name: n.Name + " → " + l.Target, hold: latencyAlertHold, state: obsOK,
 		}
-		byNode[l.NodeID][l.Target] = l
-	}
-	targets, err := s.LatencyTargets(ctx)
-	if err != nil {
-		return nil, err
-	}
-	var subjects []alertSubject
-	for _, n := range nodes {
-		for _, t := range targets {
-			if !t.Enabled {
-				continue
-			}
-			sub := alertSubject{
-				key: fmt.Sprintf("lat:%d:%s", n.ID, t.Name), kind: alertLatency, nodeID: n.ID,
-				name: n.Name + " → " + t.Name, hold: latencyAlertHold,
-			}
-			if l, ok := byNode[n.ID][t.Name]; ok && n.Status == model.StatusOnline {
-				if reason := latencyVerdict(l, cfg); reason != "" {
-					sub.state, sub.reasons = obsFailing, []string{reason}
-				} else {
-					sub.state = obsOK
-				}
-			}
-			subjects = append(subjects, sub)
+		if reason := latencyVerdict(l, cfg); reason != "" {
+			sub.state, sub.reasons = obsFailing, []string{reason}
 		}
+		subjects = append(subjects, sub)
 	}
 	return subjects, nil
 }
@@ -481,24 +328,16 @@ func (s *Service) badLatencyPoints(ctx context.Context, now time.Time, cfg Alert
 
 // LatencyOverview is the latest picture for the line-quality page.
 type LatencyOverview struct {
-	Targets []LatencyTarget       `json:"targets"`
-	Samples []store.LatencySample `json:"samples"`
-	Presets []LatencyTarget       `json:"presets"`
-	Return  *ReturnOverview       `json:"return"`
-	Blocks  []BlockState          `json:"blocks"`
+	Targets []LatencyTarget `json:"targets"`
+	Presets []LatencyTarget `json:"presets"`
+	Return  *ReturnOverview `json:"return"`
+	Blocks  []BlockState    `json:"blocks"`
 }
 
 func (s *Service) LatencyOverview(ctx context.Context) (*LatencyOverview, error) {
 	targets, err := s.LatencyTargets(ctx)
 	if err != nil {
 		return nil, err
-	}
-	samples, err := s.store.LatestLatency(ctx, time.Now().Add(-latencyFreshFor).Unix())
-	if err != nil {
-		return nil, err
-	}
-	if samples == nil {
-		samples = []store.LatencySample{}
 	}
 	ret, err := s.returnOverview(ctx)
 	if err != nil {
@@ -508,22 +347,5 @@ func (s *Service) LatencyOverview(ctx context.Context) (*LatencyOverview, error)
 	if err != nil {
 		return nil, err
 	}
-	return &LatencyOverview{Targets: targets, Samples: samples, Presets: LatencyPresets(), Return: ret, Blocks: blocks}, nil
-}
-
-// LatencyHistory returns a machine's samples over the last hours, averaged
-// into buckets so a chart gets a few hundred points at most.
-func (s *Service) LatencyHistory(ctx context.Context, nodeID int64, family, hours int) ([]store.LatencySample, error) {
-	if hours < 1 || hours > 24*7 || (family != 4 && family != 6) {
-		return nil, ErrLatencyTargets
-	}
-	bucket := int64(hours) * 3600 / 240
-	if bucket < 180 {
-		bucket = 180
-	}
-	out, err := s.store.LatencyHistory(ctx, nodeID, family, time.Now().Add(-time.Duration(hours)*time.Hour).Unix(), bucket)
-	if out == nil {
-		out = []store.LatencySample{}
-	}
-	return out, err
+	return &LatencyOverview{Targets: targets, Presets: LatencyPresets(), Return: ret, Blocks: blocks}, nil
 }

@@ -458,9 +458,6 @@ export const api = {
   latencyOverview: () => request<LatencyOverview>("/latency", { cache: "no-store" }),
   saveLatencyTargets: (targets: LatencyTarget[]) =>
     request<LatencyTarget[]>("/latency/targets", { method: "PUT", body: JSON.stringify(targets) }),
-  latencyHistory: (nodeID: number, hours: number, family: IPFamily) =>
-    request<LatencySample[]>(`/latency/nodes/${nodeID}/history?hours=${hours}&family=${family}`),
-  probeLatency: (nodeID: number) => post<{ ok: boolean }>(`/latency/nodes/${nodeID}/probe`),
   traceReturnRoutes: (nodeID: number) => post<{ ok: boolean }>(`/latency/nodes/${nodeID}/trace`),
   blockCheck: () => post<BlockResult[]>("/latency/block-check"),
   probeOverview: () => request<ProbeOverview>("/probe", { cache: "no-store" }),
@@ -482,6 +479,9 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, body?.error ?? `上传失败 (${res.status})`);
     return { version: body?.version ?? "" };
   },
+  setProbeMachineTasks: (uuid: string, taskIDs: number[]) =>
+    request<{ ok: boolean }>(`/probe/machines/${uuid}/tasks`, { method: "PUT", body: JSON.stringify({ task_ids: taskIDs }) }),
+  installNodeAgent: (nodeID: number) => post<{ ok: boolean }>(`/nodes/${nodeID}/agent`),
   reorderProbeMachines: (uuids: string[]) => request<{ ok: boolean }>("/probe/order", { method: "PUT", body: JSON.stringify({ uuids }) }),
   setProbeNotify: (uuid: string, notify: boolean) =>
     request<{ notify: boolean }>(`/probe/machines/${uuid}/notify`, { method: "PUT", body: JSON.stringify({ notify }) }),
@@ -706,16 +706,6 @@ export interface LatencyTarget {
 
 export type IPFamily = 4 | 6;
 
-/** 一轮测量。avg_ms 为 null：一次都没连上，或机器上没有能计时的工具。 */
-export interface LatencySample {
-  node_id: number;
-  target: string;
-  family: IPFamily;
-  at: number;
-  avg_ms: number | null;
-  loss: number;
-}
-
 /** 回程的一跳：ip 为空表示这一跳没有回应；asn/net 由面板按宣告前缀判断。 */
 export interface ReturnRouteHop {
   ttl: number;
@@ -806,7 +796,6 @@ export interface BlockResult {
 export interface LatencyOverview {
   targets: LatencyTarget[];
   presets: LatencyTarget[];
-  samples: LatencySample[];
   return: ReturnOverview;
   blocks: BlockState[];
 }

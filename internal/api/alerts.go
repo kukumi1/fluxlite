@@ -87,39 +87,6 @@ func (s *Server) handleSaveLatencyTargets(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, targets)
 }
 
-func (s *Server) handleLatencyHistory(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r)
-	if !ok {
-		return
-	}
-	hours, err := strconv.Atoi(r.URL.Query().Get("hours"))
-	if err != nil {
-		hours = 24
-	}
-	family := 4
-	if r.URL.Query().Get("family") == "6" {
-		family = 6
-	}
-	history, err := s.svc.LatencyHistory(r.Context(), id, family, hours)
-	if err != nil {
-		writeError(w, statusForError(err), err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, history)
-}
-
-func (s *Server) handleProbeLatency(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r)
-	if !ok {
-		return
-	}
-	if err := s.svc.MeasureNodeLatency(r.Context(), id); err != nil {
-		writeError(w, statusForError(err), "测量失败："+err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
 func (s *Server) handleTraceReturnRoutes(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {

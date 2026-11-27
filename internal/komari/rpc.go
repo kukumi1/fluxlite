@@ -55,6 +55,7 @@ func (s *Site) methods() map[string]func(context.Context, json.RawMessage, bool)
 		"public:getPublicPingTasks":   s.publicTasks,
 		"public:queryMetrics":         s.queryMetrics,
 		"public:getPingMetricStats":   s.pingStats,
+		"fluxlite:getReturnRoutes":    s.returnRoutes,
 	}
 }
 

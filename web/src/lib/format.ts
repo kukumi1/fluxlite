@@ -54,3 +54,12 @@ export function percentOf(used: number | null, total: number | null): number | n
   if (used === null || total === null || total <= 0) return null;
   return Math.min(100, (used / total) * 100);
 }
+
+/** When the newest of some checks ran, as the page shows it. */
+export function lastChecked(times: number[]): string {
+  const last = Math.max(0, ...times);
+  if (!last) return "还没检测过";
+  const d = new Date(last * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `最后检测 ${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}

@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kukumi1/fluxlite/internal/komari"
@@ -92,6 +94,43 @@ func TestLatencyChecksForgetDeletedMachines(t *testing.T) {
 	}
 	if tasks, _ := st.ProbeTasks(ctx); len(tasks[0].Clients) != 1 || tasks[0].Clients[0] != "b" {
 		t.Fatalf("a deleted machine leaves its checks: %v", tasks[0].Clients)
+	}
+}
+
+// The installer reads the agent's endpoint and token out of the panel's
+// reply. Checking the script only parses once let a mangled sed replacement
+// through, which installed agents with no address at all; so the lines are
+// run, against a reply as the panel writes it.
+func TestEnrollScriptReadsTheAgentIdentity(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh to run the script with")
+	}
+	for i, r := range enrollScript {
+		if r < 0x20 && r != '\n' && r != '\t' {
+			t.Fatalf("control character %#x at byte %d", r, i)
+		}
+	}
+	var lines []string
+	for _, line := range strings.Split(enrollScript, "\n") {
+		if strings.HasPrefix(line, "AGENT_ENDPOINT=") || strings.HasPrefix(line, "AGENT_TOKEN=") {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) != 2 {
+		t.Fatalf("expected the two lines that read the agent identity, found %d", len(lines))
+	}
+	reply, err := json.Marshal(enrollReply{
+		EnrollOutcome: &service.EnrollOutcome{NodeID: 7, Name: "喵喵2", Verified: true, UDPStatus: "通"},
+		AgentEndpoint: "https://status.example.com", AgentToken: "AbC123xyz",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := "RESP='" + string(reply) + "'\n" + strings.Join(lines, "\n") + "\nprintf '%s|%s' \"$AGENT_ENDPOINT\" \"$AGENT_TOKEN\"\n"
+	out, err := exec.Command(sh, "-c", script).CombinedOutput()
+	if err != nil || string(out) != "https://status.example.com|AbC123xyz" {
+		t.Fatalf("%v: %q", err, out)
 	}
 }
 

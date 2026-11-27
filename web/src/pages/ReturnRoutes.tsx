@@ -5,6 +5,7 @@ import { Banner, Modal } from "../components/Modal";
 import { EmptyState } from "../components/EmptyState";
 import { Flag } from "../components/Flag";
 import { regionOf } from "../lib/region";
+import { lastChecked } from "../lib/format";
 
 const key = (nodeID: number, target: string) => `${nodeID}:${target}`;
 
@@ -78,7 +79,10 @@ export function ReturnRoutesSection({ overview, nodes, busy, onTrace, onSaved }:
       <div className="quality-section-head">
         <div>
           <h2>三网回程</h2>
-          <p>每天从每台机器追踪一次回国内各地三网的路径，按入境的骨干网判断线路。</p>
+          <p>
+            每 6 小时从每台机器追踪一次回国内各地三网的路径，按入境的骨干网判断线路；结果也显示在公开页的机器卡片上。
+            <span className="quality-checked"> {lastChecked(overview.routes.map((r) => r.checked_at))} · 每 6 小时自动</span>
+          </p>
         </div>
         <button className="btn" onClick={() => setEditing(true)}><Settings2 size={15} />回程设置</button>
       </div>

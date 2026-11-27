@@ -64,6 +64,7 @@ type Site struct {
 	cachedAt time.Time
 	earliest map[int64]int64
 	earlyAt  time.Time
+	routes   ReturnRoutes
 }
 
 // New makes the public page; themes is the directory holding each theme's

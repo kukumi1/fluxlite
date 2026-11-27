@@ -2435,3 +2435,31 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
   .script-steps { grid-template-columns: minmax(0, 1fr); }
   .advanced-summary { display: none; }
 }
+
+/* The places scroll when the window is too short for all of them. The box
+ * reaches past the card on every side by as much as the active place's bite
+ * and its corners stick out, so scrolling clips nothing of them; the extra
+ * width is given back as padding, so the rows stay where they were. */
+.sidebar > .sidebar-scroll {
+  --sidebar-bleed: 28px;
+  flex: 0 1 auto;
+  min-height: 0;
+  margin: -24px calc(-1 * (var(--sidebar-pad, 12px) + var(--sidebar-bleed)));
+  padding: 24px calc(var(--sidebar-pad, 12px) + var(--sidebar-bleed));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.sidebar > .sidebar-scroll::-webkit-scrollbar { display: none; }
+
+@media (max-height: 860px) {
+  .sidebar-pet { display: none; }
+  .nav button { min-height: 40px; }
+  .sidebar-group-label { padding-top: 10px; }
+}
+/* What scrolls passes under the brand and the account, not over them. */
+.sidebar > .sidebar-head,
+.sidebar > .sidebar-pet,
+.sidebar > .sidebar-footer { position: relative; z-index: 1; background: var(--card); }
+.sidebar > .sidebar-head { border-radius: 22px 22px 0 0; }

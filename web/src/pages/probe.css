@@ -32,3 +32,16 @@
 .probe-command code { flex: 1; font-size: 12px; line-height: 1.6; word-break: break-all; }
 .probe-theme-upload { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
 .live-tag { margin-left: 6px; border-color: transparent; background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); }
+.probe-card-tools { display: inline-flex; align-items: center; gap: 8px; }
+.probe-by-machine { display: grid; grid-template-columns: minmax(160px, 220px) 1fr; gap: 16px; }
+.probe-machine-list { display: grid; align-content: start; gap: 2px; max-height: 460px; overflow-y: auto; }
+.probe-machine-list button { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 0; border-radius: 10px; background: transparent; box-shadow: none; font-size: 13px; text-align: left; }
+.probe-machine-list button small { margin-left: auto; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.probe-machine-list button.active { background: var(--muted); font-weight: 600; }
+.probe-machine-list .probe-state::before { margin: 0; }
+.probe-machine-tasks { display: grid; align-content: start; gap: 6px; }
+.probe-machine-tasks > strong { margin-bottom: 4px; font-size: 13px; }
+.probe-task-check { display: grid; grid-template-columns: auto minmax(90px, auto) 1fr; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 10px; font-size: 13px; cursor: pointer; }
+.probe-task-check:hover { background: var(--muted); }
+.probe-task-check .mono { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 720px) { .probe-by-machine { grid-template-columns: 1fr; } .probe-machine-list { max-height: 200px; } }

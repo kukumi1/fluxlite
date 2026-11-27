@@ -24,12 +24,12 @@ func TestSpikeVerdict(t *testing.T) {
 	if sub.state != obsFailing || len(sub.reasons) != 3 {
 		t.Fatalf("%+v", sub)
 	}
-	if sub.reasons[0] != "北京移动 IPv6：186ms（基线 42ms，+342%）" || !strings.HasPrefix(sub.reasons[2], "广东联通 IPv6：182ms") {
+	if sub.reasons[0] != "北京移动：186ms（基线 42ms，+342%）" || !strings.HasPrefix(sub.reasons[2], "广东联通：182ms") {
 		t.Fatalf("worst first, with the rise: %q", sub.reasons)
 	}
 
 	calm := spikeSubject(online, []spikeReading{link("广东联通", 6, 75, 69)})
-	if calm.state != obsOK || calm.reasons[0] != "广东联通 IPv6：75ms（基线 69ms）" {
+	if calm.state != obsOK || calm.reasons[0] != "广东联通：75ms（基线 69ms）" {
 		t.Fatalf("%+v", calm)
 	}
 	if spikeSubject(online, nil).state != obsUnknown {
@@ -44,7 +44,7 @@ func TestSpikeVerdict(t *testing.T) {
 func TestSpikeAndRecoveryMessages(t *testing.T) {
 	sub := alertSubject{kind: alertSpike, name: "V6VPS-HK", reasons: []string{"广东联通 IPv6：182ms（基线 69ms，+163%）"}}
 	text := alertEventText(alertEvent{subject: sub, failing: true})
-	if !strings.HasPrefix(text, "⚠️ 延迟异常暴涨：V6VPS-HK\n触发：连续 3 轮高于历史基线 2 倍（且至少高出 50ms）\n· 广东联通") {
+	if !strings.HasPrefix(text, "⚠️ 延迟异常暴涨：V6VPS-HK\n触发：持续 6 分钟以上高于近一天基线 2 倍（且至少高出 50ms）\n· 广东联通") {
 		t.Fatal(text)
 	}
 	sub.reasons = []string{"广东联通 IPv6：72ms（基线 69ms）"}

@@ -270,6 +270,12 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
           )}
           <ActionButton iconOnly={iconOnly} label="编辑" icon={Pencil} disabled={order.pending} onClick={() => setEditing(n)} />
           {probeByNode.get(n.id) && <ActionButton iconOnly={iconOnly} label="探针" icon={Radio} title="agent、公开页上的价格到期等" onClick={() => setEditingProbe(probeByNode.get(n.id) ?? null)} />}
+          {!telegram && (
+            <ActionButton iconOnly={iconOnly} label={busyId === -n.id ? "安装中…" : probeByNode.get(n.id) ? "重装 agent" : "装 agent"} icon={Download}
+              className={busyId === -n.id ? "is-busy" : ""}
+              title={probeByNode.get(n.id) ? "面板 SSH 进去用这台机器原来的身份重装 agent，agent 连不上、版本太旧时用" : "面板 SSH 进去装上探针 agent，之后这台机器显示实时数据"}
+              disabled={busy || busyId === -n.id || n.status !== "online"} onClick={() => void installAgent(n)} />
+          )}
         </div>
         <div className="machine-actions-side">
           {!telegram && <ActionButton iconOnly={iconOnly} label="重装" icon={RotateCcw} className="ghost" title="机器重装过系统？在这里拿一条命令重新接管，链路不用重建" disabled={order.pending} onClick={() => setReinstalling(n)} />}
@@ -367,6 +373,23 @@ export function Nodes({ onOpenConsole, telegram = false, initialCreateInput, onC
     try {
       const result = await api.probeNode(node.id);
       setProbe({ node: node.name, result });
+      await load();
+    } catch (err) {
+      fail(err);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  // The busy marker is the node's negated ID, so the agent's install does
+  // not show as a probe of the same machine.
+  async function installAgent(node: Node) {
+    setBusyId(-node.id);
+    setError("");
+    setNotice("");
+    try {
+      await api.installNodeAgent(node.id);
+      setNotice(`${node.name} 的 agent 已装好，几秒后开始显示实时数据`);
       await load();
     } catch (err) {
       fail(err);

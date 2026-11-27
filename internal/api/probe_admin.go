@@ -13,6 +13,7 @@ import (
 
 	"github.com/kukumi1/fluxlite/internal/komari"
 	"github.com/kukumi1/fluxlite/internal/probe"
+	"github.com/kukumi1/fluxlite/internal/service"
 	"github.com/kukumi1/fluxlite/internal/store"
 )
 
@@ -177,9 +178,6 @@ func (s *Server) handleDeleteProbeTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// probeInstaller is Komari's agent installer, which the panel's agents run.
-const probeInstaller = "https://raw.githubusercontent.com/komari-monitor/komari-agent/refs/heads/main/install.sh"
-
 type probeEnroll struct {
 	Key     string `json:"key"`
 	Host    string `json:"host"`
@@ -200,7 +198,7 @@ func (s *Server) handleProbeEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 	out := probeEnroll{Key: key, Host: host}
 	if key != "" && host != "" {
-		out.Command = "bash <(curl -sL " + probeInstaller + ") -e https://" + host + " --auto-discovery " + key + " --disable-web-ssh --disable-auto-update"
+		out.Command = "bash <(curl -sL " + service.KomariInstaller + ") -e https://" + host + " --auto-discovery " + key + " --disable-web-ssh --disable-auto-update"
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -240,4 +238,26 @@ func (s *Server) handleProbeTheme(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "probe.theme", version, "")
 	writeJSON(w, http.StatusOK, map[string]string{"version": version})
+}
+
+// handleSetProbeMachineTasks chooses which latency checks one machine runs,
+// for the probe page's by-machine view.
+func (s *Server) handleSetProbeMachineTasks(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		TaskIDs []int64 `json:"task_ids"`
+	}
+	if err := decodeJSON(r, &in); err != nil || in.TaskIDs == nil {
+		writeError(w, http.StatusBadRequest, "task_ids must be an array")
+		return
+	}
+	uuid := chi.URLParam(r, "uuid")
+	if err := s.svc.Store().SetProbeClientTasks(r.Context(), uuid, in.TaskIDs); err != nil {
+		writeError(w, statusForError(err), "保存失败")
+		return
+	}
+	if err := s.probe.ReloadTasks(r.Context()); err != nil {
+		s.log.Error("reload probe tasks", "error", err)
+	}
+	s.audit(r, "probe.machine.tasks", uuid, strconv.Itoa(len(in.TaskIDs)))
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

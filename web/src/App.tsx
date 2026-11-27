@@ -213,11 +213,13 @@ function Shell() {
           <button className="icon-btn mobile-close" onClick={() => setMobileOpen(false)} aria-label="关闭导航"><X size={18} /></button>
         </div>
 
-        <div className="sidebar-group-label">工作空间</div>
-        <nav className="nav">{MAIN_NAV.map(navButton)}</nav>
+        <div className="sidebar-scroll">
+          <div className="sidebar-group-label">工作空间</div>
+          <nav className="nav">{MAIN_NAV.map(navButton)}</nav>
 
-        <div className="sidebar-group-label">管理</div>
-        <nav className="nav">{ADMIN_NAV.map(navButton)}</nav>
+          <div className="sidebar-group-label">管理</div>
+          <nav className="nav">{ADMIN_NAV.map(navButton)}</nav>
+        </div>
 
         <SidebarPet />
 

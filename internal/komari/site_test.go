@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kukumi1/fluxlite/internal/model"
 	"github.com/kukumi1/fluxlite/internal/probe"
 	"github.com/kukumi1/fluxlite/internal/store"
 )
@@ -320,5 +321,41 @@ func TestBackOfficeAndRetiredWorker(t *testing.T) {
 	resp.Body.Close()
 	if !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/javascript") || !strings.Contains(string(body), "unregister") {
 		t.Fatalf("%s %s", resp.Header.Get("Content-Type"), body)
+	}
+}
+
+// The theme reads the panel's return routes by probe machine: only machines
+// the visitor may see, and only those the panel traces.
+func TestReturnRoutesFollowVisibility(t *testing.T) {
+	site, st, srv := fixture(t)
+	ctx := context.Background()
+	var ids []int64
+	for _, name := range []string{"hk", "hidden"} {
+		n := &model.Node{Name: name, Host: "192.0.2.1", SSHPort: 22, SSHUser: "root", AuthType: model.AuthKey, AuthSecret: []byte("x"), PortStart: 10000, PortEnd: 20000}
+		if err := st.CreateNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, n.ID)
+	}
+	if err := st.SetProbeNode(ctx, "u-1", &ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProbeNode(ctx, "u-2", &ids[1]); err != nil {
+		t.Fatal(err)
+	}
+
+	var empty map[string]any
+	if err := json.Unmarshal(call(t, srv, "fluxlite:getReturnRoutes", `{}`, nil)["result"], &empty); err != nil || len(empty) != 0 {
+		t.Fatalf("without traces there is nothing to show: %v %v", empty, err)
+	}
+	site.SetReturnRoutes(func(context.Context) (map[int64]any, error) {
+		return map[int64]any{ids[0]: map[string]any{"line": "CN2 GIA"}, ids[1]: map[string]any{"line": "163"}}, nil
+	})
+	var got map[string]map[string]any
+	if err := json.Unmarshal(call(t, srv, "fluxlite:getReturnRoutes", `{}`, nil)["result"], &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got["u-1"]["line"] != "CN2 GIA" {
+		t.Fatalf("a visitor sees the routes of the machines they may see: %v", got)
 	}
 }

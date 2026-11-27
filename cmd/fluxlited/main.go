@@ -116,6 +116,14 @@ func run() error {
 	authSvc := auth.New(st)
 	hub := probe.New(st, logger)
 	site := komari.New(st, hub, filepath.Join(*dataDir, "themes"), !*insecure, logger)
+	site.SetReturnRoutes(func(ctx context.Context) (map[int64]any, error) {
+		sums, err := svc.ReturnRouteSummaries(ctx)
+		out := make(map[int64]any, len(sums))
+		for id, sum := range sums {
+			out[id] = sum
+		}
+		return out, err
+	})
 
 	static, err := web.Handler()
 	if err != nil {

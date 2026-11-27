@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -650,6 +651,65 @@ func (s *Store) DeleteProbeTask(ctx context.Context, id int64) error {
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
 			return ErrNotFound
+		}
+		return nil
+	})
+}
+
+// SetProbeClientTasks makes the given latency checks, and only those, run on
+// one machine, leaving every other machine's checks as they were.
+func (s *Store) SetProbeClientTasks(ctx context.Context, uuid string, taskIDs []int64) error {
+	want := map[int64]bool{}
+	for _, id := range taskIDs {
+		want[id] = true
+	}
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		var n int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM probe_clients WHERE uuid = ?`, uuid).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT id, clients FROM probe_ping_tasks`)
+		if err != nil {
+			return fmt.Errorf("list probe tasks: %w", err)
+		}
+		changed := map[int64]string{}
+		for rows.Next() {
+			var id int64
+			var raw string
+			if err := rows.Scan(&id, &raw); err != nil {
+				rows.Close()
+				return err
+			}
+			var clients []string
+			if json.Unmarshal([]byte(raw), &clients) != nil {
+				clients = nil
+			}
+			has := slices.Contains(clients, uuid)
+			switch {
+			case want[id] && !has:
+				clients = append(clients, uuid)
+			case !want[id] && has:
+				clients = slices.DeleteFunc(clients, func(c string) bool { return c == uuid })
+			default:
+				continue
+			}
+			if clients == nil {
+				clients = []string{}
+			}
+			b, _ := json.Marshal(clients)
+			changed[id] = string(b)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for id, clients := range changed {
+			if _, err := tx.ExecContext(ctx, `UPDATE probe_ping_tasks SET clients = ? WHERE id = ?`, clients, id); err != nil {
+				return fmt.Errorf("save probe task: %w", err)
+			}
 		}
 		return nil
 	})

@@ -4,7 +4,7 @@ import { api, ApiError, type ProbeOverview, type ProbeSite, type ProbeTask } fro
 import { Banner } from "../components/Modal";
 import { useConfirm } from "../components/ConfirmDialog";
 import { PageHeader } from "../components/PageHeader";
-import { AgentEnrollDialog, TaskDialog, ThemeUpload } from "./ProbeAdmin";
+import { AgentEnrollDialog, MachineTasks, TaskDialog, ThemeUpload } from "./ProbeAdmin";
 import "./line-quality.css";
 import "./probe.css";
 
@@ -21,6 +21,7 @@ export function Probe() {
   const [notice, setNotice] = useState("");
   const [task, setTask] = useState<ProbeTask | "new" | null>(null);
   const [enrolling, setEnrolling] = useState(false);
+  const [taskView, setTaskView] = useState<"task" | "machine">("task");
   const [confirm, confirmDialog] = useConfirm();
 
   const load = useCallback(async () => {
@@ -84,11 +85,24 @@ export function Probe() {
         <div className="card">
           <div className="probe-card-head">
             <h2>延迟任务</h2>
-            <button type="button" className="btn sm" onClick={() => setTask("new")}><Plus size={14} />新增</button>
+            <span className="probe-card-tools">
+              <div className="segmented labels" role="radiogroup" aria-label="查看方式">
+                {([["task", "按任务"], ["machine", "按机器"]] as const).map(([v, label]) => (
+                  <button key={v} type="button" role="radio" aria-checked={taskView === v} className={taskView === v ? "active" : ""} onClick={() => setTaskView(v)}>{label}</button>
+                ))}
+              </div>
+              <button type="button" className="btn sm" onClick={() => setTask("new")}><Plus size={14} />新增</button>
+            </span>
           </div>
-          <p className="muted probe-note">面板按间隔把检测发给选中机器的 agent 执行，结果画在公开页的延迟图里。</p>
+          <p className="muted probe-note">
+            面板按间隔把检测发给选中机器的 agent 执行，结果画在<strong>执行它的那台机器</strong>的延迟图里：一个测 FAC-TW 的任务选了 5 台机器，就出现在这 5 台的图里，不在 FAC-TW 自己的图里。
+          </p>
           {tasks.length === 0 ? (
-            <p className="muted">还没有延迟任务。</p>
+            <p className="muted">还没有延迟任务。先「新增」一个目标（IP 或域名加端口），再选哪些机器去测。</p>
+          ) : taskView === "machine" ? (
+            <MachineTasks machines={machines} tasks={tasks}
+              onSaved={(name) => { setNotice(`${name} 的延迟任务已保存，下一轮开始按新设置检测`); void load(); }}
+              onError={setError} />
           ) : (
             <table>
               <thead>

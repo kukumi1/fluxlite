@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/kukumi1/fluxlite/internal/auth"
+	"github.com/kukumi1/fluxlite/internal/komari"
 	"github.com/kukumi1/fluxlite/internal/model"
 	"github.com/kukumi1/fluxlite/internal/probe"
 	"github.com/kukumi1/fluxlite/internal/service"
@@ -43,6 +44,7 @@ type Server struct {
 	limiter  *rateLimiter
 	telegram *telegramState
 	probe    *probe.Hub
+	site     *komari.Site
 }
 
 // Config configures the HTTP server.
@@ -53,6 +55,8 @@ type Config struct {
 	Static  http.Handler
 	// Probe takes reports from Komari agents; nil leaves the probe off.
 	Probe *probe.Hub
+	// Site is the probe's public page, served on its own domain.
+	Site *komari.Site
 	// SecureCookies marks session cookies Secure. It is on whenever the panel
 	// is reached over HTTPS, which is the supported deployment.
 	SecureCookies bool
@@ -68,15 +72,34 @@ func NewServer(cfg Config) *Server {
 		limiter:  newRateLimiter(10, time.Minute),
 		telegram: newTelegramState(cfg.Service),
 		probe:    cfg.Probe,
+		site:     cfg.Site,
 	}
 	if cfg.Service != nil {
 		cfg.Service.SetSpeedDone(s.telegramSpeedDone)
 	}
+	if cfg.Probe != nil {
+		cfg.Probe.SetStatusHook(s.probeStatus)
+	}
 	return s
 }
 
-// Handler builds the HTTP routes.
+// Handler builds the HTTP routes. Requests for the probe's public domain go
+// to its page alone, so nothing of the panel is reachable there.
 func (s *Server) Handler() http.Handler {
+	panel := s.panelHandler()
+	if s.site == nil {
+		return panel
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.site.Serves(r) {
+			s.site.ServeHTTP(w, r)
+			return
+		}
+		panel.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) panelHandler() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
@@ -196,6 +219,18 @@ func (s *Server) Handler() http.Handler {
 			r.Delete("/speedtest/{id}", s.handleDeleteSpeedtest)
 			r.Get("/speedtest/{id}/image", s.handleSpeedImage)
 			r.Get("/probe", s.handleProbeOverview)
+			r.Put("/probe/machines/{uuid}/notify", s.handleProbeNotify)
+			r.Put("/probe/machines/{uuid}", s.handleUpdateProbeMachine)
+			r.Delete("/probe/machines/{uuid}", s.handleDeleteProbeMachine)
+			r.Post("/probe/tasks", s.handleSaveProbeTask)
+			r.Put("/probe/tasks/{id}", s.handleSaveProbeTask)
+			r.Delete("/probe/tasks/{id}", s.handleDeleteProbeTask)
+			r.Get("/probe/enroll", s.handleProbeEnroll)
+			r.Post("/probe/enroll/key", s.handleProbeEnrollKey)
+			r.Post("/probe/theme", s.handleProbeTheme)
+			r.Get("/probe/site", s.handleProbeSite)
+			r.Put("/probe/site", s.handleSaveProbeSite)
+			r.Post("/probe/theme-login", s.handleProbeThemeLogin)
 			r.Get("/audit", s.handleAudit)
 			r.Get("/traffic-audit", s.handleTrafficAudit)
 

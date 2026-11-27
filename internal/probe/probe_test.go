@@ -319,3 +319,33 @@ func TestImportKomari(t *testing.T) {
 		t.Fatal(got, err)
 	}
 }
+
+func TestWatchReportsOutagesOnce(t *testing.T) {
+	h, _, _ := fixture(t)
+	type change struct {
+		down   bool
+		lasted time.Duration
+	}
+	var got []change
+	h.SetStatusHook(func(_ context.Context, client string, down bool, _ time.Time, lasted time.Duration) {
+		got = append(got, change{down, lasted})
+	})
+	var r Report
+	start := time.Unix(1_800_000_000, 0)
+	h.record("u-1", r, start)
+	h.watch(context.Background(), start.Add(2*time.Minute))
+	if len(got) != 0 {
+		t.Fatal("an agent restarting is not an outage")
+	}
+	h.watch(context.Background(), start.Add(3*time.Minute))
+	h.watch(context.Background(), start.Add(4*time.Minute))
+	if len(got) != 1 || !got[0].down {
+		t.Fatalf("an outage is reported once: %+v", got)
+	}
+	h.record("u-1", r, start.Add(10*time.Minute))
+	h.watch(context.Background(), start.Add(10*time.Minute))
+	h.watch(context.Background(), start.Add(11*time.Minute))
+	if len(got) != 2 || got[1].down || got[1].lasted != 10*time.Minute {
+		t.Fatalf("coming back is reported once, with how long it was away: %+v", got)
+	}
+}

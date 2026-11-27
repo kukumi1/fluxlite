@@ -462,6 +462,30 @@ export const api = {
   traceReturnRoutes: (nodeID: number) => post<{ ok: boolean }>(`/latency/nodes/${nodeID}/trace`),
   blockCheck: () => post<BlockResult[]>("/latency/block-check"),
   probeOverview: () => request<ProbeOverview>("/probe", { cache: "no-store" }),
+  updateProbeMachine: (uuid: string, input: ProbeMachineInput) =>
+    request<{ ok: boolean }>(`/probe/machines/${uuid}`, { method: "PUT", body: JSON.stringify(input) }),
+  deleteProbeMachine: (uuid: string) => request<{ ok: boolean }>(`/probe/machines/${uuid}`, { method: "DELETE" }),
+  saveProbeTask: (task: Omit<ProbeTask, "id"> & { id?: number }) =>
+    task.id
+      ? request<ProbeTask>(`/probe/tasks/${task.id}`, { method: "PUT", body: JSON.stringify(task) })
+      : post<ProbeTask>("/probe/tasks", task),
+  deleteProbeTask: (id: number) => request<{ ok: boolean }>(`/probe/tasks/${id}`, { method: "DELETE" }),
+  probeEnroll: () => request<ProbeEnroll>("/probe/enroll", { cache: "no-store" }),
+  newProbeEnrollKey: () => post<ProbeEnroll>("/probe/enroll/key"),
+  uploadProbeTheme: async (file: File) => {
+    const form = new FormData();
+    form.append("theme", file);
+    const res = await fetch("/api/probe/theme", { method: "POST", body: form, credentials: "same-origin" });
+    const body = (await res.json().catch(() => null)) as { version?: string; error?: string } | null;
+    if (!res.ok) throw new ApiError(res.status, body?.error ?? `上传失败 (${res.status})`);
+    return { version: body?.version ?? "" };
+  },
+  setProbeNotify: (uuid: string, notify: boolean) =>
+    request<{ notify: boolean }>(`/probe/machines/${uuid}/notify`, { method: "PUT", body: JSON.stringify({ notify }) }),
+  probeSite: () => request<ProbeSite>("/probe/site", { cache: "no-store" }),
+  saveProbeSite: (site: Omit<ProbeSite, "theme">) =>
+    request<ProbeSite>("/probe/site", { method: "PUT", body: JSON.stringify(site) }),
+  probeThemeLogin: () => post<{ url: string }>("/probe/theme-login"),
   speedOverview: () => request<SpeedOverview>("/speedtest", { cache: "no-store" }),
   startSpeedtest: (req: SpeedRequest) => post<{ id: number }>("/speedtest", req),
   cancelSpeedtest: (id: number) => post<{ ok: boolean }>(`/speedtest/${id}/cancel`),
@@ -652,6 +676,7 @@ export interface AlertSettings {
     latency_spike: boolean;
     route_change: boolean;
     blocked: boolean;
+    probe_offline: boolean;
     daily: boolean;
   };
   /** 每日汇总在 UTC+8 的哪个小时发。 */
@@ -877,10 +902,12 @@ export interface ProbeMachine {
   uuid: string;
   name: string;
   info: { os?: string; arch?: string; cpu_name?: string; cpu_cores?: number; virtualization?: string; version?: string };
-  display: { region?: string; group?: string; expired_at?: string | null };
+  display: ProbeDisplay;
   hidden: boolean;
   weight: number;
   node_id: number | null;
+  /** Whether the machine going offline is sent as a notice. */
+  notify: boolean;
   online: boolean;
   /** Unix seconds of the last report this run of the panel received; 0 when none yet. */
   at: number;
@@ -895,6 +922,46 @@ export interface ProbeTask {
   interval: number;
   weight: number;
   clients: string[];
+}
+
+/** The public page's fields for a machine, as Komari names them. */
+export interface ProbeDisplay {
+  region?: string;
+  group?: string;
+  tags?: string;
+  public_remark?: string;
+  price?: number;
+  currency?: string;
+  billing_cycle?: number;
+  auto_renewal?: boolean;
+  expired_at?: string | null;
+  traffic_limit?: number;
+  traffic_limit_type?: string;
+  [key: string]: unknown;
+}
+
+export interface ProbeMachineInput {
+  name: string;
+  hidden: boolean;
+  weight: number;
+  display: ProbeDisplay;
+}
+
+export interface ProbeEnroll {
+  key: string;
+  host: string;
+  /** Empty until both a key and the public domain are set. */
+  command: string;
+}
+
+export interface ProbeSite {
+  public_host: string;
+  sitename: string;
+  description: string;
+  custom_head: string;
+  custom_body: string;
+  /** The theme the public page serves; only LuminaPlus is installed. */
+  theme: string;
 }
 
 export interface ProbeOverview {

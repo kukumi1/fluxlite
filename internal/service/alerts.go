@@ -351,6 +351,16 @@ func alertEventText(ev alertEvent) string {
 	return b.String()
 }
 
+// ProbeOfflineText is the notice for a probe machine gone quiet.
+func ProbeOfflineText(name string, seen time.Time) string {
+	return fmt.Sprintf("🔴 机器掉线：%s\n最后上报：%s", name, seen.In(trafficZone).Format("01-02 15:04"))
+}
+
+// ProbeOnlineText is the notice for one reporting again.
+func ProbeOnlineText(name string, lasted time.Duration) string {
+	return fmt.Sprintf("🟢 机器恢复在线：%s（离线 %s）", name, describeOutage(lasted))
+}
+
 func describeOutage(d time.Duration) string {
 	switch {
 	case d < time.Minute:

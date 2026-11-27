@@ -62,8 +62,16 @@ func (r *Report) valid() bool {
 }
 
 // offlineAfter is how long a machine goes unheard before it counts as down;
-// agents report every few seconds.
-const offlineAfter = 30 * time.Second
+// agents report every few seconds. A notice waits longer, as Komari's did by
+// default, so an agent restarting is not reported.
+const (
+	offlineAfter = 30 * time.Second
+	noticeAfter  = 3 * time.Minute
+)
+
+// StatusHook is told when a machine has been quiet long enough to report,
+// and again when it reports after that.
+type StatusHook func(ctx context.Context, client string, down bool, lastSeen time.Time, lasted time.Duration)
 
 // Latest is a machine's newest report and when it came.
 type Latest struct {
@@ -117,6 +125,9 @@ type Hub struct {
 	recent  map[taskClient][]PingResult
 	tasks   []store.ProbeTask
 	due     map[int64]time.Time
+	// down holds, for each machine reported down, when it was last heard.
+	down map[string]time.Time
+	hook StatusHook
 }
 
 func New(st *store.Store, log *slog.Logger) *Hub {
@@ -124,7 +135,61 @@ func New(st *store.Store, log *slog.Logger) *Hub {
 		store: st, log: log,
 		latest: map[string]*Latest{}, conns: map[string]*agentConn{},
 		samples: map[minuteKey]*store.ProbeSample{}, pings: map[pingKey]*store.ProbePing{},
-		recent: map[taskClient][]PingResult{}, due: map[int64]time.Time{},
+		recent: map[taskClient][]PingResult{}, due: map[int64]time.Time{}, down: map[string]time.Time{},
+	}
+}
+
+// Forget drops a deleted machine's live state.
+func (h *Hub) Forget(client string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.latest, client)
+	delete(h.down, client)
+	for k := range h.recent {
+		if k.client == client {
+			delete(h.recent, k)
+		}
+	}
+}
+
+// SetStatusHook sets what is told of machines going down and coming back.
+func (h *Hub) SetStatusHook(hook StatusHook) {
+	h.mu.Lock()
+	h.hook = hook
+	h.mu.Unlock()
+}
+
+type statusChange struct {
+	client   string
+	down     bool
+	lastSeen time.Time
+	lasted   time.Duration
+}
+
+// watch finds machines quiet past the notice delay, and those reporting
+// again after one. Only machines heard since the panel started are watched,
+// so a restart does not report every machine before it reconnects.
+func (h *Hub) watch(ctx context.Context, now time.Time) {
+	var changes []statusChange
+	h.mu.Lock()
+	hook := h.hook
+	for client, l := range h.latest {
+		seen, wasDown := h.down[client]
+		switch {
+		case !wasDown && now.Sub(l.At) >= noticeAfter:
+			h.down[client] = l.At
+			changes = append(changes, statusChange{client: client, down: true, lastSeen: l.At})
+		case wasDown && l.At.After(seen):
+			delete(h.down, client)
+			changes = append(changes, statusChange{client: client, lastSeen: seen, lasted: l.At.Sub(seen)})
+		}
+	}
+	h.mu.Unlock()
+	if hook == nil {
+		return
+	}
+	for _, c := range changes {
+		hook(ctx, c.client, c.down, c.lastSeen, c.lasted)
 	}
 }
 
@@ -158,6 +223,7 @@ func (h *Hub) Run(ctx context.Context) {
 			h.dispatch(ctx, now)
 			if now.Sub(lastFlush) >= 10*time.Second {
 				h.flush(ctx, now)
+				h.watch(ctx, now)
 				lastFlush = now
 			}
 			if now.Sub(lastPrune) >= time.Hour {

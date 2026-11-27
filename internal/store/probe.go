@@ -293,6 +293,25 @@ func (s *Store) ProbePings(ctx context.Context, client string, task, res, from i
 	return out, rows.Err()
 }
 
+// ProbeEarliest is the first bucket kept at each resolution, zero for one
+// with none.
+func (s *Store) ProbeEarliest(ctx context.Context) (map[int64]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT res, min(bucket) FROM probe_metrics GROUP BY res`)
+	if err != nil {
+		return nil, fmt.Errorf("query probe history start: %w", err)
+	}
+	defer rows.Close()
+	out := map[int64]int64{}
+	for rows.Next() {
+		var res, first int64
+		if err := rows.Scan(&res, &first); err != nil {
+			return nil, err
+		}
+		out[res] = first
+	}
+	return out, rows.Err()
+}
+
 // PruneProbe drops buckets past their resolution's keep.
 func (s *Store) PruneProbe(ctx context.Context, now time.Time) error {
 	for _, res := range ProbeResolutions {
@@ -382,6 +401,81 @@ func (s *Store) ReplaceProbe(ctx context.Context, in ProbeImport) error {
 					return fmt.Errorf("import probe ping: %w", err)
 				}
 			}
+		}
+		return nil
+	})
+}
+
+// UpdateProbeClient changes what the panel says about a machine.
+func (s *Store) UpdateProbeClient(ctx context.Context, c ProbeClient) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE probe_clients SET name = ?, display = ?, hidden = ?, weight = ?, updated_at = ? WHERE uuid = ?`,
+		c.Name, rawOr(c.Display), c.Hidden, c.Weight, time.Now().Unix(), c.UUID)
+	if err != nil {
+		return fmt.Errorf("update probe client: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteProbeClient removes a machine and its history; its agent's token
+// stops working.
+func (s *Store) DeleteProbeClient(ctx context.Context, uuid string) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		for _, table := range []string{"probe_metrics", "probe_ping"} {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE client = ?`, uuid); err != nil {
+				return fmt.Errorf("delete probe history: %w", err)
+			}
+		}
+		res, err := tx.ExecContext(ctx, `DELETE FROM probe_clients WHERE uuid = ?`, uuid)
+		if err != nil {
+			return fmt.Errorf("delete probe client: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
+// SaveProbeTask adds a latency check, or replaces the one with its id.
+func (s *Store) SaveProbeTask(ctx context.Context, t ProbeTask) (int64, error) {
+	clients, err := json.Marshal(t.Clients)
+	if err != nil {
+		return 0, err
+	}
+	if t.ID == 0 {
+		res, err := s.db.ExecContext(ctx, `INSERT INTO probe_ping_tasks (name, type, target, interval, weight, clients) VALUES (?, ?, ?, ?, ?, ?)`,
+			t.Name, t.Type, t.Target, t.Interval, t.Weight, string(clients))
+		if err != nil {
+			return 0, fmt.Errorf("add probe task: %w", err)
+		}
+		return res.LastInsertId()
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE probe_ping_tasks SET name = ?, type = ?, target = ?, interval = ?, weight = ?, clients = ? WHERE id = ?`,
+		t.Name, t.Type, t.Target, t.Interval, t.Weight, string(clients), t.ID)
+	if err != nil {
+		return 0, fmt.Errorf("update probe task: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return 0, ErrNotFound
+	}
+	return t.ID, nil
+}
+
+// DeleteProbeTask removes a latency check and its history.
+func (s *Store) DeleteProbeTask(ctx context.Context, id int64) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM probe_ping WHERE task = ?`, id); err != nil {
+			return fmt.Errorf("delete probe task history: %w", err)
+		}
+		res, err := tx.ExecContext(ctx, `DELETE FROM probe_ping_tasks WHERE id = ?`, id)
+		if err != nil {
+			return fmt.Errorf("delete probe task: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
 		}
 		return nil
 	})

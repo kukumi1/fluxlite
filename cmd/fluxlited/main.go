@@ -19,6 +19,7 @@ import (
 	"github.com/kukumi1/fluxlite/internal/applier"
 	"github.com/kukumi1/fluxlite/internal/auth"
 	"github.com/kukumi1/fluxlite/internal/cryptox"
+	"github.com/kukumi1/fluxlite/internal/komari"
 	"github.com/kukumi1/fluxlite/internal/probe"
 	"github.com/kukumi1/fluxlite/internal/service"
 	"github.com/kukumi1/fluxlite/internal/sshx"
@@ -114,6 +115,7 @@ func run() error {
 	}
 	authSvc := auth.New(st)
 	hub := probe.New(st, logger)
+	site := komari.New(st, hub, filepath.Join(*dataDir, "themes"), !*insecure, logger)
 
 	static, err := web.Handler()
 	if err != nil {
@@ -127,6 +129,7 @@ func run() error {
 		Static:        static,
 		SecureCookies: !*insecure,
 		Probe:         hub,
+		Site:          site,
 	})
 
 	w := watcher.New(watcher.Config{
@@ -222,6 +225,9 @@ func importKomari(args []string) error {
 			return fmt.Errorf("copy theme %s: %w", theme, err)
 		}
 		fmt.Println("copied theme", theme, "to", dst)
+	}
+	if err := probe.CopyFavicon(filepath.Join(*komari, "favicon.ico"), filepath.Join(*dataDir, "themes", "favicon.ico")); err != nil {
+		return fmt.Errorf("copy the site icon: %w", err)
 	}
 	return nil
 }

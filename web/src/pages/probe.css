@@ -10,7 +10,7 @@
 .probe-state.wait { color: var(--muted-foreground); }
 .probe-offline td { opacity: 0.55; }
 .probe-offline td:nth-child(-n + 2) { opacity: 1; }
-.probe-meter { display: inline-flex; align-items: center; gap: 8px; min-width: 110px; }
+.probe-meter { display: inline-flex; align-items: center; gap: 6px; min-width: 90px; }
 .probe-meter-bar { flex: 1; height: 6px; overflow: hidden; border-radius: 999px; background: var(--muted); }
 .probe-meter-bar > span { display: block; height: 100%; border-radius: inherit; transition: width 0.4s ease; }
 .probe-meter-bar > .ok { background: var(--ok); }
@@ -19,3 +19,15 @@
 .probe-meter-text { min-width: 34px; font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
 .probe-rate { display: block; font-size: 12px; }
 .probe-note { margin: -4px 0 12px; font-size: 12.5px; }
+.probe-code { font-size: 12px; resize: vertical; }
+.probe-actions { width: 1%; white-space: nowrap; text-align: right; }
+.probe-actions .icon-btn { display: inline-flex; vertical-align: middle; }
+.probe-actions .icon-btn + .icon-btn { margin-left: 4px; }
+.probe-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.probe-card-head h2 { margin: 0; }
+.probe-task-machines { display: grid; gap: 8px; }
+.probe-task-machines-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+.probe-task-machines-head .btn + .btn { margin-left: 4px; }
+.probe-command { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: 12px; background: var(--muted); }
+.probe-command code { flex: 1; font-size: 12px; line-height: 1.6; word-break: break-all; }
+.probe-theme-upload { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }

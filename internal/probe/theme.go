@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -43,6 +44,14 @@ func CopyTheme(src, dst string) error {
 		return err
 	}
 	return os.Rename(tmp, dst)
+}
+
+// CopyFavicon copies a site's icon, when it has one.
+func CopyFavicon(src, dst string) error {
+	if _, err := os.Stat(src); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return copyFile(src, dst)
 }
 
 func copyFile(src, dst string) error {

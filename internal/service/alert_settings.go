@@ -21,6 +21,9 @@ type AlertEvents struct {
 	LatencySpike bool `json:"latency_spike"`
 	RouteChange  bool `json:"route_change"`
 	Blocked      bool `json:"blocked"`
+	// ProbeOffline is a probe machine's agent going quiet; which machines
+	// it is sent for is chosen on the probe page.
+	ProbeOffline bool `json:"probe_offline"`
 	Daily        bool `json:"daily"`
 }
 
@@ -60,7 +63,7 @@ func defaultAlertSettings() AlertSettings {
 	return AlertSettings{
 		Events: AlertEvents{
 			NodeOffline: true, RouteDown: true, Quota: true, Expiry: true,
-			Latency: true, LatencySpike: true, RouteChange: true, Blocked: true, Daily: true,
+			Latency: true, LatencySpike: true, RouteChange: true, Blocked: true, ProbeOffline: true, Daily: true,
 		},
 		DailyHour:     9,
 		LossPercent:   20,

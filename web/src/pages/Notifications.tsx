@@ -20,6 +20,7 @@ const EVENTS: Array<{ key: EventKey; label: string; note: string; perMachine?: b
   { key: "latency_spike", label: "延迟暴涨 / 恢复", note: "IPv4 和 IPv6 的测试点连续 3 轮高于历史基线（过去一天的中位数）2 倍且至少高出 50ms，回到正常后再通知一次", perMachine: true },
   { key: "route_change", label: "回程线路变化", note: "每天检测回程时和上次对比，比如 CN2 GIA 变成 163", perMachine: true },
   { key: "blocked", label: "IP 被封锁 / 恢复", note: "每 6 小时检测一次，机器到国内变成 TCP 阻断或疑似 IP 被墙时通知，恢复时再通知一次", perMachine: true },
+  { key: "probe_offline", label: "探针机器掉线 / 恢复", note: "机器上的 Komari agent 超过 3 分钟没有上报算掉线，重新上报再发一条恢复；哪些机器要通知在「探针」页逐台开关" },
   { key: "daily", label: "每日汇总", note: "每天在设定时间发一条：机器、链路、昨日流量、需要处理的事" },
 ];
 

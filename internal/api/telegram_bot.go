@@ -426,6 +426,8 @@ func telegramNodeStatus(status model.NodeStatus) string {
 // NotifyTelegram pushes an alert to the bound Telegram account. With no bot
 // enabled or no account bound it does nothing: alerts ride on the binding the
 // operator already set up and are not worth an error when there is none.
+// Alerts carry no menu: one under every alert buries the alerts themselves,
+// and /start brings it back.
 func (s *Server) NotifyTelegram(ctx context.Context, text string) error {
 	s.telegram.mu.Lock()
 	err := s.telegram.load(ctx)
@@ -437,7 +439,7 @@ func (s *Server) NotifyTelegram(ctx context.Context, text string) error {
 	if !cfg.Enabled || cfg.Token == "" || cfg.BoundUserID <= 0 {
 		return nil
 	}
-	return s.sendTelegramMessage(ctx, cfg, cfg.BoundUserID, text, "dashboard")
+	return s.sendTelegramReply(ctx, cfg, cfg.BoundUserID, text, nil)
 }
 
 // RunTelegram is a single worker; pacing before every send also spaces adjacent updates.
@@ -469,7 +471,10 @@ func (s *Server) notifyTelegramRich(ctx context.Context, text string, buttons te
 // plain text or as HTML whose dynamic parts the caller has escaped.
 func (s *Server) sendTelegramRich(ctx context.Context, cfg telegramConfig, chatID, editID int64, text string, keyboard map[string]any, asHTML bool) error {
 	method := "sendMessage"
-	payload := map[string]any{"chat_id": chatID, "text": telegramMessageText(text), "protect_content": true, "reply_markup": keyboard}
+	payload := map[string]any{"chat_id": chatID, "text": telegramMessageText(text), "protect_content": true}
+	if keyboard != nil {
+		payload["reply_markup"] = keyboard
+	}
 	if editID > 0 {
 		method = "editMessageText"
 		payload["message_id"] = editID

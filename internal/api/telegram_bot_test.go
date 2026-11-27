@@ -186,6 +186,25 @@ func TestTelegramMenuHasManagementNavigationAndWebApp(t *testing.T) {
 	}
 }
 
+func TestTelegramAlertsCarryNoMenu(t *testing.T) {
+	s := telegramPollFixture(t)
+	var bodies []string
+	mockTelegramPollHTTP(t, func(r *http.Request) (*http.Response, error) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		return telegramPollResponse(`{"ok":true,"result":{}}`), nil
+	})
+	if err := s.NotifyTelegram(context.Background(), "🔴 机器掉线：HK"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.sendTelegramMessage(context.Background(), s.telegram.cfg, 42, "menu", "dashboard"); err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies) != 2 || strings.Contains(bodies[0], "reply_markup") || !strings.Contains(bodies[1], "inline_keyboard") {
+		t.Fatalf("an alert has no buttons, a reply keeps the menu: %q", bodies)
+	}
+}
+
 func TestTelegramRateLimitRetriesWithPacing(t *testing.T) {
 	s := telegramPollFixture(t)
 	var sends []time.Time
